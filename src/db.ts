@@ -86,6 +86,11 @@ export class Store implements TaskStore {
     } : undefined;
   }
 
+  workspaceForTask(taskId: string): Workspace | undefined {
+    const row = this.db.prepare("SELECT workspace_id FROM tasks WHERE task_id = ?").get(taskId) as { workspace_id?: string } | undefined;
+    return row?.workspace_id ? this.workspace(row.workspace_id) : undefined;
+  }
+
   createWorkspace(workspaceId: string, sandboxName: string, pvcName: string, agentProfile: AgentProfile): Workspace {
     const timestamp = now();
     this.db.prepare(`INSERT INTO workspaces(
@@ -131,6 +136,11 @@ export class Store implements TaskStore {
 
   findDuplicate(workspaceId: string, idempotencyKey: string): Task | undefined {
     const row = this.db.prepare("SELECT task_json FROM tasks WHERE workspace_id = ? AND idempotency_key = ?").get(workspaceId, idempotencyKey) as { task_json?: string } | undefined;
+    return row?.task_json ? JSON.parse(row.task_json) as Task : undefined;
+  }
+
+  findDuplicateSubmission(idempotencyKey: string): Task | undefined {
+    const row = this.db.prepare("SELECT task_json FROM tasks WHERE idempotency_key = ? ORDER BY created_at LIMIT 1").get(idempotencyKey) as { task_json?: string } | undefined;
     return row?.task_json ? JSON.parse(row.task_json) as Task : undefined;
   }
 

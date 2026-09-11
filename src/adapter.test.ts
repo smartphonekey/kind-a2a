@@ -13,6 +13,7 @@ test("task idempotency storage returns the original persisted task", () => {
   const value: any = { id: "task-1", contextId: "ctx-1", status: { state: TaskState.TASK_STATE_COMPLETED }, artifacts: [], history: [], metadata: { workspaceId: "alpha", idempotencyKey: "same" } };
   store.bindTask("task-1", "ctx-1", "alpha", "same", value);
   assert.equal(store.findDuplicate("alpha", "same")?.id, "task-1");
+  assert.equal(store.findDuplicateSubmission("same")?.id, "task-1");
 });
 
 test("an out-of-band approval can persist a later terminal task state", async () => {
@@ -39,6 +40,19 @@ test("workspace persists an operator-selected harness profile and opaque session
     podUid: "pod-1",
     updatedAt: store.workspace("acp-one")!.updatedAt
   });
+});
+
+test("each A2A task maps to its own persistent runtime", () => {
+  const store = new Store(":memory:");
+  const first: any = { id: "task-one", contextId: "shared-context", status: { state: TaskState.TASK_STATE_SUBMITTED }, artifacts: [], history: [], metadata: {} };
+  const second: any = { id: "task-two", contextId: "shared-context", status: { state: TaskState.TASK_STATE_SUBMITTED }, artifacts: [], history: [], metadata: {} };
+  store.createWorkspace("task-one", "runner-task-one", "runner-task-one-state", profiles["codex-acp-v1"]);
+  store.createWorkspace("task-two", "runner-task-two", "runner-task-two-state", profiles["codex-acp-v1"]);
+  store.bindTask("task-one", "shared-context", "task-one", "message-one", first);
+  store.bindTask("task-two", "shared-context", "task-two", "message-two", second);
+  assert.equal(store.workspaceForTask("task-one")?.sandboxName, "runner-task-one");
+  assert.equal(store.workspaceForTask("task-two")?.sandboxName, "runner-task-two");
+  assert.notEqual(store.workspaceForTask("task-one")?.pvcName, store.workspaceForTask("task-two")?.pvcName);
 });
 
 test("existing workspace schema migrates to the direct fallback without changing its thread", () => {

@@ -7,7 +7,8 @@ Run on 2026-09-11 against `kind-aira-a2a-lab` with ChatGPT subscription authenti
 | Check | Status | Evidence |
 | --- | --- | --- |
 | Store migration and profile persistence | PASS | Legacy workspaces retain direct-Codex threads; ACP session/provider and execution/turn fields persist. |
-| Duplicate submission | PASS | The original terminal task is returned for the same workspace/idempotency key. |
+| Duplicate submission | PASS | The original terminal task is returned for the same initial idempotency key. |
+| Task runtime mapping | PASS | Two tasks in one context map to distinct Sandbox and PVC records. |
 | Permission correlation and replay | PASS | Fake ACP request/response IDs correlate; `session/load` replay remains observable. |
 | Cancellation | PASS | Fake ACP returns the protocol `cancelled` stop reason. |
 | Unsupported capability | PASS | A required missing `loadSession` capability fails closed. |
@@ -15,7 +16,22 @@ Run on 2026-09-11 against `kind-aira-a2a-lab` with ChatGPT subscription authenti
 
 These tests validate coordinator and ACP edge behavior only. They do not establish compatibility with a second real agent.
 
-## Live Codex Through ACP
+## Task-Scoped Lifecycle 0.3.0
+
+| Check | Status | Evidence |
+| --- | --- | --- |
+| One runtime per task | PASS | Tasks `90899d44-ae7b-4920-a1fe-bf6def352491` and `a6b9cefe-2f1e-4fe1-ad10-a18ede65a15b` ran simultaneously in different Pods with different 2 GiB PVCs and ACP sessions. |
+| Filesystem isolation | PASS | The two concurrent tasks exported distinct `isolation.txt` values, `task-a` and `task-b`, from their own PVCs. |
+| Resource release | PASS | Both task Sandboxes transitioned to `Suspended`, both task Pods disappeared, and both PVCs remained bound after terminal completion. Only the controller Pod remained running. |
+| Same-task message reuse | PASS | Task `d92e5012-58c6-4f1a-8687-6a7e1cb5e3b5` received an A2A `continue ... accept` message while `INPUT_REQUIRED`; it resolved the original permission on the same runtime/session, created `continuation.txt`, completed, and then suspended. |
+| Terminal follow-up isolation | PASS | Follow-up task `172e4e60-21f8-4f7d-a998-5e6b18ded27c` retained its parent's context and `referenceTaskIds`, but received a new task ID, Sandbox, PVC, and ACP session as required for isolation. |
+| Live idempotency | PASS | Reusing `lifecycle-task-a` returned task `90899d44-ae7b-4920-a1fe-bf6def352491`; Sandbox count did not change and the replacement prompt did not execute. |
+| Cancellation and release | PASS | Task `d2e913ef-95dd-4cca-bee9-709d8dacaf8d` was canceled during a bounded 30-second command; ACP returned `stopReason: cancelled`, A2A remained `CANCELED`, and its Sandbox suspended. |
+| Active capacity | PASS | Two task Pods were admitted concurrently. `AIRA_MAX_ACTIVE_SANDBOXES=2` bounds active CPU/memory while excess task requests wait for a slot. |
+
+A2A terminal tasks remain immutable. Runtime reuse applies to additional messages on a nonterminal task, including `INPUT_REQUIRED`; a request after terminal completion creates a new task runtime.
+
+## Earlier ACP Harness Baseline
 
 | Required check | Status | Evidence |
 | --- | --- | --- |
@@ -41,6 +57,6 @@ ACP observable updates are stored with controller sequence/timestamp plus runner
 
 ## Preserved State And Limits
 
-The original `runner-alpha` and `runner-beta` Sandboxes are suspended, not deleted. Their PVCs and database mappings remain; migrated records are pinned to `codex-direct-v1`, and the existing beta thread is preserved. Active `runner-acp-one` and `runner-acp-two` each retain their own PVC and ACP session. The controller PVC is unchanged.
+The original `runner-alpha`, `runner-beta`, `runner-acp-one`, and `runner-acp-two` Sandboxes are suspended, not deleted. Their PVCs and database mappings remain, migrated direct records stay pinned to `codex-direct-v1`, and the existing beta thread is preserved. New task-scoped Sandbox records and PVCs are also retained in suspended mode. The controller PVC is unchanged.
 
 Resource policy remains: controller request `250m` CPU / `256Mi`, limit `2 CPU` / `1Gi`; runner request `500m` / `1Gi`, limit `2 CPU` / `3Gi`; maximum two running Sandboxes. Runner seccomp remains explicitly `Unconfined`; kind CNI network enforcement, VM isolation, untrusted repositories, and editor compatibility are not claimed.

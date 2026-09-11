@@ -35,7 +35,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: controller
-          image: aira-a2a-controller:0.2.0
+          image: aira-a2a-controller:0.3.0
           imagePullPolicy: IfNotPresent
           env:
             - name: AIRA_NAMESPACE
@@ -45,9 +45,11 @@ spec:
             - name: AIRA_DB_PATH
               value: /data/controller.sqlite
             - name: AIRA_RUNNER_IMAGE
-              value: aira-a2a-runner:0.2.0
+              value: aira-a2a-runner:0.3.0
             - name: AIRA_DEFAULT_PROFILE
               value: codex-acp-review-v1
+            - name: AIRA_MAX_ACTIVE_SANDBOXES
+              value: "2"
             - name: AIRA_PUBLIC_URL
               value: http://127.0.0.1:8081
           ports:

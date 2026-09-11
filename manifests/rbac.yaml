@@ -19,7 +19,7 @@ metadata:
 rules:
   - apiGroups: ["agents.x-k8s.io"]
     resources: ["sandboxes"]
-    verbs: ["get", "list", "watch", "create"]
+    verbs: ["get", "list", "watch", "create", "patch"]
   - apiGroups: [""]
     resources: ["persistentvolumeclaims", "pods", "services"]
     verbs: ["get", "list", "watch", "create"]

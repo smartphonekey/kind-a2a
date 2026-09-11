@@ -2,8 +2,8 @@ import { createHash, randomUUID } from "node:crypto";
 
 export const LAB_NAMESPACE = process.env.AIRA_NAMESPACE ?? "aira-a2a-lab";
 export const CONTROLLER_DB = process.env.AIRA_DB_PATH ?? "/data/controller.sqlite";
-export const RUNNER_IMAGE = process.env.AIRA_RUNNER_IMAGE ?? "aira-a2a-runner:0.2.0";
-export const MAX_ACTIVE_SANDBOXES = 2;
+export const RUNNER_IMAGE = process.env.AIRA_RUNNER_IMAGE ?? "aira-a2a-runner:0.3.0";
+export const MAX_ACTIVE_SANDBOXES = Number(process.env.AIRA_MAX_ACTIVE_SANDBOXES ?? "2");
 
 export function now(): string {
   return new Date().toISOString();

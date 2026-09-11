@@ -8,7 +8,7 @@ namespace="${AIRA_NAMESPACE:-aira-a2a-lab}"
 base_url="${AIRA_URL:-http://127.0.0.1:8081}"
 
 curl --fail --silent "$base_url/healthz" | jq -e '.ok and (.defaultProfileId | type == "string")' >/dev/null
-curl --fail --silent "$base_url/.well-known/agent-card.json" | jq -e '.version == "0.2.0" and .capabilities.streaming' >/dev/null
+curl --fail --silent "$base_url/.well-known/agent-card.json" | jq -e '.version == "0.3.0" and .capabilities.streaming' >/dev/null
 
 mapfile -t runners < <(kubectl --kubeconfig "$kubeconfig" --context "$context" -n "$namespace" get sandbox -o json |
   jq -r '.items[] | select((.spec.operatingMode // "Running") != "Suspended") | .metadata.name')
@@ -22,6 +22,8 @@ done
 for task_id in "$@"; do
   transcript="$(curl --fail --silent "$base_url/transcripts/$task_id")"
   printf '%s' "$transcript" | jq -e '.events | type == "array" and length > 0' >/dev/null
+  curl --fail --silent "$base_url/tasks/$task_id/runtime" |
+    jq -e '.operatingMode == "Suspended" and .podPresent == false' >/dev/null
   if printf '%s' "$transcript" | grep -Eq '(sk-|sess-|eyJ)[A-Za-z0-9._-]{12,}'; then
     echo "credential-shaped value found in transcript $task_id" >&2
     exit 1

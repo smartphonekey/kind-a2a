@@ -1,6 +1,25 @@
 # Acceptance Report
 
-Run on 2026-09-11 against `kind-aira-a2a-lab` with ChatGPT subscription authentication. Fake-agent tests and live-model evidence are deliberately separated.
+Evidence below spans the preserved `kind-aira-a2a-lab` baseline and the new self-hosted Agyn backend. Each section identifies its environment; fake-agent tests and live-model evidence are deliberately separated.
+
+## Agyn Backend 0.4.0
+
+Run on 2026-09-11 against the self-hosted Agyn local platform (chart `0.72.1`) in its separate Lima/k3s VM. Agent `@a2a-codex` used Codex runtime `0.147.0`, model `gpt-5.5`, a 10 GiB per-instance volume mounted at `/workspace`, and existing ChatGPT subscription authentication stored by Agyn.
+
+| Check | Status | Evidence |
+| --- | --- | --- |
+| Real Codex turn | PASS | A2A task `33819042-f4ac-4bea-9987-b9c853fd3da9` created `/workspace/a2a-state.txt` and returned `FIRST_TURN_OK`. |
+| Same-task reuse | PASS | Three later messages reused thread `a574f55f-49d5-4cf0-af6b-247ffd312972`, instance `d6c593ca-ef80-4e34-acff-e0e59094ab46`, and its PVC; recovery returned `RECOVERY_OK`. |
+| Adapter restart recovery | PASS | The adapter process and A2A client stream were restarted between turns. SQLite restored the same Agyn binding and the next turn read the persisted file. |
+| Explicit task completion | PASS | `finish` returned `FINISHED_OK`, A2A state `COMPLETED`, and requested instance pause without deleting its PVC. |
+| Parallel task isolation | PASS | Tasks `5f127172-5717-43c9-a81b-5a1010f025de` and `bd42c642-dcc6-4103-a4ff-6bf2bcadfcb3` ran concurrently as distinct Pods, threads, instances and 10 GiB PVCs; they returned isolated `ALPHA_DONE` and `BETA_DONE` results. |
+| Resource release | PASS | After successful turns, workload Pod count reached zero while all three PVCs remained bound. Agyn Pod removal is asynchronous after the pause request. |
+| First-turn cancellation binding | PASS | The task-to-instance binding is persisted immediately after Agyn thread creation, before the first prompt completes, so cancellation can locate the correct instance. |
+| Hard cancellation | LIMITED | Agyn accepted the pause for task `25771781-6be9-442a-94ed-61ca8f64cd8a`, eventually removed its Pod, but the already-running `sleep 120` and response completed first. The adapter reports uncertain side effects and never automatically retries. |
+| Approval round trip | BLOCKED | Current Agyn Codex daemon configuration forces noninteractive `approval_policy=never`; it exposes no permission request for the A2A coordinator to resolve. The legacy ACP backend retains the tested explicit approval path. |
+| Interrupted-turn reconciliation | NOT IMPLEMENTED | Completed-turn restart is proven. An adapter crash during an active Agyn turn is not automatically reconciled and must remain an explicit operator recovery case. |
+
+Deterministic tests cover the generic Agyn backend mapping, one instance per task, pause/resume, and reuse. Live verification also confirmed that no host Codex `auth.json` is mounted in Agyn workloads; credentials are injected through the operator-created Agyn subscription.
 
 ## Deterministic Tests
 

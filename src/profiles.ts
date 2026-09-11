@@ -2,6 +2,13 @@ import { RUNNER_IMAGE } from "./common.js";
 import type { AgentProfile } from "./harness.js";
 
 export const profiles: Record<string, AgentProfile> = {
+  "codex-agyn-v1": {
+    id: "codex-agyn-v1", version: 1, harness: "agyn", runnerImage: "agyn-managed",
+    executable: "codex", args: [], authBinding: "agyn-subscription",
+    requiredCapabilities: {},
+    resources: { cpuRequest: "500m", memoryRequest: "2Gi", cpuLimit: "2", memoryLimit: "2Gi" },
+    environment: {}
+  },
   "codex-direct-v1": {
     id: "codex-direct-v1", version: 1, harness: "direct-codex", runnerImage: RUNNER_IMAGE,
     executable: "codex", args: ["app-server"], authBinding: "codex-chatgpt",

@@ -1,20 +1,41 @@
 # AIRA A2A Lab
 
-Trusted local proof of concept for isolated coding-agent tasks:
+Trusted local proof of concept for isolated coding-agent tasks. The preferred backend now delegates execution lifecycle to self-hosted Agyn:
 
 ```text
-A2A client -> session coordinator -> one Kubernetes Sandbox per A2A task
-                                      |-- runner harness
-                                      |-- ACP agent over stdio
-                                      |-- task-owned PVC and ACP session
-                                      +-- Pod suspended when the turn terminates
+A2A client -> A2A adapter -> Agyn Gateway -> one agent instance per A2A task
+                                           |-- Codex runtime
+                                           |-- task-owned thread and PVC
+                                           +-- Pod removed between turns
 ```
 
-The controller owns A2A state, task scheduling, Sandbox lifecycle, approvals, transcripts, artifacts, and the operator-selected profile. The runner owns a protocol-neutral harness. New tasks use `codex-acp-review-v1`; migrated legacy workspaces retain `codex-direct-v1` and are not silently switched.
+Agyn owns Kubernetes scheduling, workload lifecycle, persistent volumes, runtime networking and Codex execution. The local adapter owns A2A state and the durable one-to-one mapping from A2A task to Agyn thread/instance. Agyn does not expose A2A natively, which is why that adapter remains local code. See [AGYN.md](AGYN.md) for setup, commands, lifecycle semantics and current limitations.
 
-Pinned components include Kubernetes Agent Sandbox `v0.5.2`, A2A JS SDK `1.0.0`, ACP SDK `1.4.0`, Codex ACP `1.11.0`, Codex CLI `0.153.4`, and Gemini CLI `0.46.0`.
+The earlier custom kind/Agent Sandbox/ACP implementation remains intact as a comparison and rollback backend. Its controller owns A2A state, Sandbox lifecycle, approvals, transcripts and artifacts; its runner owns the protocol-neutral ACP harness. Existing workspaces retain their recorded profiles and are not silently migrated.
 
-## Task Lifecycle
+The live Agyn installation uses CLI `0.19.0`, platform chart `0.72.1`, Codex runtime `0.147.0` and model `gpt-5.5`. Repository dependencies retain A2A JS SDK `1.0.0`, ACP SDK `1.4.0`, Codex ACP `1.11.0`, and the legacy Kubernetes Agent Sandbox `v0.5.2` integration.
+
+## Agyn Quick Start
+
+After provisioning `@a2a-codex` as described in [AGYN.md](AGYN.md):
+
+```bash
+npm ci
+npm run build
+npm run start:agyn
+```
+
+In another shell:
+
+```bash
+AIRA_URL=http://127.0.0.1:8082 npm run client -- submit "Create a function and tests" unique-key
+AIRA_URL=http://127.0.0.1:8082 npm run client -- continue <task-id> "Continue this task" continuation-key
+AIRA_URL=http://127.0.0.1:8082 npm run client -- finish <task-id> "Run tests and finish" finish-key
+```
+
+Successful nonterminal turns request workload release and return `INPUT_REQUIRED`, allowing a later message to resume the same Agyn instance and PVC. `finish` explicitly makes the A2A task terminal. New task IDs always receive separate instances and can run in parallel.
+
+## Legacy Task Lifecycle
 
 The server-generated A2A `taskId` is the isolation and persistence key. Every new task receives a distinct Sandbox, Pod, PVC, agent process, and ACP session. Tasks can execute concurrently up to `AIRA_MAX_ACTIVE_SANDBOXES`; additional tasks wait for capacity rather than sharing a container.
 
@@ -24,7 +45,7 @@ A message continuing the same nonterminal or `INPUT_REQUIRED` task uses the same
 
 The deprecated caller-provided `metadata.workspaceId` no longer controls placement. Untrusted requests cannot select a Sandbox name, executable, profile, or secret.
 
-## Run
+## Legacy kind/ACP Run
 
 `./scripts/deploy.sh` creates or updates only `kind-aira-a2a-lab`. It copies `$HOME/.codex/auth.json` into the namespaced `aira-codex-auth` Secret without printing or committing it. ChatGPT subscription authentication must already work with `codex login`; this does not switch to API-billed inference.
 
@@ -75,6 +96,7 @@ npm run test:live -- <task-id> [<task-id> ...]
 
 | Profile | Harness | Approval behavior | Status |
 | --- | --- | --- | --- |
+| `codex-agyn-v1` | Agyn-managed Codex runtime | Noninteractive; no approval bridge | Preferred execution backend; live tested |
 | `codex-acp-review-v1` | ACP via `codex-acp` | Explicit coordinator approval | Default; live tested |
 | `codex-acp-v1` | ACP via `codex-acp` | Adapter agent mode | Live tested |
 | `codex-direct-v1` | Codex app-server fallback | Direct translation | Rollback and migrated workspaces |
@@ -112,6 +134,8 @@ This is a trusted local execution lab, not an untrusted-repository service. Pods
 
 kindnet does not enforce NetworkPolicy here. Codex workspace-write currently requires bubblewrap behavior blocked by Docker's default seccomp, so runner `Unconfined` seccomp remains explicit. Do not use untrusted repositories or broader credentials until network enforcement and sandbox hardening are implemented.
 
+The Agyn backend is also a trusted local lab. It uses a separate Lima/k3s VM and Agyn-managed workload networking, but its Codex daemon currently runs with noninteractive approvals. Agyn pause is cooperative for an already-running command, so cancellation records `uncertainSideEffects: true` and never retries automatically.
+
 `./scripts/cleanup.sh` suspends all lab workloads while preserving PVCs. `./scripts/cleanup.sh --delete-data` deletes this lab cluster and local-path data; it is never run automatically.
 
 ## Protocol References
@@ -121,3 +145,6 @@ kindnet does not enforce NetworkPolicy here. Codex workspace-write currently req
 - [Maintained Codex ACP adapter](https://github.com/agentclientprotocol/codex-acp)
 - [Codex app-server](https://developers.openai.com/codex/app-server/)
 - [Gemini CLI ACP mode](https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/acp-mode.md)
+- [Agyn platform](https://github.com/agynio/platform)
+- [Agyn architecture](https://docs.agyn.io/introduction/architecture)
+- [Agyn Gateway API](https://docs.agyn.io/build-extend/gateway-api)

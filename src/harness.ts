@@ -32,11 +32,11 @@ export interface AgentHarness {
 export type AgentProfile = {
   id: string;
   version: number;
-  harness: "direct-codex" | "acp";
+  harness: "direct-codex" | "acp" | "agyn";
   runnerImage: string;
   executable: string;
   args: string[];
-  authBinding: "codex-chatgpt" | "gemini-oauth" | "none";
+  authBinding: "codex-chatgpt" | "gemini-oauth" | "agyn-subscription" | "none";
   requiredCapabilities: Partial<HarnessCapabilities>;
   resources: { cpuRequest: string; memoryRequest: string; cpuLimit: string; memoryLimit: string };
   environment: Record<string, string>;

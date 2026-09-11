@@ -1,14 +1,16 @@
 {
   "name": "aira-a2a-lab",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.4.0",
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start:controller": "node dist/controller.js",
+    "start:agyn": "./scripts/start-agyn.sh",
     "start:runner": "node dist/runner.js",
     "client": "node dist/client.js",
     "test": "node --test dist/*.test.js",
+    "test:agyn": "node --test dist/agyn-backend.test.js",
     "test:adapter": "node --test dist/adapter.test.js",
     "test:fake-acp": "node --test dist/acp-harness.test.js",
     "test:live": "./scripts/verify-live.sh"

@@ -1,27 +1,29 @@
 {
   "name": "aira-a2a-lab",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start:controller": "node dist/controller.js",
     "start:runner": "node dist/runner.js",
     "client": "node dist/client.js",
-    "test": "node --test dist/adapter.test.js",
-    "test:adapter": "node --test dist/adapter.test.js"
+    "test": "node --test dist/*.test.js",
+    "test:adapter": "node --test dist/adapter.test.js",
+    "test:fake-acp": "node --test dist/acp-harness.test.js",
+    "test:live": "./scripts/verify-live.sh"
   },
   "dependencies": {
-    "@a2a-js/sdk": "^1.0.0",
-    "@agentclientprotocol/codex-acp": "^1.11.0",
-    "@agentclientprotocol/sdk": "^1.4.0",
-    "@kubernetes/client-node": "^1.3.0",
-    "express": "^5.1.0",
-    "zod": "^3.25.76"
+    "@a2a-js/sdk": "1.0.0",
+    "@agentclientprotocol/codex-acp": "1.11.0",
+    "@agentclientprotocol/sdk": "1.4.0",
+    "@kubernetes/client-node": "1.3.0",
+    "express": "5.1.0",
+    "zod": "3.25.76"
   },
   "devDependencies": {
-    "@types/express": "^5.0.1",
-    "@types/node": "^22.15.3",
-    "typescript": "^5.8.3"
+    "@types/express": "5.0.1",
+    "@types/node": "22.15.3",
+    "typescript": "5.8.3"
   }
 }

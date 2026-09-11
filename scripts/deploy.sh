@@ -22,9 +22,9 @@ fi
 kubectl --kubeconfig "$kubeconfig" --context "$context" -n aira-a2a-lab create configmap aira-host-ca \
   --from-file=ca-certificates.crt=/etc/ssl/certs/ca-certificates.crt --dry-run=client -o yaml | \
   kubectl --kubeconfig "$kubeconfig" --context "$context" apply -f -
-docker build -f "$lab_root/Dockerfile.runner" -t aira-a2a-runner:0.1.0 "$lab_root"
-docker build -f "$lab_root/Dockerfile.controller" -t aira-a2a-controller:0.1.0 "$lab_root"
-kind load docker-image --name aira-a2a-lab --nodes aira-a2a-lab-control-plane aira-a2a-runner:0.1.0 aira-a2a-controller:0.1.0
+docker build -f "$lab_root/Dockerfile.runner" -t aira-a2a-runner:0.2.0 "$lab_root"
+docker build -f "$lab_root/Dockerfile.controller" -t aira-a2a-controller:0.2.0 "$lab_root"
+kind load docker-image --name aira-a2a-lab --nodes aira-a2a-lab-control-plane aira-a2a-runner:0.2.0 aira-a2a-controller:0.2.0
 kubectl --kubeconfig "$kubeconfig" --context "$context" apply -f "$lab_root/manifests/rbac.yaml"
 kubectl --kubeconfig "$kubeconfig" --context "$context" apply -f "$lab_root/manifests/controller.yaml"
 kubectl --kubeconfig "$kubeconfig" --context "$context" -n aira-a2a-lab rollout restart deployment/aira-controller

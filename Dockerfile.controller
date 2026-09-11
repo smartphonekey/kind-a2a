@@ -3,6 +3,6 @@ RUN groupadd --gid 10001 controller && useradd --uid 10001 --gid 10001 --create-
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
-COPY dist/common.js dist/db.js dist/controller.js ./dist/
+COPY dist/common.js dist/harness.js dist/profiles.js dist/db.js dist/controller.js ./dist/
 USER 10001:10001
 CMD ["node", "dist/controller.js"]

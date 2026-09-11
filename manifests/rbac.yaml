@@ -1,0 +1,38 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: aira-controller
+  namespace: aira-a2a-lab
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: aira-runner
+  namespace: aira-a2a-lab
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: aira-controller
+  namespace: aira-a2a-lab
+rules:
+  - apiGroups: ["agents.x-k8s.io"]
+    resources: ["sandboxes"]
+    verbs: ["get", "list", "watch", "create", "patch"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims", "pods", "services"]
+    verbs: ["get", "list", "watch", "create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: aira-controller
+  namespace: aira-a2a-lab
+subjects:
+  - kind: ServiceAccount
+    name: aira-controller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: aira-controller

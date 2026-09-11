@@ -1,0 +1,90 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: aira-controller-data
+  namespace: aira-a2a-lab
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: aira-controller
+  namespace: aira-a2a-lab
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: aira-controller
+  template:
+    metadata:
+      labels:
+        app: aira-controller
+    spec:
+      serviceAccountName: aira-controller
+      automountServiceAccountToken: true
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: controller
+          image: aira-a2a-controller:0.1.0
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: AIRA_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: AIRA_DB_PATH
+              value: /data/controller.sqlite
+            - name: AIRA_RUNNER_IMAGE
+              value: aira-a2a-runner:0.1.0
+            - name: AIRA_PUBLIC_URL
+              value: http://127.0.0.1:8081
+          ports:
+            - name: http
+              containerPort: 8081
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: "2"
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 3
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: aira-controller-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aira-controller
+  namespace: aira-a2a-lab
+spec:
+  selector:
+    app: aira-controller
+  ports:
+    - name: http
+      port: 8081
+      targetPort: http

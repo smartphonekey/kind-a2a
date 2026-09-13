@@ -153,11 +153,19 @@ operator reconciliation instead of removing isolation from a possibly live agent
 
 ## Remaining Requirements
 
+The latest credential-free preflight also passed all 92 checks, run `1176b203`,
+with cleanup confirmed in `.state/agyn-network-live-ZL3S0I/evidence.json`.
+The following coordinated Codex sweep passed completed, interrupted,
+cancellation, parallel/FIFO and streaming with the same enforced policy profile.
+Cross-Pod TCP/UDP denial had passing local listener controls. All fixture policies
+were removed after workload absence; only the original egress policy remains.
+See [the current evidence and images](AGYN-REMOVAL.md#native-lifecycle-regression).
+
 The probes demonstrate pod-network enforcement, not sandboxing of the real Agyn
 runtime. Real parallel A2A tasks now pass the separate acceptance linked above.
 The three lifecycle cases also have passing reruns under this profile, detailed
-below. Still required: cross-task overlay and credential denial; nonprivileged,
-resource-bounded agent workloads; node/host-network and IPv6
+below. Still required: cross-task overlay and credential denial; nonprivileged
+agents and mandatory production resource enforcement; node/host-network and IPv6
 coverage; public-destination restrictions; and fail-closed startup/recovery.
 
 The installed egress policy excludes the private host callback range. The narrow

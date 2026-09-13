@@ -9,7 +9,9 @@ failures and the still-required interrupted/concurrent lifecycle scenarios.
 The latest attempted interrupted-turn test failed before fault injection and
 exposed an independent [workload-removal contract bug](AGYN-REMOVAL.md).
 The historical successful profile below is no longer sufficient for the current
-driver. Coordinated Runners/Gateway/orchestrator rollout is pending.
+driver. Coordinated local rollout, model-free failed-Pod acceptance and all five
+Codex lifecycle regressions now pass. No new Claude lifecycle result is claimed;
+its native error investigation and remaining scenarios are still required.
 
 ## Reporting Adapter
 

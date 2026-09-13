@@ -19,6 +19,7 @@ import { assertCgroupComputeBounds, assertPodComputeBounds, parseComputeBounds, 
 import { observeA2aStream, assertStreamMatchesDurable, type StreamProbe } from "./a2a-stream-proof.js";
 import { serviceCard } from "../service/card.js";
 import { claudeNativeProbe, liveAgentProfileSchema, nativeIdentities, persistentAgentEnv } from "./agent-profile.js";
+import { assertConfirmedWorkloads } from "./removal-proof.js";
 
 if (process.env.AGYN_LIVE_ACCEPTANCE !== "trusted-local") throw new Error("Set AGYN_LIVE_ACCEPTANCE=trusted-local to run real-model tests");
 const interrupted = process.env.AGYN_LIVE_SCENARIO === "interrupted";
@@ -230,6 +231,15 @@ const inspectInstance = (instanceId: string): any[] => {
   }
   return found;
 };
+const confirmedWorkloads = async (instanceId: string, executionId: string, events: any[], pods: any[]) => {
+  const pins = events.filter(event => event.executionId === executionId && event.kind === "execution.provider_receipt" && event.payload.workloadId)
+    .map(event => event.payload.workloadId as string);
+  assert.equal(pins.length, 1, "execution has no unique acknowledged workload");
+  assert(pods.some(pod => pod.labels?.workload_key === pins[0]), "acknowledged workload was not independently inspected");
+  const workloads = await gateway.workloads(instanceId);
+  assertConfirmedWorkloads(instanceId, workloads, [...pins, ...pods.map(pod => pod.labels.workload_key)]);
+  return workloads;
+};
 const cancelRunningTurn = async (taskId: string) => {
   let initial: any[] = [];
   for (let attempt = 0; attempt < 180; attempt++) {
@@ -279,9 +289,9 @@ const cancelRunningTurn = async (taskId: string) => {
     const events = (await fetch(`${base}/tasks/${taskId}/events`, { headers }).then(r => r.json()) as any).events;
     const stopped = events.find((event: any) => event.kind === "runtime.stopped");
     assert(stopped && deletionObservedAt <= Date.parse(stopped.at), "runtime.stopped preceded the physical-deletion observation");
-    assert((await gateway.workloads(binding.instanceId)).every(workload => workload.removalConfirmedAt), "unconfirmed workload removal remains");
+    const workloads = await confirmedWorkloads(binding.instanceId, stopped.executionId, events, snapshots[1]);
     assert.equal(pod.pvc.length, 1, "expected one fixture workspace");
-    const cancellationEvidence: Record<string, unknown> = { task, events, snapshots: snapshots[1], requestedAt, deletionObservedAt, elapsedMs };
+    const cancellationEvidence: Record<string, unknown> = { task, events, workloads, snapshots: snapshots[1], requestedAt, deletionObservedAt, elapsedMs };
     evidence.push(cancellationEvidence);
     const retained = await inspectRetainedCancellationPvc(kubeconfig, inspectorImage!, pod.pvc[0]);
     cancellationEvidence.retained = retained;
@@ -340,7 +350,8 @@ const runSingleTask = async () => {
       if (events.filter(event => event.kind === "runtime.stopped").length >= turn) {
         assertInstanceAbsent(kubeconfig, binding.instanceId);
         const task = await rpc("GetTask", { id: taskId });
-        evidence.push({ turn, task, events, snapshots: snapshots[turn] ?? [] });
+        const workloads = await confirmedWorkloads(binding.instanceId, executionId, events, snapshots[turn] ?? []);
+        evidence.push({ turn, task, events, workloads, snapshots: snapshots[turn] ?? [] });
         assert.equal(task.status.state, streaming && turn === 2 ? "TASK_STATE_COMPLETED" : "TASK_STATE_INPUT_REQUIRED", "unexpected state after releasing compute");
         assert(!task.metadata?.recoveryRequired, "turn was quarantined");
         assert(events.filter(event => event.kind === "agent.outcome" && event.payload.outcome === "turn_done").length >= turn - (interrupted ? 1 : 0), "missing real MCP outcome");
@@ -394,10 +405,10 @@ const runSingleTask = async () => {
       assert.equal(quarantined.metadata?.recoveryRequired, true);
       assert.equal(quarantined.metadata?.resourcesReleased, true);
       assert.equal(quarantined.metadata?.uncertainSideEffects, true);
-      assert((await gateway.workloads(binding.instanceId)).every(workload => workload.removalConfirmedAt), "quarantine did not confirm removal");
       assertInstanceAbsent(kubeconfig, binding.instanceId);
       const recoveredEvents = (await fetch(`${base}/tasks/${taskId}/events`, { headers }).then(r => r.json()) as any).events;
-      evidence.push({ turn: 1, task: quarantined, events: recoveredEvents, snapshots: snapshots[1], gatedReplacement: gated });
+      const workloads = await confirmedWorkloads(binding.instanceId, executionId, recoveredEvents, [...snapshots[1], ...gated]);
+      evidence.push({ turn: 1, task: quarantined, events: recoveredEvents, workloads, snapshots: snapshots[1], gatedReplacement: gated });
       await assert.rejects(rpc("SendMessage", { message: { taskId, messageId: randomUUID(), role: "ROLE_USER", parts: [{ text: "must not run before reconciliation" }] } }));
       const response = await fetch(`${base}/tasks/${taskId}/executions/${executionId}/reconcile`, { method: "POST", headers,
         body: JSON.stringify({ resolution: "continue", reason: "Operator inspected the durable marker and pending journal in the gated replacement; append already happened once. Retire the old request without replay." }) });

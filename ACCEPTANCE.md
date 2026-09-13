@@ -7,8 +7,11 @@ Evidence below spans the preserved `kind-aira-a2a-lab` baseline and the new self
 A later failed-Pod test disproved the general removal contract asserted by the
 earlier orchestrator-only patches. Runners stamps `removedAt` for metering even
 when a failed Pod still exists. The service now requires an additive explicit
-confirmation field. Source and real PostgreSQL tests pass; coordinated
-Runners/Gateway/orchestrator rollout and live fault acceptance remain pending.
+confirmation field. Source, real PostgreSQL, Gateway wire, coordinated local
+rollout and model-free failed-Pod acceptance pass. All five native Codex lifecycle
+regressions also pass on that coordinated stack, with 157 local tests passing.
+Stock deployments were restored, all 46 task PVCs are retained, and the additive
+migration remains. Claude lifecycle and production hardening/rollout remain open.
 See [the failure, focused fixes and exact verification scope](AGYN-REMOVAL.md).
 Earlier independent Pod observations remain evidence only for those scenarios.
 

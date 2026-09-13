@@ -21,8 +21,10 @@ trusted-local integration; the legacy adapter and original deployment are preser
 
 The current service now requires a separate [workload removal confirmation](AGYN-REMOVAL.md)
 because Runners' billing timestamp can be set while a failed Pod remains.
-Source/database fixes are tested; coordinated deployment and live failure
-acceptance are pending. The older integration images are not compatible.
+Source/database fixes, coordinated local deployment, a model-free failed-Pod
+test and all five Codex lifecycle regressions pass. Stock deployments are
+restored; the additive database migration remains. The older integration images
+are not compatible, and production hardening/rollout remain open.
 
 [Live network checks](AGYN-NETWORK.md) found and locally repaired missing CNI
 enforcement despite installed policies. Pod-network isolation has separate
@@ -30,7 +32,9 @@ evidence; the real runtime is not yet a hardened sandbox.
 
 [Real parallel-task acceptance](AGYN-PARALLEL.md) verifies separate workspaces and
 native sessions on the same agent, queued follow-ups after pod removal, and
-cross-pod TCP/UDP denial. The observed runtime still lacks CPU/memory limits.
+cross-pod TCP/UDP denial. The opt-in [bounded profile](AGYN-RESOURCES.md) now also
+passes those scenarios with explicit per-container CPU/memory bounds; aggregate
+admission and sandbox hardening remain required.
 
 The new [durable execution service](SERVICE.md) adds authenticated A2A routing,
 transactional queued turns, reporting MCP, bounded outcome checks and a recoverable

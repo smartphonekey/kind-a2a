@@ -125,8 +125,10 @@ No Pod-level alpha resource feature is needed.
 This section records the earlier deployed profile, not a currently validated
 reproduction recipe. The wrapper now also requires and manages Runners/Gateway
 images, with 41 passing subprocess cases and a successful four-component live
-startup-failure test/restore. Native-agent regressions on that coordinated stack
-remain unverified. The images and remaining checks are in
+startup-failure test/restore. All five native Codex scenarios now also pass on
+that coordinated stack, with eleven main/supporting Pod specification checks and
+main cgroup proofs. The original 40 PVCs are unchanged and six new task PVCs are
+retained. Current images, per-scenario evidence and remaining checks are in
 [the rollout requirements](AGYN-REMOVAL.md).
 
 The operator wrapper now optionally deploys both combined images. It snapshots

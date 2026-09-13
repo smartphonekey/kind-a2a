@@ -3,7 +3,26 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import test from "node:test";
-import { assertHeldFailure, finalizerPatch, type HeldPod } from "./live/removal-proof.js";
+import { assertConfirmedWorkloads, assertHeldFailure, finalizerPatch, type HeldPod } from "./live/removal-proof.js";
+
+test("removal proof: every pinned and replacement workload needs explicit instance-bound confirmation", () => {
+  const workloads = [{ meta: { id: "first" }, agentInstanceId: "instance", status: "WORKLOAD_STATUS_STOPPED",
+    removedAt: "2026-09-13T12:00:00Z", removalConfirmedAt: "2026-09-13T12:00:01Z" },
+  { meta: { id: "replacement" }, agentInstanceId: "instance", status: "WORKLOAD_STATUS_FAILED", removalConfirmedAt: "2026-09-13T12:00:02Z" }];
+  assertConfirmedWorkloads("instance", workloads, ["first"]);
+  assertConfirmedWorkloads("instance", workloads, ["first", "replacement"]);
+  assert.throws(() => assertConfirmedWorkloads("instance", [], ["first"]));
+  assert.throws(() => assertConfirmedWorkloads("instance", workloads, []));
+  assert.throws(() => assertConfirmedWorkloads("instance", workloads, ["absent"]));
+  for (const changed of [workloads.slice(1), [...workloads, workloads[0]],
+    workloads.map(w => ({ ...w, agentInstanceId: "other" })),
+    workloads.map(w => ({ ...w, removalConfirmedAt: undefined })),
+    workloads.map(w => ({ ...w, removalConfirmedAt: "invalid" })),
+    [workloads[0], { ...workloads[1], status: "WORKLOAD_STATUS_RUNNING" }],
+    [workloads[0], { ...workloads[1], removalConfirmedAt: undefined }]]) {
+    assert.throws(() => assertConfirmedWorkloads("instance", changed, ["first"]));
+  }
+});
 
 const nonce = "21f17139-095e-4264-89e8-17082ba1ec63";
 const held: HeldPod = { name: "fixture", uid: "pod-uid", agentId: "agent", instanceId: "instance", containerName: "agent-dynamic-name", finalizer: `a2a-lab.agyn.dev/removal-${nonce}` };

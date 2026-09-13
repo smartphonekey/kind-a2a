@@ -148,8 +148,10 @@ real local rollout/restoration and model-free failed-Pod acceptance: billing
 ended while a held Pod still blocked A2A release, then explicit confirmation
 and independent absence preceded settlement. The migration remains after stock
 image restoration. See [the evidence and limitations](AGYN-REMOVAL.md).
-Native regressions and production rollout remain pending. No upstream PR has
-been submitted.
+All five native Codex lifecycle regressions now pass on that coordinated stack,
+with explicit confirmation evidence, retained task PVCs and verified stock
+restoration. Claude lifecycle and production rollout remain pending. No upstream
+PR has been submitted.
 
 ### Gateway Wire Acceptance
 

@@ -1,5 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import assert from "node:assert/strict";
+import type { AgynWorkload } from "../agyn-client.js";
+
+export function assertConfirmedWorkloads(instanceId: string, workloads: readonly AgynWorkload[], pinnedIds: readonly string[]): void {
+  assert(instanceId && pinnedIds.length && pinnedIds.every(id => typeof id === "string" && id), "explicit instance/workload bindings are required");
+  const ids = workloads.map(workload => workload.meta.id);
+  assert.equal(new Set(ids).size, workloads.length, "duplicate workload identity");
+  for (const id of pinnedIds) assert(ids.includes(id), "pinned workload is missing from removal evidence");
+  for (const workload of workloads) {
+    assert.equal(workload.agentInstanceId, instanceId, "removal evidence belongs to another instance");
+    assert(["WORKLOAD_STATUS_FAILED", "WORKLOAD_STATUS_STOPPED"].includes(workload.status), "nonterminal workload remains");
+    assert(workload.removalConfirmedAt && Number.isFinite(Date.parse(workload.removalConfirmedAt)), "explicit removal confirmation is required");
+  }
+}
 
 export type HeldPod = { name: string; uid: string; instanceId: string; agentId: string; containerName: string; finalizer: string };
 

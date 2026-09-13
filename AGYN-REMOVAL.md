@@ -4,10 +4,12 @@
 Status: a live failure disproved the old timestamp contract. The additive API,
 Runners persistence, orchestrator, A2A driver and installer fixes now pass a
 coordinated local rollout and a real, model-free startup-failure/deletion test,
-in addition to source, PostgreSQL and Gateway wire checks. The stock deployments
-are restored; the additive database migration remains. Native-agent regression
-runs on this coordinated stack, infrastructure fencing and the other production
-gates remain open. This is not a production release or an interrupted-turn test.
+in addition to source, PostgreSQL and Gateway wire checks. All five Codex native
+lifecycle scenarios now also pass on that coordinated stack. The stock
+deployments are restored; the additive database migration remains. Second-agent
+acceptance, infrastructure fencing and the other production gates remain open.
+The model-free failure test and native interrupted-turn test are separate proofs,
+not a production release or a claim of safe automatic side-effect retry.
 
 ## Observed Failure
 
@@ -85,7 +87,7 @@ agent-instance tests do not establish that all sandbox paths use this contract.
   stopped workloads. Identity, pagination and downstream caller metadata also
   survive the wire round trip. The Runners backend is a fake, not the deployed
   database, and this test does not exercise the public authentication boundary.
-- Lab: build and all 145 top-level tests pass (156 including subtests). Cases
+- Lab: build and all 146 top-level tests pass (157 including subtests). Cases
   distinguish billing end from confirmation, empty and wrong-workload lists,
   mismatched images and incomplete/stale deployment rollouts. Five real installer
   subprocess cases against a fake Gateway verify that only confirmed predecessors
@@ -220,7 +222,8 @@ deliberately holds the API object, not a still-running process. This test does
 not prove node fencing, forced-deletion safety, late-create exclusion, all
 possible orphan Pods, or safe retry of interrupted side effects. The fixture
 uses a persistent volume with **no TTL**, so live TTL scheduling is not proved.
-Old-server compatibility and native lifecycle regressions still need live checks.
+Old-server compatibility still needs live checks. Native Codex lifecycle
+regressions are recorded separately below.
 
 After the retention audit and backup, the local reproduction command is:
 
@@ -245,6 +248,61 @@ The UUID is local model-registry metadata, not a portable model ID or permission
 to run inference. The wrapper refuses a missing UUID before any deployment
 change. Do not supply a native-agent profile/subscription file to this scenario.
 
+## Native Lifecycle Regression
+
+On 2026-09-13, the same coordinated Runners/Gateway/orchestrator, daemon and
+bounded runner images passed all five native Codex scenarios in one wrapper run.
+Codex `0.147.0` used `gpt-5.5` through the existing ChatGPT subscription reference;
+no model credential was read/copied and no new paid API inference was enabled.
+The A2A controller, scheduler, driver and workflow code were unchanged for this
+regression. Only the operator fixture's removal-evidence checks were strengthened.
+
+| Scenario | Evidence and result |
+| --- | --- |
+| Completed | Task `7d9cb099-3365-42b4-a0d4-7d2a77fd4b56`, `agyn-reporting-live-X8yets`: two turns, different Pod UIDs, same PVC/native session/marker; explicit confirmation and independent absence at each release. |
+| Interrupted | Task `fbeec2d1-8544-4d8e-b4f1-9c4f1b099733`, `agyn-reporting-live-QLyLlJ`: after an unconditional append, service SIGKILL and Pod replacement left exactly one marker line. The replacement stayed gated; explicit reconciliation retired the old request without replay before continuation. All three workload records have confirmation. |
+| Cancellation | Task `4e892f59-a231-467d-a856-b332238b7dbc`, `agyn-reporting-live-wPHIbq`: the tool survived an operator SIGTERM, then A2A cancellation settled 3.074 seconds after the request, with Pod deletion independently observed before settlement. Two read-only PVC samples showed an unchanged heartbeat and no late-write marker. |
+| Parallel/FIFO | Agent `91fd5868-7a48-4d72-8df8-c8eb337d3b5c`, `agyn-reporting-live-czDtiH`: two tasks retained separate instances, threads, PVCs and native sessions. The queued same-task turn reused only its own state after old-workload confirmation while the other task kept running. Cross-task reporting returned 401 and cross-Pod TCP/UDP failed with passing listener controls. |
+| Streaming | Task `9e3c17ec-0bf5-4126-8d7c-9d4a5bfc5abf`, `agyn-reporting-live-lKkffR`: blocking duplicate returned after 79.403 seconds; two streams stayed open for 118.315/118.312 seconds across idle compute release and Pod replacement, then closed at COMPLETED with the exact durable suffix. |
+
+The single-task fixture now pins the acknowledged workload to an independently
+inspected Pod and verifies every inspected replacement too. Empty lists, missing
+pins, duplicates, foreign instances, nonterminal status, missing confirmation
+and invalid timestamps cannot pass. Returned workload records are saved with
+each turn. Billing and confirmation timestamps are independent; no relative
+ordering between them is assumed.
+
+The credential-free network preflight passed 92 checks, run `1176b203`, and
+removed its probes: `.state/agyn-network-live-ZL3S0I/evidence.json`. Eleven
+native/gated Pods across the five scenarios had matching main/supporting CPU
+and memory specifications and main cgroup bounds. All fixture policies were
+removed after workload absence. The original 40 PVC UIDs are unchanged; six new
+task PVCs remain Bound, for 46 total. Every retained volume remains persistent
+with no TTL, and its owner is paused or terminated.
+
+Independent post-run reads verified original deployment UIDs, stock images,
+managed environment fields and complete rollouts. The stock runner advertises
+only `docker` again. PostgreSQL retains explicit confirmation for all eleven
+workloads after the image downgrade. These are point-in-time retention and
+restoration audits, not admission locking or a backup restore test.
+
+Private per-scenario evidence is under `.state/` in the directories above;
+parallel observations also have `parallel.json`. The deployment snapshot and
+cross-run audits are `.state/agyn-lifecycle-deploy-c75cqq/{before,post-restore,native-summary}.json`.
+
+After the same retention/image and network preflights, use the image, resource,
+chart, inspector and CA environment from the model-free command above, omit
+`AGYN_LIVE_PLATFORM_MODEL_ID`, and run:
+
+```sh
+node scripts/agyn-live-lifecycle.mjs completed interrupted cancellation parallel streaming
+```
+
+These are Codex-only trusted-local results. They do not complete Claude
+lifecycle acceptance, node/late-create fencing, old-server/TTL checks, production
+hardening, or streaming across a controller crash. Restored stock images still
+do not implement the new service's required contract.
+
 ## Remaining Rollout Work
 
 1. Review/publish the API contract before downstream default BSR builds can
@@ -259,9 +317,10 @@ change. Do not supply a native-agent profile/subscription file to this scenario.
 4. The model-free failure/deletion test passed. Add live old-server compatibility,
    TTL scheduling and stronger infrastructure failure tests without weakening
    confirmation or permitting automatic side-effect replay.
-5. Repeat the completed, interrupted, cancellation, parallel and streaming
-   scenarios for the selected agent profiles. Preserve the separate interrupted
-   side-effect reconciliation requirement.
+5. The completed, interrupted, cancellation, parallel and streaming Codex
+   regressions pass above. Repeat the relevant lifecycle scenarios for Claude
+   and investigate its native errors. Preserve the separate interrupted
+   side-effect reconciliation requirement; completed-turn recovery is not enough.
 
 `src/live/agyn-reporting.ts` now requires explicit `AGYN_LIVE_RUNNERS_IMAGE` and
 `AGYN_LIVE_GATEWAY_IMAGE` values and fully observed matching deployments before

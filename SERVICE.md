@@ -16,8 +16,9 @@ The current driver requires the additive `removalConfirmedAt` contract in
 Runners, Gateway and the orchestrator. Stock Agyn and the earlier local
 integration images are incompatible: `removedAt` ends metering and can be set
 while a failed Pod still exists. Source, real database, Gateway wire and a
-coordinated local failed-Pod test pass. The stock deployments were restored;
-the database migration alone does not make them compatible. Native regressions
+coordinated local failed-Pod test pass, as do all five native Codex lifecycle
+regressions on the coordinated stack. The stock deployments were restored;
+the database migration alone does not make them compatible. Claude lifecycle
 and production deployment are still pending. See
 [the incident and rollout requirements](AGYN-REMOVAL.md). Do not start new tasks
 on the old stack expecting them to settle with this driver.

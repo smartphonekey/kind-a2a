@@ -8,9 +8,11 @@ task ownership, dispatch and durable reports. No upstream PR has been submitted.
 do not implement the current removal contract. A later failed Pod proved that
 Runners can stamp `removedAt` for metering without deletion. The new service
 requires `removalConfirmedAt`; coordinated API/Runners/Gateway/orchestrator
-rollout and live fault acceptance remain pending. See [AGYN-REMOVAL.md](AGYN-REMOVAL.md)
-before running another fixture. The live preflight now requires reviewed Runners
-and Gateway images as well as the previous components.
+rollout, model-free failed-Pod acceptance and all five native Codex regressions
+now pass locally. See [AGYN-REMOVAL.md](AGYN-REMOVAL.md) for current evidence and
+images before running another fixture. Stock deployments were restored and are
+not compatible with this service. The live preflight now requires reviewed
+Runners and Gateway images as well as the previous components.
 
 ## Network Acceptance Caveat
 

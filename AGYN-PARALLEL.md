@@ -4,6 +4,16 @@ This is real-agent acceptance in the trusted local lab, not a production securit
 claim. The scenario uses the existing A2A service, scheduler, reporting MCP and
 Agyn adapter unchanged. Only the operator test coordinates the barriers.
 
+The scenario passed again on the coordinated removal-confirmation stack at
+22:08:13-22:11:10 UTC on 2026-09-13, using agent
+`91fd5868-7a48-4d72-8df8-c8eb337d3b5c`. Separate native identities/PVCs,
+same-task FIFO, continued neighbor progress, explicit old-workload confirmation,
+cross-task reporting 401s and TCP/UDP denial all passed. All three Pods had the
+bounded resource profile. Private evidence is
+`.state/agyn-reporting-live-czDtiH/{parallel,evidence}.json`; current images and
+independent cleanup audits are in [the coordinated regression](AGYN-REMOVAL.md#native-lifecycle-regression).
+The detailed run below remains historical evidence, not the current image recipe.
+
 ## Verified Behavior
 
 On 2026-09-13, from 15:37:57 to 15:40:38 UTC, two tasks on agent

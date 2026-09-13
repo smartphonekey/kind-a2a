@@ -178,8 +178,18 @@ images, managed environment fields and readiness matched. The stock runner's
 capabilities returned to `["docker"]`. This is a temporary trusted-local test,
 not a permanent production upgrade or an adversarial sandbox acceptance.
 
-Reproduce after the network preflight using the exact resource/network/image
-environment in [AGYN-RESOURCES.md](AGYN-RESOURCES.md#bounded-agent-profile):
+The coordinated removal-confirmation stack passed the same scenario again on
+2026-09-13, task `9e3c17ec-0bf5-4126-8d7c-9d4a5bfc5abf`. The blocking duplicate
+returned after 79.403 seconds; the two streams stayed open for 118.315/118.312
+seconds, including 2.001 seconds subscribed with released compute between turns.
+Both delivered one snapshot and eight updates matching the durable suffix, then
+closed at COMPLETED. The native session/PVC remained unchanged across different
+Pod UIDs, and both workload records include explicit removal confirmation.
+Evidence: `.state/agyn-reporting-live-lKkffR/evidence.json`. This is still
+completed-turn recovery, not streaming through a controller crash.
+
+Reproduce after the network and retention preflights using the current
+resource/network/image environment in [AGYN-REMOVAL.md](AGYN-REMOVAL.md#native-lifecycle-regression):
 
 ```sh
 node scripts/agyn-live-lifecycle.mjs streaming

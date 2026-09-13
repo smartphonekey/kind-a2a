@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import { createServer } from "node:http";
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync, lstatSync, symlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -132,4 +132,56 @@ test("Agyn terminal delivery waits for verified raw-mode readiness and requires 
     else await assert.rejects(delivery, /delivery failed/);
     assert.equal(credentialSent, scenario !== "wrong-instance");
   }
+});
+
+test("Claude installation validates both files before mutation and acknowledges only complete scoped setup", async t => {
+  const directory = mkdtempSync(join(tmpdir(), "claude-reporting-install-"));
+  const store = new DurableTaskStore(":memory:");
+  const submitted = store.submit({ tenant: "org", subject: "test" }, Message.fromJSON({ messageId: "claude-one", role: "ROLE_USER", parts: [{ text: "work" }] }), "claude");
+  const lease = store.claim("worker", 10_000, 1)!.lease;
+  const instanceId = randomUUID();
+  store.bind(lease, { instanceId, threadId: randomUUID(), profileId: "claude" }); store.beginDispatch(lease);
+  const server = createServer(createServiceApp({ store, card: serviceCard("http://localhost"), profileId: "claude",
+    signal: new AbortController().signal, authorize: async () => undefined }));
+  server.listen(0, "127.0.0.1"); await once(server, "listening");
+  const address = server.address(); assert(address && typeof address !== "string");
+  const environment = { AGENT_INSTANCE_ID: instanceId, AGYN_INBOX_JOURNAL_DIR: "/workspace/.agyn/inbox-journal",
+    AGYN_INBOX_CONTROL_FILE: join(directory, "inbox-control.json") };
+  const previous = Object.fromEntries(Object.keys(environment).map(key => [key, process.env[key]]));
+  Object.assign(process.env, environment);
+  t.after(async () => {
+    for (const [key, value] of Object.entries(previous)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+    server.closeAllConnections(); await new Promise<void>(r => server.close(() => r())); store.close(); rmSync(directory, { recursive: true, force: true });
+  });
+  writeFileSync(join(directory, "binding.json"), JSON.stringify({ url: `http://127.0.0.1:${address.port}/reporting`,
+    token: store.issueReportingCredential(submitted.execution.id, 60_000), allowInsecureLocal: true }), { mode: 0o600 });
+  writeFileSync(join(directory, "expected.json"), JSON.stringify({ executionId: submitted.execution.id, instanceId }), { mode: 0o600 });
+  writeFileSync(environment.AGYN_INBOX_CONTROL_FILE, JSON.stringify({ version: 1, instance_id: instanceId,
+    allowed_message_id: randomUUID(), ack_only_message_ids: [] }), { mode: 0o600 });
+  const target = { agent: "claude" as const, settingsFile: join(directory, "settings.json"), mcpFile: join(directory, ".claude.json") };
+  const settings = '{"permissions":{"defaultMode":"default"}}';
+  writeFileSync(target.settingsFile, settings);
+  writeFileSync(target.mcpFile, "not json");
+  await assert.rejects(installRuntime(directory, target));
+  assert.equal(readFileSync(target.settingsFile, "utf8"), settings);
+  assert(!existsSync(join(directory, "configured.json")));
+  const link = join(directory, "symlink.json"); symlinkSync(target.mcpFile, link);
+  await assert.rejects(installRuntime(directory, { ...target, mcpFile: link }), /invalid managed config/);
+  await assert.rejects(installRuntime(directory, { ...target, mcpFile: target.settingsFile }), /distinct/);
+  writeFileSync(target.mcpFile, '{"hasCompletedOnboarding":true}');
+  const stale = `${target.mcpFile}.execution.tmp`;
+  writeFileSync(stale, "prior incomplete write");
+  await assert.rejects(installRuntime(directory, target), { code: "EEXIST" });
+  assert(!existsSync(join(directory, "configured.json")), "partial setup must not acknowledge readiness");
+  assert.equal(readFileSync(stale, "utf8"), "prior incomplete write", "setup must not overwrite a prior temporary file");
+  assert.equal(readFileSync(target.mcpFile, "utf8"), '{"hasCompletedOnboarding":true}');
+  rmSync(stale);
+  await installRuntime(directory, target);
+  assert.equal(lstatSync(target.mcpFile).mode & 0o777, 0o600);
+  assert.equal(lstatSync(target.settingsFile).mode & 0o777, 0o600);
+  assert.equal(JSON.parse(readFileSync(target.mcpFile, "utf8")).mcpServers.execution_reporting.type, "stdio");
+  assert.deepEqual(JSON.parse(readFileSync(target.settingsFile, "utf8")).permissions, { defaultMode: "default" });
+  assert.deepEqual(JSON.parse(readFileSync(join(directory, "configured.json"), "utf8")), {
+    executionId: submitted.execution.id, instanceId, reportingConfigured: true
+  });
 });

@@ -18,6 +18,8 @@ export function evaluateStop(status: ExecutionStatus, reminders: number, maxRemi
 }
 
 export function codexStopOutput(decision: StopDecision): Record<string, unknown> {
+  // Claude Code and Codex use the same command-Stop decision fields. Keep the
+  // existing export name for callers; the decision contract itself is generic.
   if (decision.action === "remind") return { decision: "block", reason: decision.reason };
   if (decision.action === "stop") return { continue: false, stopReason: decision.reason };
   return {};

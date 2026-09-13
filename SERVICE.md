@@ -106,7 +106,7 @@ scripts and continues, so an init script alone is NOT a startup safety gate.
 Agyn only starts an agent pod after an inbox message arrives. The service records
 dispatch intent, sends the message once, persists the returned request ID, then invokes `reportingSetupExecutable`
 directly, without a shell, passing one JSON document on stdin. The trusted init
-gate holds the daemon before Codex starts until reporting is configured:
+gate holds the daemon before the agent CLI starts until reporting is configured:
 
 ```json
 {
@@ -136,6 +136,12 @@ token is written to a private, ephemeral file, not the task PVC. The gate checks
 the authenticated execution status and installs the managed MCP/Stop config
 before releasing startup. The relay uses the official MCP SDK over stdio and
 Streamable HTTP; no new A2A or MCP wire format is introduced.
+
+The runtime's operator-provided `/agyn/config.json` selects the reporting config
+adapter. Codex uses system TOML; Claude uses its settings and user MCP JSON
+files. Unknown runtimes fail setup. Native Claude configuration checks and an
+independent SDK resume check pass, but full Claude-through-Agyn acceptance still
+requires daemon changes and a subscription binding. See [AGYN-PORTABILITY.md](AGYN-PORTABILITY.md).
 
 The gate also installs a trusted inbox control file authorizing only the current
 provider message. The daemon's durable journal records intent before the agent

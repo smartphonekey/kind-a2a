@@ -172,6 +172,26 @@ wrapper cases. The A2A controller and workflow code did not change for this
 resource profile. Aggregate admission, accounting and production hardening are
 not established by the tiny agent fixtures.
 
+## Claude SDK Session Selection
+
+A separate SDK-only contribution adds `Options.SessionID` and `Options.Resume`
+and rejects their simultaneous use before starting a process. Existing default
+arguments and permission behavior are unchanged. The SDK does not copy session
+files, fall back to a new conversation, or decide whether interrupted work can
+be retried.
+
+- Fork: [spk-ai/claude-sdk-go](https://github.com/spk-ai/claude-sdk-go).
+- Branch: `feat/session-resumption`, commit `0cdc814`, based on `bc88c1b`.
+- Compare: <https://github.com/agynio/claude-sdk-go/compare/main...spk-ai:claude-sdk-go:feat/session-resumption>.
+- `go test ./...` and `go test -race ./...` pass. Subprocess tests verify exact
+  argument forwarding, default compatibility and pre-spawn validation.
+- The opt-in native test passes with Claude Code `2.1.270` and an existing Max
+  subscription: two text-only turns, no tools, different processes, same session
+  and recovered random marker. [Evidence and limits](AGYN-PORTABILITY.md).
+- Upstream MIT licensing is retained. The branch is pushed; no upstream PR has
+  been submitted. Daemon session mapping and A2A portability are separate work,
+  not part of this small SDK patch.
+
 ## Proposed Subsequent Contributions
 
 | Review unit | Suggested home | Boundary |

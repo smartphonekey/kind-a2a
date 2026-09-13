@@ -4,6 +4,16 @@ This is a tested **trusted-local** integration, not a hardened deployment. It
 keeps Agyn responsible for pod/PVC lifecycle and the A2A service responsible for
 task ownership, dispatch and durable reports. No upstream PR has been submitted.
 
+## Network Acceptance Caveat
+
+The original lifecycle results below did not prove network isolation. Subsequent live
+probes found the Agyn VM was not enforcing its installed workload egress policy.
+Restarting only VM K3s restored per-pod firewall rules. A new two-turn Codex run
+passed with the ingress policy and a narrow, fixture-agent-only host reporting
+route. Cancellation/interrupted recovery and parallel tasks still need acceptance
+under this network profile. See [AGYN-NETWORK.md](AGYN-NETWORK.md) for evidence and
+the `AGYN_LIVE_RUNNER_CHART` opt-in command; do not broadly allow host/LAN egress.
+
 ## Required Components
 
 - `agynd-cli` persistence patch `c933329`, branch `fix/codex-home-persistence`.

@@ -25,9 +25,9 @@ agent profile must not change the A2A controller or workflow implementation.
 | Recovery and cancellation | Healthy-runner hard cancel and interrupted recovery live verified | Cancellation of a command that survived SIGTERM settled in 3.026s, after Pod deletion; its retained PVC showed a stopped heartbeat and no late write. SIGKILL/pod-loss quarantine and explicit retirement also pass with the final orchestrator image. Unknown provider identities still cannot resume. Node partitions and late in-flight creates need fencing/reconciliation. |
 | Compute release | Corrected contract and healthy local Pod checks verified | Patched orchestrator confirms runner NotFound before removedAt and retains failed/unreachable workloads. Live deletion observation preceded cancellation settlement; completed/interrupted tests independently found no instance Pods on settlement. Stock/historical timestamps only prove acknowledgement, not physical absence. Upgrade drain/audit and infrastructure fencing remain required. |
 | Parallelism and portability | Pending | Concurrent isolated live tasks; same-task FIFO; second real agent profile with unchanged controller/workflows. |
-| Sandbox and network enforcement | Pending | Nonprivileged workloads, restricted mounts/service accounts, enforced egress and cross-task denial; explicit runtime isolation profile. Unconfined is lab-only. |
+| Sandbox and network enforcement | Pod-network and two-turn Codex compatibility verified after local repair; full gate pending | Probes exposed absent enforcement despite installed policies. Restarting only Agyn VM K3s restored it; 92 network checks and a real Codex continuation/Stop-reminder run passed with scoped ingress denial and reporting access. See [network evidence and scope](AGYN-NETWORK.md). Adversarial runtime hardening, concurrent cross-task/overlay denial, remaining lifecycle network reruns and fail-closed bootstrap remain required. Unconfined is lab-only. |
 | Operations | Pending; local test deployment restoration verified | Six subprocess tests verify restoration on success/failure, busy-lab refusal, private patches and preservation of external edits. Production admission/backpressure, graceful draining, readiness, backup/restore, schema migration, retention and disaster recovery still need acceptance. |
-| Upstream contribution | Five focused branches pushed; proposal drafted | Three daemon branches plus independent orchestrator pause-policy `7a6c8ec` and confirmed-removal `230977d`/volume-retention `e0f57d8` branches. Ordinary Go suites and documented focused race checks pass; unrelated upstream race-test failures remain disclosed. No upstream PR submitted yet. |
+| Upstream contribution | Six focused branches; proposal drafted | Three daemon branches plus independent orchestrator pause-policy `7a6c8ec` and confirmed-removal `230977d`/volume-retention `e0f57d8` branches; opt-in runner ingress chart `e914f23` has Helm and live pod-network checks. Ordinary daemon/orchestrator Go suites and documented focused race checks pass; unrelated upstream race-test failures remain disclosed. No upstream PR submitted yet. |
 
 Native session persistence is required for correct continuation. Bulk session
 analytics, auto-improvement pipelines and prompt/tool customization UI are next
@@ -53,6 +53,7 @@ claim of multi-node HA.
 
 - [Service setup and current limitations](SERVICE.md)
 - [Gated live integration and reproduction](AGYN-REPORTING.md)
+- [Network enforcement failure, repair and acceptance](AGYN-NETWORK.md)
 - [Contribution guide and patch evidence](CONTRIBUTING-AGYN.md)
 
 - [A2A specification](https://a2a-protocol.org/latest/specification/)

@@ -8,8 +8,10 @@ import { createServer } from "node:net";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { KubeConfig, KubernetesObjectApi } from "@kubernetes/client-node";
 import { AgynClient } from "../agyn-client.js";
 import { assertInstanceAbsent, inspectRetainedCancellationPvc, instancePods } from "./kubernetes-proof.js";
+import { agentNetworkPolicies, assertPolicyUnchanged, managedLabel, NetworkFixtures } from "./network-proof.js";
 
 if (process.env.AGYN_LIVE_ACCEPTANCE !== "trusted-local") throw new Error("Set AGYN_LIVE_ACCEPTANCE=trusted-local to run real-model tests");
 const interrupted = process.env.AGYN_LIVE_SCENARIO === "interrupted";
@@ -21,6 +23,10 @@ if (cancellation) assert(inspectorImage && /@sha256:[a-f0-9]{64}$/.test(inspecto
 const expectedImage = process.env.AGYN_LIVE_INIT_IMAGE;
 if (!expectedImage) throw new Error("AGYN_LIVE_INIT_IMAGE must identify the reviewed required-init/CODEX_HOME integration image");
 const kubeconfig = resolve(process.env.AGYN_KUBECONFIG ?? ".state/agyn-kubeconfig");
+const networkTemplate = process.env.AGYN_LIVE_RUNNER_CHART ? execFileSync("helm", ["template", "a2a-network-proof",
+  resolve(process.env.AGYN_LIVE_RUNNER_CHART), "--set", "workloadIngressNetworkPolicy.enabled=true",
+  "--set", "workloadNamespace=agyn-workloads", "--show-only", "templates/workload-ingress-networkpolicy.yaml"],
+{ encoding: "utf8", timeout: 30_000 }) : undefined;
 const deployment = JSON.parse(execFileSync("kubectl", ["--kubeconfig", kubeconfig, "get", "deployment", "agents-orchestrator", "-n", "agyn-platform", "-o", "json"], { encoding: "utf8" }));
 assert(deployment.spec.template.spec.containers.some((container: any) => container.env.some((env: any) => env.name === "AGYND_CLI_INIT_IMAGE" && env.value === expectedImage)), "expected integration image is not deployed");
 const orchestrator = deployment.spec.template.spec.containers.find((container: any) => container.name === "agents-orchestrator");
@@ -86,9 +92,10 @@ const credentialsFile = join(directory, "credentials.json");
 writeFileSync(credentialsFile, JSON.stringify([{ sha256: createHash("sha256").update(bearer).digest("hex"), tenant: who.organization,
   subject: "live-acceptance", expiresAt: new Date(Date.now() + 3_600_000).toISOString(), canReconcile: true }]), { mode: 0o600 });
 const configFile = join(directory, "service.json");
+const reportingUrl = `http://${process.env.AGYN_LIVE_HOST_IP ?? "192.168.5.2"}:${address.port}/reporting`;
 writeFileSync(configFile, JSON.stringify({ environmentProfile: "trusted-local", dbPath: join(directory, "tasks.sqlite"), credentialsFile,
   reportingSetupExecutable: new URL("../service/agyn-reporting-installer.js", import.meta.url).pathname, publicUrl: base,
-  reportingUrl: `http://${process.env.AGYN_LIVE_HOST_IP ?? "192.168.5.2"}:${address.port}/reporting`, host: "0.0.0.0", port: address.port,
+  reportingUrl, host: "0.0.0.0", port: address.port,
   defaultProfile: "codex-gated-live-v1", profiles: [{ id: "codex-gated-live-v1", agentId }], concurrency: 2, turnTimeoutMs: 180_000 }), { mode: 0o600 });
 const startService = () => {
   const child = spawn(process.execPath, [new URL("../service/main.js", import.meta.url).pathname], { env: {
@@ -112,6 +119,9 @@ const rpc = async (method: string, params: unknown): Promise<any> => {
 const tasks: string[] = [];
 const evidence: Record<string, unknown>[] = [];
 const snapshots: Record<number, any[]> = {};
+let networkFixtures: NetworkFixtures | undefined;
+let workloadsReleased = false;
+const networkEvidence: any = { enabled: false };
 const waitService = async () => {
   for (let attempt = 0; ; attempt++) {
     if (await fetch(`${base}/healthz`).then(r => r.ok).catch(() => false)) break;
@@ -122,6 +132,15 @@ const waitService = async () => {
 const inspectInstance = (instanceId: string): any[] => {
   const found: any[] = [];
   for (const pod of instancePods(kubeconfig, instanceId)) {
+    if (networkEvidence.enabled) {
+      assert.equal(pod.metadata.labels?.["agent-id"], agentId, "ingress policy does not select the live agent pod");
+      assert.equal(pod.metadata.labels?.[managedLabel], "agents-orchestrator");
+      for (const policy of networkEvidence.policies) {
+        const current = JSON.parse(execFileSync("kubectl", ["--kubeconfig", kubeconfig, "-n", "agyn-workloads", "get",
+          "networkpolicy", policy.metadata.name, "-o", "json"], { encoding: "utf8", timeout: 10_000 }));
+        assertPolicyUnchanged(current, policy);
+      }
+    }
     const container = pod.spec.containers.find((item: any) => item.env?.some((entry: any) => entry.name === "AGENT_INSTANCE_ID" && entry.value === instanceId));
     if (!container) continue;
     try {
@@ -136,7 +155,7 @@ const inspectInstance = (instanceId: string): any[] => {
             cancellation:control?{...control,alive,signals:fs.readFileSync("/workspace/cancel-signals.txt","utf8"),heartbeat:fs.readFileSync("/workspace/cancel-heartbeat.txt","utf8")}:null,
             configured:fs.existsSync("/run/agyn-execution/configured.json")}));`],
         { encoding: "utf8", timeout: 5000, stdio: ["ignore", "pipe", "pipe"] }));
-      if (state.mapping.length) found.push({ name: pod.metadata.name, uid: pod.metadata.uid,
+      if (state.mapping.length) found.push({ name: pod.metadata.name, uid: pod.metadata.uid, labels: pod.metadata.labels,
         pvc: pod.spec.volumes.filter((v: any) => v.persistentVolumeClaim).map((v: any) => v.persistentVolumeClaim.claimName), ...state });
     } catch { /* A starting or removed pod is not yet inspectable. */ }
   }
@@ -209,6 +228,21 @@ const cancelRunningTurn = async (taskId: string) => {
   }
 };
 try {
+  if (networkTemplate) {
+    const config = new KubeConfig(); config.loadFromFile(kubeconfig);
+    const run = randomUUID().slice(0, 8);
+    networkFixtures = new NetworkFixtures(KubernetesObjectApi.makeApiClient(config), run, resources => {
+      networkEvidence.resources = resources;
+      writeFileSync(join(directory, "network.json"), JSON.stringify(networkEvidence, null, 2), { mode: 0o600 });
+    });
+    networkEvidence.policies = [];
+    for (const policy of agentNetworkPolicies(networkTemplate, run, agentId, reportingUrl)) {
+      networkEvidence.policies.push(await networkFixtures.create(policy));
+    }
+    networkEvidence.enabled = true;
+    networkEvidence.templateSha256 = createHash("sha256").update(networkTemplate).digest("hex");
+    console.log(JSON.stringify({ kind: "live.network-configured", agentId, policyNames: networkEvidence.policies.map((p: any) => p.metadata.name) }));
+  }
   await waitService();
   const first = await rpc("SendMessage", { message: { messageId: randomUUID(), role: "ROLE_USER", parts: [{ text:
     cancellation ? `Cancellation acceptance test. Report progress, then use exec_command to run /agyn/bin/node with this JavaScript and wait for it to finish. Do not detach the process, report an outcome, or run other commands while it is running. JavaScript: const fs=require("node:fs");fs.writeFileSync("/workspace/cancel-signals.txt","");process.on("SIGTERM",()=>fs.appendFileSync("/workspace/cancel-signals.txt","SIGTERM\\n"));fs.writeFileSync("/workspace/reporting-proof.txt",${JSON.stringify(suffix)});fs.writeFileSync("/workspace/cancel-heartbeat.txt",String(Date.now()));fs.writeFileSync("/workspace/cancel-control.json",JSON.stringify({pid:process.pid,nonce:${JSON.stringify(suffix)}}));setInterval(()=>fs.writeFileSync("/workspace/cancel-heartbeat.txt",String(Date.now())),250);setTimeout(()=>{fs.writeFileSync("/workspace/cancel-late.txt","unexpected completion");process.exit(0)},120000);`
@@ -320,11 +354,17 @@ try {
       if (attempt >= 90) throw new Error("fixture workloads did not release during cleanup");
       await delay(1000);
     }
+    workloadsReleased = true;
     console.log(JSON.stringify({ kind: "live.cleanup", directory, instances: instances.map(i => i.meta.id) }));
   } finally {
     child.kill("SIGTERM");
     const timer = setTimeout(() => child.kill("SIGKILL"), 5000);
     await exited; clearTimeout(timer);
-    writeFileSync(join(directory, "evidence.json"), JSON.stringify({ environmentId, agentId, tasks, scenario, snapshots, evidence }, null, 2), { mode: 0o600 });
+    try {
+      if (networkFixtures && workloadsReleased) { await networkFixtures.close(); networkEvidence.cleanedUp = true; }
+      else if (networkFixtures) networkEvidence.retained = "Workload cleanup was not confirmed; keep isolation policies until operator reconciliation";
+    } finally {
+      writeFileSync(join(directory, "evidence.json"), JSON.stringify({ environmentId, agentId, tasks, scenario, snapshots, evidence, network: networkEvidence }, null, 2), { mode: 0o600 });
+    }
   }
 }

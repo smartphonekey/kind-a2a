@@ -110,6 +110,28 @@ Discuss the confirmed-removal contract and node-partition fencing with maintaine
 a runner's `NotFound` is not proof against externally force-deleted pods or a late
 in-flight start. Historical `removed_at` values need an operator drain/audit.
 
+## Runner Ingress Isolation
+
+A separate chart-only contribution adds opt-in workload ingress denial without
+changing the runner API, binary, egress policy or runtime RBAC:
+
+- Fork: <https://github.com/spk-ai/k8s-runner>.
+- Branch: `feat/workload-ingress-isolation`, commit `e914f23`, based on `baadc75`.
+- Compare: <https://github.com/agynio/k8s-runner/compare/main...spk-ai:k8s-runner:feat/workload-ingress-isolation>.
+- `bash scripts/verify-workload-egress-networkpolicy.sh` passes, including existing
+  egress checks and new ingress selection/default/validation checks. No Go code
+  changed; a fresh full runner Go suite was not run for this chart-only patch.
+- Live credential-free probes passed 92 checks after repairing local K3s policy
+  enforcement. Real two-turn Codex continuation and the Stop reminder also passed
+  with this policy and a narrowly scoped local reporting allowance. See
+  [the exact scope and limitations](AGYN-NETWORK.md).
+- The branch is pushed; no upstream PR has been opened. Adversarial runtime
+  isolation, parallel cross-task denial and fail-closed bootstrap remain required.
+
+Keep the CNI enforcement incident separate from this chart proposal: adding a
+NetworkPolicy cannot repair a controller that is not enforcing policies. Do not
+describe the local K3s restart as a permanent bootstrap or runtime-code fix.
+
 ## Proposed Subsequent Contributions
 
 | Review unit | Suggested home | Boundary |

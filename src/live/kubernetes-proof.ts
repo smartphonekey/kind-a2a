@@ -30,16 +30,30 @@ export function assertInstanceAbsent(kubeconfig: string, instanceId: string): vo
 }
 
 export async function inspectRetainedCancellationPvc(kubeconfig: string, image: string, pvc: string): Promise<any> {
-  assert(/^[a-z0-9][a-z0-9.-]{0,252}$/.test(pvc), "invalid fixture PVC name");
-  const name = `a2a-cancel-inspect-${randomUUID().slice(0, 8)}`;
-  const args = ["--kubeconfig", kubeconfig, "-n", "agyn-workloads"];
   const script = `const fs=require("node:fs");
     const read=()=>({marker:fs.readFileSync("/workspace/reporting-proof.txt","utf8"),
       heartbeat:fs.readFileSync("/workspace/cancel-heartbeat.txt","utf8"),
       signals:fs.readFileSync("/workspace/cancel-signals.txt","utf8"),
       lateSideEffect:fs.existsSync("/workspace/cancel-late.txt")});
     const first=read();setTimeout(()=>console.log(JSON.stringify({first,second:read()})),1500);`;
-  const pod = { apiVersion: "v1", kind: "Pod", metadata: { name, labels: { "a2a-lab-proof": "cancellation" } }, spec: {
+  return inspectRetainedPvc(kubeconfig, image, pvc, "cancellation", script);
+}
+
+export async function inspectRetainedStartupFailurePvc(kubeconfig: string, image: string, pvc: string): Promise<any> {
+  const script = `const fs=require("node:fs");console.log(JSON.stringify({
+    record:JSON.parse(fs.readFileSync("/workspace/startup-failure.json","utf8")),
+    cliStarted:fs.existsSync("/workspace/startup-cli-started.jsonl"),
+    nativeMapping:fs.existsSync("/workspace/.codex/agyn/thread-mapping"),
+    nativeSessions:fs.existsSync("/workspace/.codex/sessions") }));`;
+  return inspectRetainedPvc(kubeconfig, image, pvc, "startup-failure", script);
+}
+
+async function inspectRetainedPvc(kubeconfig: string, image: string, pvc: string, purpose: string, script: string): Promise<any> {
+  assert(/^[a-z0-9][a-z0-9.-]{0,252}$/.test(pvc), "invalid fixture PVC name");
+  assert(/@sha256:[a-f0-9]{64}$/.test(image), "inspector image must be digest-pinned");
+  const name = `a2a-${purpose === "cancellation" ? "cancel" : "startup"}-inspect-${randomUUID().slice(0, 8)}`;
+  const args = ["--kubeconfig", kubeconfig, "-n", "agyn-workloads"];
+  const pod = { apiVersion: "v1", kind: "Pod", metadata: { name, labels: { "a2a-lab-proof": purpose } }, spec: {
     restartPolicy: "Never", automountServiceAccountToken: false, activeDeadlineSeconds: 45,
     securityContext: { seccompProfile: { type: "RuntimeDefault" } },
     containers: [{ name: "inspect", image, imagePullPolicy: "IfNotPresent", command: ["node", "-e", script],

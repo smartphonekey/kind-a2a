@@ -2,12 +2,12 @@
 # Workload Removal Confirmation
 
 Status: a live failure disproved the old timestamp contract. The additive API,
-Runners persistence, orchestrator, A2A driver and installer fixes pass source
-tests; the real PostgreSQL migration and Gateway wire checks also pass. The
-coordinated images are built and loaded into the local VM, and the expanded
-deployment wrapper is tested. Actual deployment, migration rollout and live
-fault acceptance are still pending. This is not a production release or a
-successful interrupted-turn test.
+Runners persistence, orchestrator, A2A driver and installer fixes now pass a
+coordinated local rollout and a real, model-free startup-failure/deletion test,
+in addition to source, PostgreSQL and Gateway wire checks. The stock deployments
+are restored; the additive database migration remains. Native-agent regression
+runs on this coordinated stack, infrastructure fencing and the other production
+gates remain open. This is not a production release or an interrupted-turn test.
 
 ## Observed Failure
 
@@ -85,25 +85,31 @@ agent-instance tests do not establish that all sandbox paths use this contract.
   stopped workloads. Identity, pagination and downstream caller metadata also
   survive the wire round trip. The Runners backend is a fake, not the deployed
   database, and this test does not exercise the public authentication boundary.
-- Lab: build and all 136 top-level tests pass (147 including subtests). Cases
+- Lab: build and all 145 top-level tests pass (156 including subtests). Cases
   distinguish billing end from confirmation, empty and wrong-workload lists,
   mismatched images and incomplete/stale deployment rollouts. Five real installer
   subprocess cases against a fake Gateway verify that only confirmed predecessors
   may be ignored during workload selection; no terminal or model is started.
-- Deployment wrapper: all 39 subprocess cases pass. Runners and Gateway are now
+- Deployment wrapper: all 41 subprocess cases pass. Runners and Gateway are now
   required alongside the existing images. Dependencies roll out first and
   restore last; partial deployment, lost patch ACKs, rollout failures, missing
   images, external edits, replaced identities and newly busy workloads are
   covered. No acceptance child starts after setup failure. Image-only targets
   leave their entire existing environment untouched.
+- The model-free startup scenario has seven additional proof/program tests:
+  exact Pod/container ownership, optimistic finalizer updates, preservation of
+  unrelated finalizers, premature release/replacement rejection, and a sentinel
+  which prevents model execution even if a daemon ignores the required failure.
 - A direct credential-free invocation rejected a missing reviewed Runners image
   before Gateway credential lookup or fixture creation. No model call was made.
 
 Private live failure, retained metadata and operator-cleanup evidence are in
 `.state/agyn-reporting-live-Q1g9Uf/`. The real database acceptance is in
 `.state/runners-removal-postgres-bapUSU/evidence.json`; its bounded disposable
-PostgreSQL container was removed. The deployed platform database was not changed.
-These database checks do not prove Kubernetes absence or Gateway field forwarding.
+PostgreSQL container was removed. That isolated database test did not change the
+deployed platform database. The subsequent rollout below did apply the additive
+migration. Database checks alone do not prove Kubernetes absence or Gateway
+field forwarding.
 
 Operator cleanup verified the failed Pod's exact UID and terminated containers,
 deleted only that Pod, removed the two unchanged fixture policies, and restored
@@ -127,7 +133,8 @@ documented orchestrator exclusion. The orchestrator repository happens to track
 two generated LLM files; their regenerated hashes are recorded in the build
 evidence rather than committed as unrelated generated API churn.
 
-These local images are built and loaded, **not deployed**:
+These local images were built, loaded and temporarily deployed for the startup
+acceptance below. They are **not the currently deployed stock images**:
 
 | Operator variable | Image |
 | --- | --- |
@@ -156,21 +163,102 @@ Private identity/retention evidence is in
 not an admission lock. Recheck it before shared deployment changes and compare
 the recorded PVC UIDs afterward. No retained PVC was changed by this build.
 
-## Coordinated Rollout Required
+## Live Startup Failure Acceptance
+
+On 2026-09-13 the required-init fixture passed through the real A2A service,
+reporting installer, authenticated Gateway, Runners database, orchestrator and
+Kubernetes runner. It used a separate private environment/agent with no native
+subscription attached. Platform mode requires a registered model UUID as
+metadata; the test never invokes that model. Its required init script replaces
+only the fixture's Pod-local CLI entry point with a non-networking sentinel,
+installs the ordinary reporting gate, then exits with code 47 on an explicit
+operator trigger. No fake provider response or synthetic agent outcome is used.
+
+| Observation | Evidence |
+| --- | --- |
+| Task / execution | `ea5897ee-dcf9-4e7e-beaf-58226ea7f086` / `a6841c1b-a680-460e-b270-1327f0d256ce` |
+| Workload / Pod UID | `2dac2757-915f-4f68-b404-8f6d0b715e62` / `f1e8974d-4a57-409b-bc23-6c6f86a0e8b8` |
+| Billing end | `21:43:50.760955Z` |
+| Held-deletion checks | 15 passing snapshots, `21:43:51.081Z` through `21:44:06.174Z` |
+| Operator released its finalizer | `21:44:07.394Z` |
+| Persisted removal confirmation | `21:44:07.824618Z` |
+| A2A `runtime.stopped` | `21:44:08.740Z` |
+
+During every held snapshot the exact failed Pod still existed with its deletion
+timestamp/finalizer, all its containers had terminated, billing had ended,
+`removalConfirmedAt` was absent, and `resourcesReleased` was false. A queued
+follow-up did not claim or dispatch. After finalizer release, settlement required
+independent Pod absence and explicit confirmation for the same workload. The
+task required recovery with automatic retry disabled; it did not become reusable
+or successfully completed merely because init failed.
+
+A bounded, read-only inspector verified the retained PVC's failure marker and
+found no sentinel invocation, native mapping or session directory. Pod specs and
+main-container cgroups matched the selected bounded profile. The original 38
+PVCs, one retained from fixture setup debugging, and the successful fixture's PVC
+remain Bound with unchanged UIDs: 40 total. The two fixture policies and inspector
+were removed, and all four stock deployment images/managed settings were restored.
+An independent PostgreSQL read confirmed both timestamps survived that downgrade.
+
+Private evidence: `.state/agyn-removal-live-MMjqbl/evidence.json` and
+`post-restore.json`; deployment snapshot `.state/agyn-lifecycle-deploy-BqQwTs/`.
+The pre-migration custom-format database archive is in
+`.state/agyn-removal-db-backup-zXxGAY/`; its archive contents were listed/verified,
+but a restore test is **not** claimed. The additive column/constraint remain in
+the deployed database, with no billing-to-confirmation migration backfill.
+
+Two earlier fixture setup attempts are not passes: `Vqtbox` used native-mode
+model metadata in platform mode and was rejected before task creation; `bt03tl`
+assumed the Kubernetes container was named `main` instead of selecting the
+instance-bound container. That attempt stopped before fault injection, and its
+Pod was removed by reconciliation. After verifying explicit confirmation and
+absence, operator cleanup removed its exact policies and restored the retained
+deployments. Those fixture errors and cleanup evidence are retained separately.
+
+The [Kubernetes finalizer](https://kubernetes.io/docs/concepts/overview/working-with-objects/finalizers/)
+deliberately holds the API object, not a still-running process. This test does
+not prove node fencing, forced-deletion safety, late-create exclusion, all
+possible orphan Pods, or safe retry of interrupted side effects. The fixture
+uses a persistent volume with **no TTL**, so live TTL scheduling is not proved.
+Old-server compatibility and native lifecycle regressions still need live checks.
+
+After the retention audit and backup, the local reproduction command is:
+
+```sh
+env NODE_EXTRA_CA_CERTS=/home/alex/.agyn/local/certs/agyn-local-ca.pem \
+  AGYN_KUBECONFIG=/home/alex/work/aira-a2a-lab/.state/agyn-kubeconfig \
+  AGYN_LIVE_ACCEPTANCE=trusted-local \
+  AGYN_LIVE_PLATFORM_MODEL_ID=6c310b50-0767-4ac0-ac9e-334bcdbc9731 \
+  AGYN_LIVE_RUNNERS_IMAGE=a2a-agyn-runners:890f759-api3c84a6a \
+  AGYN_LIVE_GATEWAY_IMAGE=a2a-agyn-gateway:6d7d432-api3c84a6a \
+  AGYN_LIVE_ORCHESTRATOR_IMAGE=a2a-agyn-orchestrator:d77e7d5-api3c84a6a \
+  AGYN_LIVE_INIT_IMAGE=a2a-agynd-reporting-init:beb1f23 \
+  AGYN_LIVE_RUNNER_IMAGE=a2a-agyn-runner:4dd12a8 \
+  AGYN_LIVE_COMPUTE_RESOURCES=true \
+  AGYN_LIVE_SUPPORTING_RESOURCES='{"requestsCpu":"50m","requestsMemory":"64Mi","limitsCpu":"500m","limitsMemory":"256Mi"}' \
+  AGYN_LIVE_RUNNER_CHART=/home/alex/work/agyn-contrib/k8s-runner/charts/k8s-runner \
+  AGYN_LIVE_INSPECTOR_IMAGE=node:22-bookworm-slim@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5 \
+  node scripts/agyn-live-lifecycle.mjs startup-failure
+```
+
+The UUID is local model-registry metadata, not a portable model ID or permission
+to run inference. The wrapper refuses a missing UUID before any deployment
+change. Do not supply a native-agent profile/subscription file to this scenario.
+
+## Remaining Rollout Work
 
 1. Review/publish the API contract before downstream default BSR builds can
    consume it. Local coordinated generation/build is verified above; publication
    and maintainer agreement are not claimed.
 2. Drain new A2A admission and audit existing workloads. Apply the additive
    Runners migration without backfilling confirmation from billing/status data.
-   The compiled migration has not been applied to the deployed platform database.
-3. Exercise the tested four-component deployment wrapper against the real idle
-   lab. Verify actual rollout and restoration, including the new Runners/Gateway
-   dependencies; subprocess simulations do not establish live recovery. Restoring
-   an older image does not remove the additive migration or its constraints.
-4. Run credential-free failure/deletion and old-server compatibility tests
-   through Gateway and actual Pods before any further model acceptance. Observe
-   absence independently; verify no replacement or PVC TTL before confirmation.
+   This passed in the idle local lab, not an active production upgrade.
+3. The four-component local rollout/restoration passed above. Production
+   deployment, backup restore, draining and rollback acceptance remain.
+   Restoring an older image does not remove the migration or its constraints.
+4. The model-free failure/deletion test passed. Add live old-server compatibility,
+   TTL scheduling and stronger infrastructure failure tests without weakening
+   confirmation or permitting automatic side-effect replay.
 5. Repeat the completed, interrupted, cancellation, parallel and streaming
    scenarios for the selected agent profiles. Preserve the separate interrupted
    side-effect reconciliation requirement.

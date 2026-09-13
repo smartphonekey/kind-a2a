@@ -124,8 +124,9 @@ No Pod-level alpha resource feature is needed.
 
 This section records the earlier deployed profile, not a currently validated
 reproduction recipe. The wrapper now also requires and manages Runners/Gateway
-images, with 39 passing subprocess cases; its four-component live rollout has
-not yet been verified. The coordinated images and remaining checks are in
+images, with 41 passing subprocess cases and a successful four-component live
+startup-failure test/restore. Native-agent regressions on that coordinated stack
+remain unverified. The images and remaining checks are in
 [the rollout requirements](AGYN-REMOVAL.md).
 
 The operator wrapper now optionally deploys both combined images. It snapshots

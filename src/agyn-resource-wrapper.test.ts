@@ -15,7 +15,7 @@ for (const mode of ["success", "child-failure", "runner-patch-failure", "runner-
   "late-busy", "missing-image", "partial-bounds", "no-flag", "no-network", "setup-unmanaged-edit", "setup-managed-edit",
   "runners-patch-failure", "gateway-patch-failure", "runners-rollout-failure", "gateway-rollout-failure",
   "lost-runners-patch-ack", "lost-gateway-patch-ack", "managed-runners-edit", "managed-gateway-edit", "replaced-gateway",
-  "missing-runners-image", "missing-gateway-image", "setup-busy"]) {
+  "missing-runners-image", "missing-gateway-image", "setup-busy", "startup-failure", "startup-no-model"]) {
   test(`resource deployment wrapper: ${mode}`, t => {
     const directory = mkdtempSync(join(tmpdir(), "a2a-resource-wrapper-"));
     t.after(() => rmSync(directory, { recursive: true, force: true }));
@@ -61,10 +61,11 @@ if(args.includes('get')) {
   }
 } else throw Error('unexpected kubectl');
 `, { mode: 0o700 });
-    writeFileSync(join(directory, "dist/live/agyn-reporting.js"), `const fs=require('node:fs'),assert=require('node:assert/strict');
+    writeFileSync(join(directory, mode === "startup-failure" ? "dist/live/agyn-removal.js" : "dist/live/agyn-reporting.js"), `const fs=require('node:fs'),assert=require('node:assert/strict');
 const file=process.env.FAKE_DEPLOYMENT,s=JSON.parse(fs.readFileSync(file,'utf8')),mode=process.env.FAKE_MODE;
 s.childRan=true;
 assert.equal(process.env.AGYN_LIVE_COMPUTE_RESOURCES,'true');
+if(mode==='startup-failure')assert.equal(process.env.AGYN_LIVE_SCENARIO,'startup-failure');
 for(const name of ['runners','gateway','k8s-runner','agents-orchestrator'])assert.equal(s.deployments[name].spec.template.spec.containers[0].image,'reviewed-'+name+':1');
 const runner=s.deployments['k8s-runner'].spec.template.spec.containers[0];
 assert.equal(runner.env.find(e=>e.name==='SUPPORTING_CONTAINER_RESOURCES').value,process.env.AGYN_LIVE_SUPPORTING_RESOURCES);
@@ -79,23 +80,25 @@ if(mode==='late-busy')s.busy=true;
 for(const d of Object.values(s.deployments))d.metadata.resourceVersion=String(Number(d.metadata.resourceVersion)+1);
 fs.writeFileSync(file,JSON.stringify(s));process.exit(mode==='child-failure'?1:0);
 `);
-    const result = spawnSync(process.execPath, [wrapper, "completed"], { cwd: directory, encoding: "utf8", timeout: 15_000,
+    const result = spawnSync(process.execPath, [wrapper, mode.startsWith("startup-") ? "startup-failure" : "completed"], { cwd: directory, encoding: "utf8", timeout: 15_000,
       env: { ...process.env, PATH: `${join(directory, "bin")}:${process.env.PATH}`, FAKE_DEPLOYMENT: stateFile, FAKE_MODE: mode,
         AGYN_KUBECONFIG: "/fixture/config", AGYN_LIVE_ACCEPTANCE: "trusted-local", AGYN_LIVE_INIT_IMAGE: "reviewed-init:1",
         AGYN_LIVE_ORCHESTRATOR_IMAGE: "reviewed-agents-orchestrator:1", AGYN_LIVE_RUNNER_IMAGE: mode === "missing-image" ? "" : "reviewed-k8s-runner:1",
         AGYN_LIVE_RUNNERS_IMAGE: mode === "missing-runners-image" ? "" : "reviewed-runners:1",
+        AGYN_LIVE_PLATFORM_MODEL_ID: mode === "startup-no-model" ? "" : "6c310b50-0767-4ac0-ac9e-334bcdbc9731",
         AGYN_LIVE_GATEWAY_IMAGE: mode === "missing-gateway-image" ? "" : "reviewed-gateway:1",
         AGYN_LIVE_RUNNER_CHART: mode === "no-network" ? "" : "/reviewed/chart", AGYN_LIVE_COMPUTE_RESOURCES: mode === "no-flag" ? "" : "true",
         AGYN_LIVE_SUPPORTING_RESOURCES: mode === "partial-bounds" ? "{}" : bounds } });
     assert.ifError(result.error);
-    assert.equal(result.status === 0, ["success", "unmanaged-edit", "setup-unmanaged-edit"].includes(mode), result.stderr);
+    assert.equal(result.status === 0, ["success", "unmanaged-edit", "setup-unmanaged-edit", "startup-failure"].includes(mode), result.stderr);
     assert(!(result.stdout + result.stderr).includes("do-not-log-resource-fixture"), "private deployment fields were logged");
     const current = JSON.parse(readFileSync(stateFile, "utf8"));
     if (mode === "success") assert.deepEqual(current.operations, [...deploymentNames, ...[...deploymentNames].reverse()]
       .flatMap(name => [{ op: "patch", name }, { op: "rollout", name }]), "dependencies must roll out first and restore last");
     if (["missing-runners-image", "missing-gateway-image"].includes(mode)) assert.match(result.stderr, /Runners and Gateway removal-confirmation images are required/);
+    if (mode === "startup-no-model") { assert.match(result.stderr, /explicit platform model metadata UUID/); assert.deepEqual(current.operations, []); }
     if (mode.includes("patch-failure") || mode.includes("rollout-failure") || mode.startsWith("lost-") || mode.startsWith("missing-") ||
-        ["partial-bounds", "no-flag", "no-network", "setup-managed-edit", "setup-busy"].includes(mode)) {
+        ["partial-bounds", "no-flag", "no-network", "setup-managed-edit", "setup-busy", "startup-no-model"].includes(mode)) {
       assert(!current.childRan, "acceptance child ran after setup failed");
     }
     for (const name of deploymentNames) {

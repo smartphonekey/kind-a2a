@@ -143,9 +143,13 @@ Gateway forwarding or Kubernetes deletion.
 The API must be published before default BSR builds can consume it; the consumer
 READMEs describe local source generation. The coordinated images are now built
 and loaded using lab-only API `3c84a6a` and orchestrator `d77e7d5` integration
-branches. The expanded four-component wrapper passes 39 subprocess cases.
-Actual rollout, migration and live failure acceptance are still pending. No
-upstream PR has been submitted.
+branches. The four-component wrapper passes 41 subprocess cases and now has
+real local rollout/restoration and model-free failed-Pod acceptance: billing
+ended while a held Pod still blocked A2A release, then explicit confirmation
+and independent absence preceded settlement. The migration remains after stock
+image restoration. See [the evidence and limitations](AGYN-REMOVAL.md).
+Native regressions and production rollout remain pending. No upstream PR has
+been submitted.
 
 ### Gateway Wire Acceptance
 

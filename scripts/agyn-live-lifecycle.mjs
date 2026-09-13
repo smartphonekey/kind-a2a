@@ -25,7 +25,12 @@ if (bounded) {
   assert(process.env.AGYN_LIVE_RUNNER_CHART, "resource acceptance requires the reviewed network policy chart");
 } else assert(!runnerImage && !supportingResources, "resource settings require AGYN_LIVE_COMPUTE_RESOURCES=true");
 const scenarios = process.argv.slice(2);
-assert(scenarios.length && scenarios.every(value => ["completed", "interrupted", "cancellation", "parallel", "streaming"].includes(value)), "supply one or more known acceptance scenarios");
+assert(scenarios.length && scenarios.every(value => ["completed", "interrupted", "cancellation", "parallel", "streaming", "startup-failure"].includes(value)), "supply one or more known acceptance scenarios");
+if (scenarios.includes("startup-failure")) {
+  assert(bounded, "startup-failure acceptance requires the bounded resource profile");
+  assert(/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(process.env.AGYN_LIVE_PLATFORM_MODEL_ID ?? ""),
+    "startup-failure requires an explicit platform model metadata UUID; it never invokes that model");
+}
 if (scenarios.includes("parallel")) assert(process.env.AGYN_LIVE_RUNNER_CHART, "parallel acceptance requires the reviewed network policy chart");
 const kubeconfig = resolve(process.env.AGYN_KUBECONFIG ?? ".state/agyn-kubeconfig");
 const k = (args, input) => execFileSync("kubectl", ["--kubeconfig", kubeconfig, ...args], { input, encoding: "utf8", timeout: 90_000 });
@@ -77,7 +82,7 @@ try {
   }
   console.log(JSON.stringify({ kind: "live.deployed", image, initImage, runnerImage, runnersImage, gatewayImage, bounded, directory }));
   for (const scenario of scenarios) {
-    const child = spawn(process.execPath, ["dist/live/agyn-reporting.js"], { stdio: "inherit", env: {
+    const child = spawn(process.execPath, [scenario === "startup-failure" ? "dist/live/agyn-removal.js" : "dist/live/agyn-reporting.js"], { stdio: "inherit", env: {
       ...process.env, AGYN_LIVE_SCENARIO: scenario === "completed" ? "" : scenario
     } });
     const code = await new Promise((resolveExit, reject) => { child.once("error", reject); child.once("close", resolveExit); });

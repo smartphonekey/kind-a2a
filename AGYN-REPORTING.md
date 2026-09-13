@@ -11,6 +11,11 @@ task ownership, dispatch and durable reports. No upstream PR has been submitted.
 - Independent inbox-guard patch `8b6056c`, branch `feat/durable-inbox-guard`.
 - Local integration branch `lab/reporting-integration`, commit `b8db063`, combines
   the patches without combining their upstream review units.
+- Orchestrator branches `feat/stop-inactive-instances` (`7a6c8ec`) and
+  `fix/confirmed-workload-removal` (`230977d`, then volume-retention fix `e0f57d8`),
+  combined only for testing on `lab/a2a-lifecycle-integration` (`cba941a`). Explicit
+  `STOP_INACTIVE_INSTANCES=true` bypasses idle delay for paused instances.
+  Stop/failure acknowledgements alone no longer stamp removal or start volume TTL.
 - `ops/Dockerfile.agyn-reporting-init` adds the patched daemon and Node to the
   original init image. The workspace image, Codex image and model are unchanged.
   Node's C++ libraries are private to its wrapper, not injected into Codex.
@@ -46,6 +51,10 @@ behavior is opt-in in the contribution patch, retaining existing defaults.
    not authorize agent startup on the required-init daemon.
 7. Reports commit to the service database before ACK. Only workload removal
    evidence permits settlement or a queued follow-up, not an outcome or pause ACK.
+   This requires the corrected orchestrator: stock `removedAt` may only mean
+   deletion was accepted, or even that the runner became unreachable. The patch
+   checks runner inspection before recording removal and retains unremoved
+   failures so a replacement cannot skip their cleanup.
 8. The daemon journals intent before invoking any SDK. An ambiguous pending record
    blocks automatic retries. Only this workload's allowed message can execute;
    explicitly retired predecessors are acknowledged without running the agent.
@@ -73,20 +82,37 @@ docker build -f ops/Dockerfile.agyn-reporting-init \
 agyn local load-image a2a-agynd-reporting-init:b8db063
 ```
 
-Use an otherwise idle local lab. Record the orchestrator's existing
-`AGYND_CLI_INIT_IMAGE` value before changing it. This setting is platform-wide,
-not per agent. Temporarily select the integration image, wait for rollout, and
-run the opt-in acceptance:
+From the combined orchestrator checkout, build its integration binary:
 
 ```sh
-kubectl --kubeconfig .state/agyn-kubeconfig -n agyn-platform \
-  set env deployment/agents-orchestrator AGYND_CLI_INIT_IMAGE=a2a-agynd-reporting-init:b8db063
-kubectl --kubeconfig .state/agyn-kubeconfig -n agyn-platform \
-  rollout status deployment/agents-orchestrator --timeout=90s
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath \
+  -o /home/alex/work/aira-a2a-lab/.state/agyn-orchestrator-build/orchestrator ./cmd/orchestrator
+```
+
+Back in the lab checkout, load the images. The inspector uses a real Node runtime,
+not the daemon's packaging-only init image:
+
+```sh
+docker build -f ops/Dockerfile.agyn-orchestrator \
+  -t a2a-agyn-orchestrator:cba941a .state/agyn-orchestrator-build
+agyn local load-image a2a-agyn-orchestrator:cba941a
+docker pull node:22-bookworm-slim@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5
+```
+
+Use an otherwise idle local lab. These daemon/orchestrator settings are
+platform-wide, not per agent. The wrapper refuses existing workload pods, saves
+only its managed settings, applies resource-version-checked updates and restores
+the previous fields in `finally`. External edits are preserved or surfaced as an
+explicit conflict, never overwritten. For process/host failure, its private
+`.state/agyn-lifecycle-deploy-*/before.json` is the manual recovery record.
+
+```sh
 NODE_EXTRA_CA_CERTS="$HOME/.agyn/local/certs/agyn-local-ca.pem" \
   AGYN_LIVE_ACCEPTANCE=trusted-local \
   AGYN_LIVE_INIT_IMAGE=a2a-agynd-reporting-init:b8db063 \
-  node dist/live/agyn-reporting.js
+  AGYN_LIVE_ORCHESTRATOR_IMAGE=a2a-agyn-orchestrator:cba941a \
+  AGYN_LIVE_INSPECTOR_IMAGE=node:22-bookworm-slim@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5 \
+  node scripts/agyn-live-lifecycle.mjs cancellation completed interrupted
 ```
 
 The test verifies that the selected image is deployed, creates separate private
@@ -97,16 +123,24 @@ needed. `AGYN_LIVE_HOST_IP` defaults to this Lima lab's host address `192.168.5.
 The test uses explicit HTTP reporting on this trusted local link; production
 requires TLS and network policy. It never mounts host Codex authentication.
 
-Set `AGYN_LIVE_SCENARIO=interrupted` on the same command for the fault test. It
+Pass just `interrupted` to the wrapper for the interrupted-turn fault test. It
 kills the controller and deletes only its fixture pod after an unconditional
 append, inspects the gated replacement's pending journal and marker, restarts
 the controller, and requires quarantine plus removal before explicit recovery.
 The follow-up must keep the native session/PVC, acknowledge-only the old request,
 and read exactly one marker line. This is not automatic retry of the old turn.
 
+The `cancellation` case starts a 120-second native command with a heartbeat and a
+late side effect. Operator inspection verifies it survives SIGTERM before A2A
+cancellation. A Kubernetes deletion watch must complete before `runtime.stopped`,
+within a 30-second test bound. A separate credential-free, read-only PVC inspector
+checks that the heartbeat stopped and the late side effect is absent. It cannot
+resume the canceled agent. The inspector Pod alone is deleted; the PVC remains.
+All scenarios now independently check that instance Pods are absent on settlement.
+
 Evidence and private task storage are retained in `.state/agyn-reporting-live-*`.
-The service is stopped and its instances paused after the test. Verify zero
-workload pods and restore the exact previously recorded daemon image afterward.
+The service is stopped and its instances paused after the test. The wrapper
+restores the exact previous images/settings; verify zero workload pods afterward.
 Do not unpause gated fixtures under the stock daemon. Test instances/PVCs remain
 for inspection; deletion is a separate retention operation.
 
@@ -115,6 +149,8 @@ for inspection; deletion is a separate retention operation.
 The successful 2026-09-13 run verified real MCP progress/artifact/outcome calls,
 a real native Stop reminder, completed-turn pod replacement, unchanged native
 session identity, unchanged PVC and a persisted file. See [ACCEPTANCE.md](ACCEPTANCE.md).
+The paired orchestrator regression additionally verifies bounded cancellation
+and actual instance Pod absence on settlement, not just removal timestamps.
 
 Required-init exit/cancellation behavior has focused Go tests; a deliberately
 failing init script still needs a dedicated live failure test. A separate real
@@ -128,3 +164,8 @@ The init image is a local packaging fixture. Its dependencies must be pinned and
 reviewed for a release. Neither root-owned files nor a managed hook protects the
 lab from an agent that already has root access. The gate is a coordination
 mechanism, not a security sandbox.
+
+Confirmed runner absence is not fencing for a partitioned node, an externally
+force-deleted Pod or a delayed in-flight create. Historical removal timestamps
+require an operator drain/audit. The bounded local cancellation result does not
+close those production recovery gates.

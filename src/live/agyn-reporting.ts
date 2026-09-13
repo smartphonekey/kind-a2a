@@ -9,15 +9,24 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { AgynClient } from "../agyn-client.js";
+import { assertInstanceAbsent, inspectRetainedCancellationPvc, instancePods } from "./kubernetes-proof.js";
 
 if (process.env.AGYN_LIVE_ACCEPTANCE !== "trusted-local") throw new Error("Set AGYN_LIVE_ACCEPTANCE=trusted-local to run real-model tests");
 const interrupted = process.env.AGYN_LIVE_SCENARIO === "interrupted";
-if (process.env.AGYN_LIVE_SCENARIO && !interrupted) throw new Error("Unknown live scenario");
+const cancellation = process.env.AGYN_LIVE_SCENARIO === "cancellation";
+if (process.env.AGYN_LIVE_SCENARIO && !interrupted && !cancellation) throw new Error("Unknown live scenario");
+const scenario = interrupted ? "interrupted" : cancellation ? "cancellation" : "completed";
+const inspectorImage = process.env.AGYN_LIVE_INSPECTOR_IMAGE;
+if (cancellation) assert(inspectorImage && /@sha256:[a-f0-9]{64}$/.test(inspectorImage), "cancellation requires a digest-pinned Node inspector image");
 const expectedImage = process.env.AGYN_LIVE_INIT_IMAGE;
 if (!expectedImage) throw new Error("AGYN_LIVE_INIT_IMAGE must identify the reviewed required-init/CODEX_HOME integration image");
 const kubeconfig = resolve(process.env.AGYN_KUBECONFIG ?? ".state/agyn-kubeconfig");
 const deployment = JSON.parse(execFileSync("kubectl", ["--kubeconfig", kubeconfig, "get", "deployment", "agents-orchestrator", "-n", "agyn-platform", "-o", "json"], { encoding: "utf8" }));
 assert(deployment.spec.template.spec.containers.some((container: any) => container.env.some((env: any) => env.name === "AGYND_CLI_INIT_IMAGE" && env.value === expectedImage)), "expected integration image is not deployed");
+const orchestrator = deployment.spec.template.spec.containers.find((container: any) => container.name === "agents-orchestrator");
+assert(process.env.AGYN_LIVE_ORCHESTRATOR_IMAGE && orchestrator?.image === process.env.AGYN_LIVE_ORCHESTRATOR_IMAGE, "expected confirmed-removal orchestrator image is not deployed");
+assert(orchestrator.env.some((env: any) => env.name === "STOP_INACTIVE_INSTANCES" && env.value === "true"), "immediate stop must be explicit");
+if (cancellation) assert(orchestrator.env.some((env: any) => env.name === "STOP_TIMEOUT_SEC" && env.value === "5"), "cancellation fixture requires a five-second termination grace");
 const profile = process.env.AGYN_PROFILE ?? "local";
 const who = JSON.parse(execFileSync("agyn", ["auth", "whoami", "--profile", profile, "-o", "json"], { encoding: "utf8" }));
 const token = execFileSync("agyn", ["profile", "token", profile], { encoding: "utf8" }).trim();
@@ -111,18 +120,20 @@ const waitService = async () => {
   }
 };
 const inspectInstance = (instanceId: string): any[] => {
-  const pods = JSON.parse(execFileSync("kubectl", ["--kubeconfig", kubeconfig, "get", "pods", "-n", "agyn-workloads", "-o", "json"], { encoding: "utf8" }));
   const found: any[] = [];
-  for (const pod of pods.items) {
+  for (const pod of instancePods(kubeconfig, instanceId)) {
     const container = pod.spec.containers.find((item: any) => item.env?.some((entry: any) => entry.name === "AGENT_INSTANCE_ID" && entry.value === instanceId));
     if (!container) continue;
     try {
       const state = JSON.parse(execFileSync("kubectl", ["--kubeconfig", kubeconfig, "exec", pod.metadata.name, "-n", "agyn-workloads", "-c", container.name,
         "--", "/agyn/bin/node", "-e", `const fs=require("node:fs");
           const records=p=>fs.readdirSync(p).filter(n=>n.endsWith(".json")).map(n=>JSON.parse(fs.readFileSync(p+"/"+n,"utf8")));
+          const control=fs.existsSync("/workspace/cancel-control.json")?JSON.parse(fs.readFileSync("/workspace/cancel-control.json","utf8")):null;
+          let alive=false;if(control)try{process.kill(control.pid,0);alive=true;}catch{}
           console.log(JSON.stringify({mapping:records("/workspace/.codex/agyn/thread-mapping"),
             journal:records("/workspace/.agyn/inbox-journal/"+process.env.AGENT_INSTANCE_ID),
             marker:fs.readFileSync("/workspace/reporting-proof.txt","utf8"),
+            cancellation:control?{...control,alive,signals:fs.readFileSync("/workspace/cancel-signals.txt","utf8"),heartbeat:fs.readFileSync("/workspace/cancel-heartbeat.txt","utf8")}:null,
             configured:fs.existsSync("/run/agyn-execution/configured.json")}));`],
         { encoding: "utf8", timeout: 5000, stdio: ["ignore", "pipe", "pipe"] }));
       if (state.mapping.length) found.push({ name: pod.metadata.name, uid: pod.metadata.uid,
@@ -131,10 +142,77 @@ const inspectInstance = (instanceId: string): any[] => {
   }
   return found;
 };
+const cancelRunningTurn = async (taskId: string) => {
+  let initial: any[] = [];
+  for (let attempt = 0; attempt < 180; attempt++) {
+    initial = (await fetch(`${base}/tasks/${taskId}/events`, { headers }).then(r => r.json()) as any).events;
+    assert(!initial.some(event => event.kind === "execution.uncertain" || event.kind === "agent.outcome"), "turn ended before cancellation injection");
+    const binding = initial.find(event => event.kind === "runtime.bound")?.payload;
+    if (binding && initial.some(event => event.kind === "execution.dispatched")) {
+      snapshots[1] = inspectInstance(binding.instanceId);
+      if (snapshots[1].length === 1 && snapshots[1][0].cancellation?.alive) break;
+    }
+    await delay(1000);
+  }
+  const pod = snapshots[1]?.[0];
+  assert(pod?.cancellation?.alive, "no running cancellation fixture");
+  assert.equal(pod.marker, suffix);
+  assert.equal(pod.cancellation.nonce, suffix);
+  assert.equal(pod.journal[0]?.state, "pending");
+  const binding = initial.find(event => event.kind === "runtime.bound")!.payload;
+  const main = instancePods(kubeconfig, binding.instanceId)[0].spec.containers.find((item: any) => item.env?.some(
+    (entry: any) => entry.name === "AGENT_INSTANCE_ID" && entry.value === binding.instanceId));
+  execFileSync("kubectl", ["--kubeconfig", kubeconfig, "exec", pod.name, "-n", "agyn-workloads", "-c", main.name, "--", "/agyn/bin/node", "-e",
+    `const c=JSON.parse(require("node:fs").readFileSync("/workspace/cancel-control.json","utf8"));if(c.nonce!==${JSON.stringify(suffix)}||!Number.isInteger(c.pid)||c.pid<=1)throw Error("wrong fixture");process.kill(c.pid,"SIGTERM");`], { encoding: "utf8", timeout: 5000 });
+  await delay(1000);
+  snapshots[1] = inspectInstance(binding.instanceId);
+  assert(snapshots[1][0]?.cancellation.alive && snapshots[1][0].cancellation.signals.includes("SIGTERM"), "fixture did not survive SIGTERM");
+  let deletionObservedAt: number | undefined;
+  const waiter = spawn("kubectl", ["--kubeconfig", kubeconfig, "wait", "--for=delete", `pod/${pod.name}`, "-n", "agyn-workloads", "--timeout=40s"], { stdio: "ignore" });
+  const deleted = new Promise<boolean>(resolveDeleted => {
+    waiter.once("error", () => resolveDeleted(false));
+    waiter.once("close", code => { if (code === 0) deletionObservedAt = Date.now(); resolveDeleted(code === 0); });
+  });
+  const requestedAt = Date.now();
+  try {
+    await rpc("CancelTask", { id: taskId });
+    let task: any;
+    for (let attempt = 0; attempt < 60; attempt++) {
+      task = await rpc("GetTask", { id: taskId });
+      if (task.metadata?.resourcesReleased) break;
+      await delay(500);
+    }
+    const elapsedMs = Date.now() - requestedAt;
+    assert.equal(task.status.state, "TASK_STATE_CANCELED");
+    assert.equal(task.metadata?.resourcesReleased, true);
+    assert(elapsedMs < 30_000, "active cancellation exceeded 30 seconds");
+    assert(deletionObservedAt, "task settled before pod deletion was observed");
+    assertInstanceAbsent(kubeconfig, binding.instanceId);
+    const events = (await fetch(`${base}/tasks/${taskId}/events`, { headers }).then(r => r.json()) as any).events;
+    const stopped = events.find((event: any) => event.kind === "runtime.stopped");
+    assert(stopped && deletionObservedAt <= Date.parse(stopped.at), "runtime.stopped preceded the physical-deletion observation");
+    assert((await gateway.workloads(binding.instanceId)).every(workload => workload.removedAt), "unremoved workload remains");
+    assert.equal(pod.pvc.length, 1, "expected one fixture workspace");
+    const cancellationEvidence: Record<string, unknown> = { task, events, snapshots: snapshots[1], requestedAt, deletionObservedAt, elapsedMs };
+    evidence.push(cancellationEvidence);
+    const retained = await inspectRetainedCancellationPvc(kubeconfig, inspectorImage!, pod.pvc[0]);
+    cancellationEvidence.retained = retained;
+    assert.equal(retained.first.marker, suffix);
+    assert.equal(retained.first.lateSideEffect, false, "canceled process reached its late side effect");
+    assert(retained.first.signals.includes("SIGTERM"));
+    assert.deepEqual(retained.first, retained.second, "canceled process kept changing the retained workspace");
+    await assert.rejects(rpc("SendMessage", { message: { taskId, messageId: randomUUID(), role: "ROLE_USER", parts: [{ text: "must not resume a canceled task" }] } }));
+    console.log(JSON.stringify({ kind: "live.passed", taskId, scenario, elapsedMs, deletionObservedAt, stoppedAt: stopped.at }));
+  } finally {
+    waiter.kill("SIGTERM");
+    await deleted;
+  }
+};
 try {
   await waitService();
   const first = await rpc("SendMessage", { message: { messageId: randomUUID(), role: "ROLE_USER", parts: [{ text:
-    interrupted ? `Interruption acceptance test. Append the line ${suffix} to /workspace/reporting-proof.txt using >>, unconditionally and exactly once. This append is deliberately not idempotent. Report progress and publish the file's exact contents as a text artifact. Then run sleep 120. Do not report an outcome until that sleep finishes. Do not repeat the append on a stop reminder.`
+    cancellation ? `Cancellation acceptance test. Report progress, then use exec_command to run /agyn/bin/node with this JavaScript and wait for it to finish. Do not detach the process, report an outcome, or run other commands while it is running. JavaScript: const fs=require("node:fs");fs.writeFileSync("/workspace/cancel-signals.txt","");process.on("SIGTERM",()=>fs.appendFileSync("/workspace/cancel-signals.txt","SIGTERM\\n"));fs.writeFileSync("/workspace/reporting-proof.txt",${JSON.stringify(suffix)});fs.writeFileSync("/workspace/cancel-heartbeat.txt",String(Date.now()));fs.writeFileSync("/workspace/cancel-control.json",JSON.stringify({pid:process.pid,nonce:${JSON.stringify(suffix)}}));setInterval(()=>fs.writeFileSync("/workspace/cancel-heartbeat.txt",String(Date.now())),250);setTimeout(()=>{fs.writeFileSync("/workspace/cancel-late.txt","unexpected completion");process.exit(0)},120000);`
+      : interrupted ? `Interruption acceptance test. Append the line ${suffix} to /workspace/reporting-proof.txt using >>, unconditionally and exactly once. This append is deliberately not idempotent. Report progress and publish the file's exact contents as a text artifact. Then run sleep 120. Do not report an outcome until that sleep finishes. Do not repeat the append on a stop reminder.`
       : `Create /workspace/reporting-proof.txt containing exactly ${suffix}. Report a progress event and publish that value as a text artifact, then run sleep 3 to leave a native-session inspection window. For this stop-hook acceptance test only, give your first final answer without reporting an outcome. If the stop hook reminds you, follow its instruction and report turn_done. Do not rewrite the file on reminders.` }] }, configuration: { returnImmediately: true } });
   const taskId = first.task.id; tasks.push(taskId);
   console.log(JSON.stringify({ kind: "live.task", taskId, directory }));
@@ -152,6 +230,7 @@ try {
       }
       if (newest && newest !== last) { last = newest; console.log(JSON.stringify({ kind: "live.event", turn, event: newest })); }
       if (events.filter(event => event.kind === "runtime.stopped").length >= turn) {
+        assertInstanceAbsent(kubeconfig, binding.instanceId);
         const task = await rpc("GetTask", { id: taskId });
         evidence.push({ turn, task, events, snapshots: snapshots[turn] ?? [] });
         assert.equal(task.status.state, "TASK_STATE_INPUT_REQUIRED", "turn must finish resumably after releasing compute");
@@ -165,66 +244,70 @@ try {
     }
     throw new Error("live turn did not release resources in time");
   };
-  if (interrupted) {
-    let initial: any[] = [];
-    for (let attempt = 0; attempt < 180; attempt++) {
-      initial = (await fetch(`${base}/tasks/${taskId}/events`, { headers }).then(r => r.json()) as any).events;
-      assert(!initial.some(event => event.kind === "execution.uncertain" || event.kind === "agent.outcome"), "turn ended before fault injection");
-      const binding = initial.find(event => event.kind === "runtime.bound")?.payload;
-      if (binding && initial.some(event => event.kind === "agent.artifact") && initial.some(event => event.kind === "execution.dispatched")) {
-        snapshots[1] = inspectInstance(binding.instanceId);
-        if (snapshots[1].length) break;
+  if (cancellation) await cancelRunningTurn(taskId);
+  else {
+    if (interrupted) {
+      let initial: any[] = [];
+      for (let attempt = 0; attempt < 180; attempt++) {
+        initial = (await fetch(`${base}/tasks/${taskId}/events`, { headers }).then(r => r.json()) as any).events;
+        assert(!initial.some(event => event.kind === "execution.uncertain" || event.kind === "agent.outcome"), "turn ended before fault injection");
+        const binding = initial.find(event => event.kind === "runtime.bound")?.payload;
+        if (binding && initial.some(event => event.kind === "agent.artifact") && initial.some(event => event.kind === "execution.dispatched")) {
+          snapshots[1] = inspectInstance(binding.instanceId);
+          if (snapshots[1].length) break;
+        }
+        await delay(1000);
       }
-      await delay(1000);
-    }
-    assert.equal(snapshots[1]?.length, 1, "no side-effect inspection window");
-    assert.equal(snapshots[1][0].marker, `${suffix}\n`, "fixture must append exactly once before interruption");
-    assert.equal(snapshots[1][0].journal[0]?.state, "pending", "journal must precede side effects");
-    const binding = initial.find(event => event.kind === "runtime.bound")!.payload;
-    const executionId = initial.find(event => event.kind === "execution.queued")!.executionId;
-    child.kill("SIGKILL"); await exited;
-    execFileSync("kubectl", ["--kubeconfig", kubeconfig, "delete", "pod", snapshots[1][0].name, "-n", "agyn-workloads", "--grace-period=1", "--wait=true", "--timeout=60s"], { encoding: "utf8", timeout: 65000 });
-    let gated: any[] = [];
-    for (let attempt = 0; attempt < 60; attempt++) {
-      gated = inspectInstance(binding.instanceId);
-      if (gated.length) break;
-      await delay(1000);
-    }
-    assert.equal(gated.length, 1, "Agyn did not recreate the unacked workload");
-    assert.notEqual(gated[0].uid, snapshots[1][0].uid);
-    assert.equal(gated[0].configured, false, "replacement must not authorize the old execution");
-    assert.equal(gated[0].marker, `${suffix}\n`, "replacement replayed the append");
-    assert.deepEqual(gated[0].journal, snapshots[1][0].journal);
-    ({ child, exited } = startService()); await waitService();
-    let quarantined: any;
-    for (let attempt = 0; attempt < 150; attempt++) {
-      quarantined = await rpc("GetTask", { id: taskId });
-      if (quarantined.metadata?.resourcesReleased && quarantined.metadata?.recoveryRequired) break;
-      await delay(1000);
-    }
-    assert.equal(quarantined.metadata?.recoveryRequired, true);
-    assert.equal(quarantined.metadata?.resourcesReleased, true);
-    assert.equal(quarantined.metadata?.uncertainSideEffects, true);
-    assert((await gateway.workloads(binding.instanceId)).every(workload => workload.removedAt), "quarantine left compute running");
-    const recoveredEvents = (await fetch(`${base}/tasks/${taskId}/events`, { headers }).then(r => r.json()) as any).events;
-    evidence.push({ turn: 1, task: quarantined, events: recoveredEvents, snapshots: snapshots[1], gatedReplacement: gated });
-    await assert.rejects(rpc("SendMessage", { message: { taskId, messageId: randomUUID(), role: "ROLE_USER", parts: [{ text: "must not run before reconciliation" }] } }));
-    const response = await fetch(`${base}/tasks/${taskId}/executions/${executionId}/reconcile`, { method: "POST", headers,
-      body: JSON.stringify({ resolution: "continue", reason: "Operator inspected the durable marker and pending journal in the gated replacement; append already happened once. Retire the old request without replay." }) });
-    assert.equal(response.status, 200, "explicit reconciliation failed");
-    console.log(JSON.stringify({ kind: "live.interruption-reconciled", taskId, executionId }));
-  } else await waitTurn(1);
-  await rpc("SendMessage", { message: { taskId, messageId: randomUUID(), role: "ROLE_USER", parts: [{ text:
-    "Read /workspace/reporting-proof.txt. Publish its exact existing contents as an artifact. Do not create or rewrite it. Run sleep 3 to leave an inspection window, then report turn_done." }] }, configuration: { returnImmediately: true } });
-  await waitTurn(2);
-  assert(snapshots[1]?.length && snapshots[2]?.length, "native session evidence was not captured");
-  assert.notEqual(snapshots[1][0].uid, snapshots[2][0].uid, "follow-up must run in a recreated pod");
-  assert.deepEqual(snapshots[1][0].pvc, snapshots[2][0].pvc, "task PVC changed");
-  const identity = (records: any[]) => records.map(record => ({ instanceId: record.instance_id, sessionId: record.codex_thread_id, createdAt: record.created_at_unix_ms }));
-  assert.deepEqual(identity(snapshots[1][0].mapping), identity(snapshots[2][0].mapping), "native session mapping changed");
-  assert.equal(snapshots[2][0].marker, interrupted ? `${suffix}\n` : suffix, "follow-up repeated a side effect or changed the file");
-  if (interrupted) assert.equal(snapshots[2][0].journal.find((record: any) => record.message_id === snapshots[1][0].journal[0].message_id)?.state, "ack_only", "old inbox request was not retired explicitly");
-  console.log(JSON.stringify({ kind: "live.passed", taskId, turns: 2, scenario: interrupted ? "interrupted" : "completed" }));
+      assert.equal(snapshots[1]?.length, 1, "no side-effect inspection window");
+      assert.equal(snapshots[1][0].marker, `${suffix}\n`, "fixture must append exactly once before interruption");
+      assert.equal(snapshots[1][0].journal[0]?.state, "pending", "journal must precede side effects");
+      const binding = initial.find(event => event.kind === "runtime.bound")!.payload;
+      const executionId = initial.find(event => event.kind === "execution.queued")!.executionId;
+      child.kill("SIGKILL"); await exited;
+      execFileSync("kubectl", ["--kubeconfig", kubeconfig, "delete", "pod", snapshots[1][0].name, "-n", "agyn-workloads", "--grace-period=1", "--wait=true", "--timeout=60s"], { encoding: "utf8", timeout: 65000 });
+      let gated: any[] = [];
+      for (let attempt = 0; attempt < 60; attempt++) {
+        gated = inspectInstance(binding.instanceId);
+        if (gated.length) break;
+        await delay(1000);
+      }
+      assert.equal(gated.length, 1, "Agyn did not recreate the unacked workload");
+      assert.notEqual(gated[0].uid, snapshots[1][0].uid);
+      assert.equal(gated[0].configured, false, "replacement must not authorize the old execution");
+      assert.equal(gated[0].marker, `${suffix}\n`, "replacement replayed the append");
+      assert.deepEqual(gated[0].journal, snapshots[1][0].journal);
+      ({ child, exited } = startService()); await waitService();
+      let quarantined: any;
+      for (let attempt = 0; attempt < 150; attempt++) {
+        quarantined = await rpc("GetTask", { id: taskId });
+        if (quarantined.metadata?.resourcesReleased && quarantined.metadata?.recoveryRequired) break;
+        await delay(1000);
+      }
+      assert.equal(quarantined.metadata?.recoveryRequired, true);
+      assert.equal(quarantined.metadata?.resourcesReleased, true);
+      assert.equal(quarantined.metadata?.uncertainSideEffects, true);
+      assert((await gateway.workloads(binding.instanceId)).every(workload => workload.removedAt), "quarantine left compute running");
+      assertInstanceAbsent(kubeconfig, binding.instanceId);
+      const recoveredEvents = (await fetch(`${base}/tasks/${taskId}/events`, { headers }).then(r => r.json()) as any).events;
+      evidence.push({ turn: 1, task: quarantined, events: recoveredEvents, snapshots: snapshots[1], gatedReplacement: gated });
+      await assert.rejects(rpc("SendMessage", { message: { taskId, messageId: randomUUID(), role: "ROLE_USER", parts: [{ text: "must not run before reconciliation" }] } }));
+      const response = await fetch(`${base}/tasks/${taskId}/executions/${executionId}/reconcile`, { method: "POST", headers,
+        body: JSON.stringify({ resolution: "continue", reason: "Operator inspected the durable marker and pending journal in the gated replacement; append already happened once. Retire the old request without replay." }) });
+      assert.equal(response.status, 200, "explicit reconciliation failed");
+      console.log(JSON.stringify({ kind: "live.interruption-reconciled", taskId, executionId }));
+    } else await waitTurn(1);
+    await rpc("SendMessage", { message: { taskId, messageId: randomUUID(), role: "ROLE_USER", parts: [{ text:
+      "Read /workspace/reporting-proof.txt. Publish its exact existing contents as an artifact. Do not create or rewrite it. Run sleep 3 to leave an inspection window, then report turn_done." }] }, configuration: { returnImmediately: true } });
+    await waitTurn(2);
+    assert(snapshots[1]?.length && snapshots[2]?.length, "native session evidence was not captured");
+    assert.notEqual(snapshots[1][0].uid, snapshots[2][0].uid, "follow-up must run in a recreated pod");
+    assert.deepEqual(snapshots[1][0].pvc, snapshots[2][0].pvc, "task PVC changed");
+    const identity = (records: any[]) => records.map(record => ({ instanceId: record.instance_id, sessionId: record.codex_thread_id, createdAt: record.created_at_unix_ms }));
+    assert.deepEqual(identity(snapshots[1][0].mapping), identity(snapshots[2][0].mapping), "native session mapping changed");
+    assert.equal(snapshots[2][0].marker, interrupted ? `${suffix}\n` : suffix, "follow-up repeated a side effect or changed the file");
+    if (interrupted) assert.equal(snapshots[2][0].journal.find((record: any) => record.message_id === snapshots[1][0].journal[0].message_id)?.state, "ack_only", "old inbox request was not retired explicitly");
+    console.log(JSON.stringify({ kind: "live.passed", taskId, turns: 2, scenario }));
+  }
 } finally {
   try {
     for (const taskId of tasks) await rpc("CancelTask", { id: taskId }).catch(() => {});
@@ -232,7 +315,7 @@ try {
     for (const instance of instances) await gateway.pauseInstance(instance.meta.id, "Live acceptance cleanup; retain state");
     for (let attempt = 0; ; attempt++) {
       let active = false;
-      for (const instance of instances) if ((await gateway.workloads(instance.meta.id)).some(workload => !workload.removedAt)) active = true;
+      for (const instance of instances) if ((await gateway.workloads(instance.meta.id)).some(workload => !workload.removedAt) || instancePods(kubeconfig, instance.meta.id).length) active = true;
       if (!active) break;
       if (attempt >= 90) throw new Error("fixture workloads did not release during cleanup");
       await delay(1000);
@@ -242,6 +325,6 @@ try {
     child.kill("SIGTERM");
     const timer = setTimeout(() => child.kill("SIGKILL"), 5000);
     await exited; clearTimeout(timer);
-    writeFileSync(join(directory, "evidence.json"), JSON.stringify({ environmentId, agentId, tasks, scenario: interrupted ? "interrupted" : "completed", snapshots, evidence }, null, 2), { mode: 0o600 });
+    writeFileSync(join(directory, "evidence.json"), JSON.stringify({ environmentId, agentId, tasks, scenario, snapshots, evidence }, null, 2), { mode: 0o600 });
   }
 }

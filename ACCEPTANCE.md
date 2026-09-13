@@ -2,6 +2,47 @@
 
 Evidence below spans the preserved `kind-aira-a2a-lab` baseline and the new self-hosted Agyn backend. Each section identifies its environment; fake-agent tests and live-model evidence are deliberately separated.
 
+## Hard Cancellation And Confirmed Removal (2026-09-13)
+
+The service passes **47 local tests** and three separate real-model scenarios
+using orchestrator integration `cba941a` and daemon integration `b8db063`.
+The operator profile explicitly sets `STOP_INACTIVE_INSTANCES=true` and a
+five-second termination grace. This is a healthy, trusted-local Kubernetes test,
+not production readiness or node-partition fencing.
+
+| Check | Status | Evidence |
+| --- | --- | --- |
+| Cancel active native execution | PASS, LIVE | Task `9502b955-37db-4ef8-92ce-b17debceaa7e` ran a 120-second command that first survived an operator SIGTERM. A2A cancellation settled in **3.026s**, without waiting for command completion. |
+| Deletion before settlement | PASS, LIVE | Pod UID `486cc0e3-03f2-4648-91ae-219d1cf17dc9` deletion was observed at `14:25:10.586Z`; `runtime.stopped` committed at `14:25:11.608Z`. Instance `42b9fc0a-8b59-472e-8397-1baac77edc31` then had no Pods. |
+| Retained workspace, stopped side effects | PASS, LIVE | A separate read-only inspector mounted only PVC `pv-42b9fc0a-8b5-e315d806-704`. The marker remained, the heartbeat was unchanged between reads and `cancel-late.txt` was absent. Follow-up to the canceled task was rejected. |
+| Completed-turn regression | PASS, LIVE | Task `17e554f1-9218-45b3-9b88-0f154b2d4a47` exercised the real native Stop reminder and two MCP outcomes. Pod UIDs `2444c0fa-3e98-4b04-b744-7564ee3ebd95` and `98837718-1bf1-4dc6-8ece-d4b4719f2306` retained PVC `pv-11773a3f-da8-95c08074-50f` and Codex session `01a09b28-b7ed-7a73-9cbd-bdf9ceada81b`. |
+| Interrupted-turn regression | PASS, LIVE | Task `8afc371b-2f30-490b-abf2-e8af50f0bae7` survived controller SIGKILL and replacement after an unconditional append. Quarantine required explicit owner reconciliation. Session `01a09b2a-38df-7ff3-afe9-7c0c5fcd53ef` and PVC `pv-361d334e-5b5-dbb68ad0-674` persisted; `mtzwqogr` remained exactly one line and the old message became `ack_only`. |
+| Removal fault handling | PASS, GO TESTS | A stop ACK, stopped main container, runner outage or absent list entry cannot record removal while inspection still finds a workload. Requested/returned IDs and legacy aliases are checked. Failed-but-unremoved workloads block replacement; store failures retry. |
+| Volume retention | PASS, GO TESTS | Failed/stopping/stopped records without confirmed removal hold the instance volume, even when an older removed workload has expired retention. The TTL starts from actual removal, not a failure's update timestamp. No live PVC deletion was performed. |
+| Deployment restoration | PASS, SUBPROCESS AND LIVE | Six local tests cover success, child/patch failure, external edits and busy-lab refusal. Live wrapper restored the original orchestrator/daemon images and exact stop settings. Final workload namespace is empty; no PVC was deleted. |
+
+Private evidence is in `.state/agyn-reporting-live-qym0s6/evidence.json`
+(cancellation), `agyn-reporting-live-lbBfef/evidence.json` (completed) and
+`agyn-reporting-live-KAmjTY/evidence.json` (interrupted), all under `.state`.
+Deployment recovery record: `.state/agyn-lifecycle-deploy-Ny02rJ/before.json`.
+
+The first cancellation attempt passed the deletion-order checks but failed in
+its packaging-image PVC inspector. It is not counted as a passing scenario.
+The corrected test uses a digest-pinned Node inspector, runs it without Agyn
+credentials or a service-account token, and deletes only that inspector Pod.
+
+The native daemon may be stopped after the A2A outcome is acknowledged but before
+its SDK turn/inbox ACK completes. The completed regression also exercised
+acknowledgement-only retirement on follow-up; it must not be described as proof
+that the native SDK turn completed before shutdown.
+
+**Correction to earlier evidence:** older runs below waited for Agyn `removedAt`
+and checked zero Pods after cleanup. Upstream stamped that field on deletion
+acceptance and some runner failures. Those runs did not prove physical absence
+at settlement. The new independent orchestrator patches fix the observed
+contract, but cannot retroactively validate old timestamps. Forced Pod deletion,
+partitioned nodes and delayed creates remain explicit production gates.
+
 ## Interrupted Inbox Recovery (2026-09-13)
 
 The new inbox guard and service wiring pass 41 local tests and a real native Codex fault test on
@@ -12,7 +53,7 @@ exactly-once side effects, hardened isolation or bounded hard cancellation.
 | --- | --- | --- |
 | Durable intent before side effect | PASS, LIVE | Task `c06bbd04-c942-4cc4-8a8c-fb7c940032cb` unconditionally appended `mtztzf24` and reported the file. Operator inspection found one line and a pending journal record for provider message `8cd8f81f-ff2c-44b6-b526-8cbace96adb3`. |
 | Controller and pod loss | PASS, LIVE | Controller was SIGKILLed; the active fixture pod was deleted. Pod UID `47e3b70f-6128-496a-9d5f-0a1fca0aea9b` was replaced by gated UID `cdea9a1e-aa94-43fa-b28a-9307f171ebc6`. The replacement had no execution authorization and retained the unchanged pending journal/marker. |
-| Quarantine and removal | PASS, LIVE | Restarted controller detected the changed workload and quarantined execution `0f55cf47-5943-4c90-8347-38bb8f66c9ce`. Removal was confirmed before `resourcesReleased=true`; an attempted follow-up before reconciliation was rejected. |
+| Quarantine and removal acknowledgement | PASS, LIVE | Restarted controller detected the changed workload and quarantined execution `0f55cf47-5943-4c90-8347-38bb8f66c9ce`. Agyn's removal timestamp preceded `resourcesReleased=true`; physical absence at that instant was not checked. An attempted follow-up before reconciliation was rejected. |
 | Explicit recovery, no replay | PASS, LIVE | An owner-authorized reconciliation with recorded reason retired the old request. In the follow-up pod its journal state was `ack_only`, not `completed`; the file still contained exactly one line. |
 | Same durable environment/session | PASS, LIVE | Follow-up UID `866da4fa-a6df-48da-a22c-04e73edaaddf` kept instance `1399cc45-6b7a-46f8-8464-f8e864fb92e5`, thread `8e00c96c-318b-46e2-9f56-52df50b7da06`, PVC `pv-1399cc45-6b7-2c62af1e-196`, and Codex session `01a09ae3-763b-7003-b5c4-a065ba41c9d0`. Real MCP `turn_done` then settled after removal. |
 | Dispatch identity and replay guard | PASS, DETERMINISTIC | Provider ACK persists before installer failure; workload identity cannot change; missing/replaced/stopped workloads interrupt. Unknown request IDs cannot be reconciled for reuse. Go tests cover lost ACK, process death after a side effect, eight competing processes, corrupt state and exact control binding. |

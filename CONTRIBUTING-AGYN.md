@@ -77,6 +77,39 @@ This is a replay guard, not exactly-once execution or a root-agent security
 boundary. The control-file contract is a review proposal, not an accepted Agyn
 API; discuss it with maintainers before extending Gateway.
 
+## Orchestrator Lifecycle Fixes
+
+Two independent, runtime-neutral changes are pushed in
+<https://github.com/spk-ai/agents-orchestrator>, based on upstream `ae7d0bf`:
+
+- `feat/stop-inactive-instances`, commit `7a6c8ec`: explicit operator policy
+  `STOP_INACTIVE_INSTANCES=true` stops paused/terminated instances despite fresh
+  daemon keepalives. Default behavior is unchanged; unavailable lifecycle reads
+  do not authorize immediate stops.
+- `fix/confirmed-workload-removal`, commits `230977d` and `e0f57d8`: do not set `removed_at`
+  from a stop ACK, runner outage or failure alone. Confirm absence by inspection,
+  retain failed-but-unremoved workloads and block their replacements. Hold
+  persistent-volume TTL until every workload has confirmed removal.
+- Local `lab/a2a-lifecycle-integration`, commit `cba941a`, combines these for
+  acceptance only. No upstream PR has been opened.
+
+Both independent branches pass ordinary `go test ./...`; the combined branch
+builds and passes `go test -race ./... -skip
+TestGroupMembershipConsumerLoopRetriesWithoutBlocking -count=1`. The skipped
+upstream test has an unsynchronized fake subscription flag between its consumer
+goroutine and test assertions (`lifecycle_test.go`, `group_consumer.go`). The
+unfiltered reconciler race suite was run and fails there; it is not claimed to
+pass. Keep that separate from these lifecycle patches. A fresh source checkout
+needs API generation first, as in the upstream Dockerfile/devspace setup;
+ungenerated checkouts cannot run the Go suite. Exclude generated API churn from
+the contribution.
+
+These changes contain no A2A state machine, MCP protocol, agent prompt or
+Kubernetes-specific controller logic. They use the existing Agents/Runner APIs.
+Discuss the confirmed-removal contract and node-partition fencing with maintainers;
+a runner's `NotFound` is not proof against externally force-deleted pods or a late
+in-flight start. Historical `removed_at` values need an operator drain/audit.
+
 ## Proposed Subsequent Contributions
 
 | Review unit | Suggested home | Boundary |
@@ -87,9 +120,9 @@ API; discuss it with maintainers before extending Gateway.
 | A2A connector | A focused repository agreed with maintainers | Official A2A SDK, ownership and task mapping, typed provider interface. Agyn retains runner/PVC/network lifecycle. |
 | Native session export | Separate proposal and PR | Export session artifacts without credentials; retention, access and deletion policy before analytics. |
 
-No API, Gateway, runner or runtime-image fork is required just to review the
-current daemon patch. Fork additional repositories only after agreeing on the
-contract and identifying the smallest owning module.
+No API, Gateway, runner or runtime-image fork is required to review the daemon
+patches. The orchestrator fixes above belong in their own repository and review
+units; further protocol/capability changes still require agreement on a contract.
 
 ## Reviewability Rules
 

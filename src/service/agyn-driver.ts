@@ -78,7 +78,8 @@ export class AgynRuntimeDriver implements RuntimeDriver {
       }
       if (!["AGENT_INSTANCE_STATE_PAUSED", "AGENT_INSTANCE_STATE_TERMINATED"].includes(instance.state)) stopped = false;
       const workloads = await this.client.workloads(instance.meta.id, signal);
-      // FAILED/STOPPING or a pause acknowledgement alone can leave sidecars consuming compute.
+      // Requires the provider's confirmed-removal contract, not the stock
+      // deletion-accepted timestamp. FAILED/STOPPING or pause alone is insufficient.
       if (workloads.some(workload => !workload.removedAt)) stopped = false;
     }
     return { stopped };

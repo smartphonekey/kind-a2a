@@ -168,6 +168,12 @@ reminds at most twice, then requests a stop and controller reconciliation.
   administrative recovery interface, not an agent-facing tool.
 - Cancellation waits for removal evidence. A pause ACK, FAILED status or a
   reported outcome does not authorize the next queued turn.
+  This requires the corrected orchestrator's confirmed-removal contract: stock
+  Agyn can set `removedAt` as soon as Kubernetes accepts deletion, or on runner
+  contact loss. See [the paired lifecycle patches](CONTRIBUTING-AGYN.md).
+  `STOP_INACTIVE_INSTANCES=true` is explicit operator policy for stopping busy
+  paused instances; it is not the upstream default. The service cannot attest
+  provider behavior from a timestamp or image name alone.
 - Database leases recover after process loss. A dispatch with no ACK is
   quarantined rather than resent. Provisioning with an unknown instance remains
   unresolved until provider identity and removal can be established.
@@ -180,6 +186,10 @@ reminds at most twice, then requests a stop and controller reconciliation.
 - Drain old workers before upgrading the service/daemon profile together. An
   existing running execution without a pinned workload ID is quarantined rather
   than adopted. Never roll back the daemon alone under an inbox-guard profile.
+  Also drain/audit workloads created by older orchestrators before trusting their
+  removal timestamps. Runner/node partitions, force-deleted pods and late
+  in-flight creates need infrastructure fencing and explicit reconciliation;
+  these are not solved by the local cancellation test.
 
 An agent daemon can retry or redeliver work independently of this service. The
 ephemeral startup gate prevents an unprepared replacement from starting Codex;

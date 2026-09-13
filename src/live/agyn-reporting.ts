@@ -12,12 +12,15 @@ import { KubeConfig, KubernetesObjectApi } from "@kubernetes/client-node";
 import { AgynClient } from "../agyn-client.js";
 import { assertInstanceAbsent, inspectRetainedCancellationPvc, instancePods } from "./kubernetes-proof.js";
 import { agentNetworkPolicies, assertPolicyUnchanged, managedLabel, NetworkFixtures } from "./network-proof.js";
+import { runParallelAcceptance } from "./agyn-parallel.js";
 
 if (process.env.AGYN_LIVE_ACCEPTANCE !== "trusted-local") throw new Error("Set AGYN_LIVE_ACCEPTANCE=trusted-local to run real-model tests");
 const interrupted = process.env.AGYN_LIVE_SCENARIO === "interrupted";
 const cancellation = process.env.AGYN_LIVE_SCENARIO === "cancellation";
-if (process.env.AGYN_LIVE_SCENARIO && !interrupted && !cancellation) throw new Error("Unknown live scenario");
-const scenario = interrupted ? "interrupted" : cancellation ? "cancellation" : "completed";
+const parallel = process.env.AGYN_LIVE_SCENARIO === "parallel";
+if (process.env.AGYN_LIVE_SCENARIO && !interrupted && !cancellation && !parallel) throw new Error("Unknown live scenario");
+if (parallel) assert(process.env.AGYN_LIVE_RUNNER_CHART, "parallel acceptance requires explicit workload network policies");
+const scenario = interrupted ? "interrupted" : cancellation ? "cancellation" : parallel ? "parallel" : "completed";
 const inspectorImage = process.env.AGYN_LIVE_INSPECTOR_IMAGE;
 if (cancellation) assert(inspectorImage && /@sha256:[a-f0-9]{64}$/.test(inspectorImage), "cancellation requires a digest-pinned Node inspector image");
 const expectedImage = process.env.AGYN_LIVE_INIT_IMAGE;
@@ -96,7 +99,7 @@ const reportingUrl = `http://${process.env.AGYN_LIVE_HOST_IP ?? "192.168.5.2"}:$
 writeFileSync(configFile, JSON.stringify({ environmentProfile: "trusted-local", dbPath: join(directory, "tasks.sqlite"), credentialsFile,
   reportingSetupExecutable: new URL("../service/agyn-reporting-installer.js", import.meta.url).pathname, publicUrl: base,
   reportingUrl, host: "0.0.0.0", port: address.port,
-  defaultProfile: "codex-gated-live-v1", profiles: [{ id: "codex-gated-live-v1", agentId }], concurrency: 2, turnTimeoutMs: 180_000 }), { mode: 0o600 });
+  defaultProfile: "codex-gated-live-v1", profiles: [{ id: "codex-gated-live-v1", agentId }], concurrency: 2, turnTimeoutMs: parallel ? 300_000 : 180_000 }), { mode: 0o600 });
 const startService = () => {
   const child = spawn(process.execPath, [new URL("../service/main.js", import.meta.url).pathname], { env: {
   PATH: process.env.PATH, HOME: process.env.HOME, NODE_EXTRA_CA_CERTS: process.env.NODE_EXTRA_CA_CERTS,
@@ -109,7 +112,9 @@ const startService = () => {
   return { child, exited };
 };
 let { child, exited } = startService();
-const headers = { authorization: `Bearer ${bearer}`, "content-type": "application/json", "A2A-Version": "1.0" };
+// Synchronous operator probes can outlast HTTP keep-alive. Do not reuse idle
+// sockets across those probes, or retry a possibly accepted SendMessage.
+const headers = { authorization: `Bearer ${bearer}`, "content-type": "application/json", "A2A-Version": "1.0", connection: "close" };
 const rpc = async (method: string, params: unknown): Promise<any> => {
   const response = await fetch(`${base}/a2a`, { method: "POST", headers, body: JSON.stringify({ jsonrpc: "2.0", id: randomUUID(), method, params }), signal: AbortSignal.timeout(10_000) });
   const result = await response.json() as any;
@@ -227,23 +232,7 @@ const cancelRunningTurn = async (taskId: string) => {
     await deleted;
   }
 };
-try {
-  if (networkTemplate) {
-    const config = new KubeConfig(); config.loadFromFile(kubeconfig);
-    const run = randomUUID().slice(0, 8);
-    networkFixtures = new NetworkFixtures(KubernetesObjectApi.makeApiClient(config), run, resources => {
-      networkEvidence.resources = resources;
-      writeFileSync(join(directory, "network.json"), JSON.stringify(networkEvidence, null, 2), { mode: 0o600 });
-    });
-    networkEvidence.policies = [];
-    for (const policy of agentNetworkPolicies(networkTemplate, run, agentId, reportingUrl)) {
-      networkEvidence.policies.push(await networkFixtures.create(policy));
-    }
-    networkEvidence.enabled = true;
-    networkEvidence.templateSha256 = createHash("sha256").update(networkTemplate).digest("hex");
-    console.log(JSON.stringify({ kind: "live.network-configured", agentId, policyNames: networkEvidence.policies.map((p: any) => p.metadata.name) }));
-  }
-  await waitService();
+const runSingleTask = async () => {
   const first = await rpc("SendMessage", { message: { messageId: randomUUID(), role: "ROLE_USER", parts: [{ text:
     cancellation ? `Cancellation acceptance test. Report progress, then use exec_command to run /agyn/bin/node with this JavaScript and wait for it to finish. Do not detach the process, report an outcome, or run other commands while it is running. JavaScript: const fs=require("node:fs");fs.writeFileSync("/workspace/cancel-signals.txt","");process.on("SIGTERM",()=>fs.appendFileSync("/workspace/cancel-signals.txt","SIGTERM\\n"));fs.writeFileSync("/workspace/reporting-proof.txt",${JSON.stringify(suffix)});fs.writeFileSync("/workspace/cancel-heartbeat.txt",String(Date.now()));fs.writeFileSync("/workspace/cancel-control.json",JSON.stringify({pid:process.pid,nonce:${JSON.stringify(suffix)}}));setInterval(()=>fs.writeFileSync("/workspace/cancel-heartbeat.txt",String(Date.now())),250);setTimeout(()=>{fs.writeFileSync("/workspace/cancel-late.txt","unexpected completion");process.exit(0)},120000);`
       : interrupted ? `Interruption acceptance test. Append the line ${suffix} to /workspace/reporting-proof.txt using >>, unconditionally and exactly once. This append is deliberately not idempotent. Report progress and publish the file's exact contents as a text artifact. Then run sleep 120. Do not report an outcome until that sleep finishes. Do not repeat the append on a stop reminder.`
@@ -342,6 +331,31 @@ try {
     if (interrupted) assert.equal(snapshots[2][0].journal.find((record: any) => record.message_id === snapshots[1][0].journal[0].message_id)?.state, "ack_only", "old inbox request was not retired explicitly");
     console.log(JSON.stringify({ kind: "live.passed", taskId, turns: 2, scenario }));
   }
+};
+try {
+  if (networkTemplate) {
+    const config = new KubeConfig(); config.loadFromFile(kubeconfig);
+    const run = randomUUID().slice(0, 8);
+    networkFixtures = new NetworkFixtures(KubernetesObjectApi.makeApiClient(config), run, resources => {
+      networkEvidence.resources = resources;
+      writeFileSync(join(directory, "network.json"), JSON.stringify(networkEvidence, null, 2), { mode: 0o600 });
+    });
+    networkEvidence.policies = [];
+    for (const policy of agentNetworkPolicies(networkTemplate, run, agentId, reportingUrl)) {
+      networkEvidence.policies.push(await networkFixtures.create(policy));
+    }
+    networkEvidence.enabled = true;
+    networkEvidence.templateSha256 = createHash("sha256").update(networkTemplate).digest("hex");
+    console.log(JSON.stringify({ kind: "live.network-configured", agentId, policyNames: networkEvidence.policies.map((p: any) => p.metadata.name) }));
+  }
+  await waitService();
+  if (parallel) await runParallelAcceptance({ kubeconfig, directory, agentId, suffix, gateway, tasks, rpc, inspect: inspectInstance,
+    events: async taskId => {
+      const response = await fetch(`${base}/tasks/${taskId}/events`, { headers, signal: AbortSignal.timeout(10_000) });
+      assert.equal(response.status, 200);
+      return ((await response.json()) as any).events;
+    } });
+  else await runSingleTask();
 } finally {
   try {
     for (const taskId of tasks) await rpc("CancelTask", { id: taskId }).catch(() => {});

@@ -10,8 +10,10 @@ The original lifecycle results below did not prove network isolation. Subsequent
 probes found the Agyn VM was not enforcing its installed workload egress policy.
 Restarting only VM K3s restored per-pod firewall rules. A new two-turn Codex run
 passed with the ingress policy and a narrow, fixture-agent-only host reporting
-route. Cancellation/interrupted recovery and parallel tasks still need acceptance
-under this network profile. See [AGYN-NETWORK.md](AGYN-NETWORK.md) for evidence and
+route. [Parallel tasks and same-task FIFO](AGYN-PARALLEL.md) also pass under this
+profile. Completion, interruption and cancellation also have passing network-profile
+reruns; an earlier unexplained workload startup failure remains disclosed in
+[AGYN-NETWORK.md](AGYN-NETWORK.md). See that report for evidence and
 the `AGYN_LIVE_RUNNER_CHART` opt-in command; do not broadly allow host/LAN egress.
 
 ## Required Components

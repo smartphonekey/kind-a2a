@@ -125,8 +125,9 @@ changing the runner API, binary, egress policy or runtime RBAC:
   enforcement. Real two-turn Codex continuation and the Stop reminder also passed
   with this policy and a narrowly scoped local reporting allowance. See
   [the exact scope and limitations](AGYN-NETWORK.md).
-- The branch is pushed; no upstream PR has been opened. Adversarial runtime
-  isolation, parallel cross-task denial and fail-closed bootstrap remain required.
+- The branch is pushed; no upstream PR has been opened. [Real parallel tasks](AGYN-PARALLEL.md)
+  also pass cross-pod TCP/UDP denial. Adversarial runtime isolation, cross-task
+  overlay authorization and fail-closed bootstrap remain required.
 
 Keep the CNI enforcement incident separate from this chart proposal: adding a
 NetworkPolicy cannot repair a controller that is not enforcing policies. Do not

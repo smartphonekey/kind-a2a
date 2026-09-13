@@ -23,6 +23,10 @@ trusted-local integration; the legacy adapter and original deployment are preser
 enforcement despite installed policies. Pod-network isolation has separate
 evidence; the real runtime is not yet a hardened sandbox.
 
+[Real parallel-task acceptance](AGYN-PARALLEL.md) verifies separate workspaces and
+native sessions on the same agent, queued follow-ups after pod removal, and
+cross-pod TCP/UDP denial. The observed runtime still lacks CPU/memory limits.
+
 The new [durable execution service](SERVICE.md) adds authenticated A2A routing,
 transactional queued turns, reporting MCP, bounded outcome checks and a recoverable
 worker. It is a development implementation with explicit [production gates](PRODUCTION.md),

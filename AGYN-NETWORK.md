@@ -2,7 +2,9 @@
 
 This is operator-only, credential-free CNI acceptance for the trusted local lab.
 It is not a production deployment or a substitute for concurrent real-agent
-acceptance. The A2A service itself does not receive Kubernetes credentials.
+acceptance. [Separate live parallel acceptance](AGYN-PARALLEL.md) now verifies
+concurrent cross-pod denial and same-task continuation. The A2A service itself
+does not receive Kubernetes credentials.
 
 ## Enforcement Failure Found
 
@@ -42,7 +44,7 @@ capabilities, `NoNewPrivs=1` and `Seccomp=2`. These checks describe the test pod
 not the real agent runtime. The rendered ingress template SHA-256 was
 `ed83573cde3f924aa003a742439f4d8a2a93d376f773b9363a69ab2b27acfefa`.
 
-The local build and all 55 tests pass. Early verifier attempts caught copied API
+At that checkpoint, the build and all 55 tests passed. Early verifier attempts caught copied API
 metadata and the need to correlate Kube-router TCP rejections with a live listener;
 they are not counted as successful acceptance runs. Their resources were cleaned.
 
@@ -152,9 +154,10 @@ operator reconciliation instead of removing isolation from a possibly live agent
 ## Remaining Requirements
 
 The probes demonstrate pod-network enforcement, not sandboxing of the real Agyn
-runtime. Still required: real parallel A2A tasks under the enforced policy;
-cancellation/interrupted-turn reruns in this network profile; cross-task overlay and
-credential denial; nonprivileged agent workloads; node/host-network and IPv6
+runtime. Real parallel A2A tasks now pass the separate acceptance linked above.
+The three lifecycle cases also have passing reruns under this profile, detailed
+below. Still required: cross-task overlay and credential denial; nonprivileged,
+resource-bounded agent workloads; node/host-network and IPv6
 coverage; public-destination restrictions; and fail-closed startup/recovery.
 
 The installed egress policy excludes the private host callback range. The narrow
@@ -168,6 +171,49 @@ incoming node/loopback traffic, or authorize services inside OpenZiti. Another
 policy can add ingress allowances despite an empty ingress rule set. These are
 separate release gates, not exceptions hidden in a production profile.
 
+## Lifecycle Reruns
+
+The unchanged completed, interrupted and cancellation scenarios were rerun with
+`AGYN_LIVE_RUNNER_CHART` set, using the same reviewed daemon/orchestrator images
+and the existing subscription. All three have passing individual evidence on
+2026-09-13; this is not a claim that every attempt passed:
+
+| Scenario | A2A task | Private evidence |
+| --- | --- | --- |
+| Completed two-turn continuation and Stop reminder | `faf4d023-78a7-43c7-a7e2-352b9cd7a2be` | `.state/agyn-reporting-live-qrzdCZ/evidence.json` |
+| Interrupted controller/pod recovery and explicit retirement | `3b147cf2-984f-428c-9954-9dbe0c884a14` | `.state/agyn-reporting-live-unotRI/evidence.json` |
+| Active-command cancellation and retained-volume inspection | `37b3cdcd-08fb-431b-99d6-f36b6cb8b2b0` | `.state/agyn-reporting-live-ad88lx/evidence.json` |
+
+The completed case retained its native session and PVC across new Pod UIDs and
+released both turns. The interrupted case preserved the non-idempotent append as
+exactly one line in the unauthorized replacement and after explicit recovery.
+It resumed native session `01a09b72-8ea6-75a3-b9f5-0c7e15ddb175` on PVC
+`pv-191cce58-704-21c65dac-c2a`; the old inbox message became `ack_only`. This does
+not authorize automatic retry of arbitrary interrupted effects.
+
+Cancellation settled in 6.551 seconds. Pod deletion was observed at
+15:49:21.569 UTC, before `runtime.stopped` at 15:49:26.545 UTC. The command had
+survived the test's SIGTERM. Two read-only PVC samples 1.5 seconds apart showed
+the same stopped heartbeat and no late-write marker. No instance pods remained.
+This is healthy-node evidence, not fencing for a partitioned or force-deleted pod.
+
+The first combined sweep passed completion but its interrupted fixture
+`c27fe347-81ee-4846-99bb-ceb9955621d9` failed during setup, before fault injection.
+Agyn marked workload `4690be1d-780f-4e40-99c7-95d97f1f6090` failed about 12 seconds
+after dispatch; Gateway exposed no failure reason and Kubernetes recorded no
+warning event for that pod. Its accepted request was quarantined, not replayed,
+and the workload was removed. Evidence is
+`.state/agyn-reporting-live-fKDsXc/evidence.json`. The underlying startup cause is
+unresolved; later fresh fixtures passing does not fix or explain it.
+
+All four fixture instances were paused and their PVCs retained. Temporary
+policies and the cancellation inspector pod were removed. Both wrapper
+invocations restored the original deployment; their snapshots are
+`.state/agyn-lifecycle-deploy-U9d7bx/before.json` and
+`.state/agyn-lifecycle-deploy-sJBjOr/before.json`. No test service or workload pod
+was left running. Reproduction uses the same wrapper with arguments
+`completed interrupted cancellation`; also set the digest-pinned
+`AGYN_LIVE_INSPECTOR_IMAGE` from the credential-free probe command above.
 ## Sources
 
 - [Kubernetes NetworkPolicy semantics](https://kubernetes.io/docs/concepts/services-networking/network-policies/)

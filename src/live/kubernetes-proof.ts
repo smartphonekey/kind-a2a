@@ -5,6 +5,20 @@ import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 
+export function assertReviewedDeployment(deployment: any, name: string, image: string): void {
+  assert(image, `explicit reviewed ${name} image is required`);
+  assert.equal(deployment.metadata?.name, name);
+  assert(deployment.metadata.uid && Number.isInteger(deployment.metadata.generation) && !deployment.metadata.deletionTimestamp);
+  assert.equal(deployment.spec?.template?.spec?.containers?.find((container: any) => container.name === name)?.image, image,
+    `reviewed ${name} image is not deployed`);
+  const replicas = deployment.spec.replicas ?? 1;
+  assert(Number.isInteger(replicas) && replicas > 0);
+  assert.equal(deployment.status?.observedGeneration, deployment.metadata.generation, `${name} generation is not observed`);
+  for (const field of ["replicas", "updatedReplicas", "readyReplicas", "availableReplicas"]) {
+    assert.equal(deployment.status?.[field], replicas, `${name} rollout is incomplete (${field})`);
+  }
+}
+
 export function instancePods(kubeconfig: string, instanceId: string): any[] {
   const pods = JSON.parse(execFileSync("kubectl", ["--kubeconfig", kubeconfig, "get", "pods", "-n", "agyn-workloads", "-o", "json"], { encoding: "utf8", timeout: 10_000 }));
   return pods.items.filter((pod: any) => pod.spec.containers.some((container: any) => container.env?.some(

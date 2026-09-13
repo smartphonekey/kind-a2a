@@ -12,7 +12,7 @@ import { KubeConfig, KubernetesObjectApi } from "@kubernetes/client-node";
 import { SendMessageRequest, StreamResponse, SubscribeToTaskRequest, Task, TaskState } from "@a2a-js/sdk";
 import { ClientFactory, JsonRpcTransportFactory } from "@a2a-js/sdk/client";
 import { AgynClient } from "../agyn-client.js";
-import { assertInstanceAbsent, inspectRetainedCancellationPvc, instancePods } from "./kubernetes-proof.js";
+import { assertInstanceAbsent, assertReviewedDeployment, inspectRetainedCancellationPvc, instancePods } from "./kubernetes-proof.js";
 import { agentNetworkPolicies, assertPolicyUnchanged, managedLabel, NetworkFixtures } from "./network-proof.js";
 import { runParallelAcceptance } from "./agyn-parallel.js";
 import { assertCgroupComputeBounds, assertPodComputeBounds, parseComputeBounds, type ComputeBounds } from "./resource-proof.js";
@@ -41,6 +41,12 @@ if (cancellation) assert(inspectorImage && /@sha256:[a-f0-9]{64}$/.test(inspecto
 const expectedImage = process.env.AGYN_LIVE_INIT_IMAGE;
 if (!expectedImage) throw new Error("AGYN_LIVE_INIT_IMAGE must identify the reviewed required-init/session-persistence integration image");
 const kubeconfig = resolve(process.env.AGYN_KUBECONFIG ?? ".state/agyn-kubeconfig");
+for (const [name, variable] of [["runners", "AGYN_LIVE_RUNNERS_IMAGE"], ["gateway", "AGYN_LIVE_GATEWAY_IMAGE"]]) {
+  const image = process.env[variable];
+  assert(image, `${variable} must identify the reviewed removal-confirmation API image; older stacks cannot run this acceptance`);
+  const current = JSON.parse(execFileSync("kubectl", ["--kubeconfig", kubeconfig, "-n", "agyn-platform", "get", "deployment", name, "-o", "json"], { encoding: "utf8", timeout: 10_000 }));
+  assertReviewedDeployment(current, name, image);
+}
 const networkTemplate = process.env.AGYN_LIVE_RUNNER_CHART ? execFileSync("helm", ["template", "a2a-network-proof",
   resolve(process.env.AGYN_LIVE_RUNNER_CHART), "--set", "workloadIngressNetworkPolicy.enabled=true",
   "--set", "workloadNamespace=agyn-workloads", "--show-only", "templates/workload-ingress-networkpolicy.yaml"],
@@ -273,7 +279,7 @@ const cancelRunningTurn = async (taskId: string) => {
     const events = (await fetch(`${base}/tasks/${taskId}/events`, { headers }).then(r => r.json()) as any).events;
     const stopped = events.find((event: any) => event.kind === "runtime.stopped");
     assert(stopped && deletionObservedAt <= Date.parse(stopped.at), "runtime.stopped preceded the physical-deletion observation");
-    assert((await gateway.workloads(binding.instanceId)).every(workload => workload.removedAt), "unremoved workload remains");
+    assert((await gateway.workloads(binding.instanceId)).every(workload => workload.removalConfirmedAt), "unconfirmed workload removal remains");
     assert.equal(pod.pvc.length, 1, "expected one fixture workspace");
     const cancellationEvidence: Record<string, unknown> = { task, events, snapshots: snapshots[1], requestedAt, deletionObservedAt, elapsedMs };
     evidence.push(cancellationEvidence);
@@ -292,7 +298,7 @@ const cancelRunningTurn = async (taskId: string) => {
 };
 const runSingleTask = async () => {
   const firstInput = { message: { messageId: randomUUID(), role: "ROLE_USER", parts: [{ text:
-    cancellation ? `Cancellation acceptance test. Report progress, then use exec_command to run /agyn/bin/node with this JavaScript and wait for it to finish. Do not detach the process, report an outcome, or run other commands while it is running. JavaScript: const fs=require("node:fs");fs.writeFileSync("/workspace/cancel-signals.txt","");process.on("SIGTERM",()=>fs.appendFileSync("/workspace/cancel-signals.txt","SIGTERM\\n"));fs.writeFileSync("/workspace/reporting-proof.txt",${JSON.stringify(suffix)});fs.writeFileSync("/workspace/cancel-heartbeat.txt",String(Date.now()));fs.writeFileSync("/workspace/cancel-control.json",JSON.stringify({pid:process.pid,nonce:${JSON.stringify(suffix)}}));setInterval(()=>fs.writeFileSync("/workspace/cancel-heartbeat.txt",String(Date.now())),250);setTimeout(()=>{fs.writeFileSync("/workspace/cancel-late.txt","unexpected completion");process.exit(0)},120000);`
+    cancellation ? `Cancellation acceptance test. Report progress, then use your command-execution tool to run /agyn/bin/node with this JavaScript and wait for it to finish. Do not detach the process, report an outcome, or run other commands while it is running. JavaScript: const fs=require("node:fs");fs.writeFileSync("/workspace/cancel-signals.txt","");process.on("SIGTERM",()=>fs.appendFileSync("/workspace/cancel-signals.txt","SIGTERM\\n"));fs.writeFileSync("/workspace/reporting-proof.txt",${JSON.stringify(suffix)});fs.writeFileSync("/workspace/cancel-heartbeat.txt",String(Date.now()));fs.writeFileSync("/workspace/cancel-control.json",JSON.stringify({pid:process.pid,nonce:${JSON.stringify(suffix)}}));setInterval(()=>fs.writeFileSync("/workspace/cancel-heartbeat.txt",String(Date.now())),250);setTimeout(()=>{fs.writeFileSync("/workspace/cancel-late.txt","unexpected completion");process.exit(0)},120000);`
       : interrupted ? `Interruption acceptance test. Append the line ${suffix} to /workspace/reporting-proof.txt using >>, unconditionally and exactly once. This append is deliberately not idempotent. Report progress and publish the file's exact contents as a text artifact. Then run sleep 120. Do not report an outcome until that sleep finishes. Do not repeat the append on a stop reminder.`
       : `Create /workspace/reporting-proof.txt containing exactly ${suffix}. Report a progress event and publish that value as a text artifact, then run sleep ${streaming ? 35 : 3} to leave a native-session inspection window. Do not report additional progress during that sleep. For this stop-hook acceptance test only, give your first final answer without reporting an outcome. If the stop hook reminds you, follow its instruction and report turn_done. Do not rewrite the file on reminders.` }] }, configuration: { returnImmediately: true } };
   const client = streaming ? await new ClientFactory({ transports: [new JsonRpcTransportFactory({ fetchImpl: async (url, init) => {
@@ -388,7 +394,7 @@ const runSingleTask = async () => {
       assert.equal(quarantined.metadata?.recoveryRequired, true);
       assert.equal(quarantined.metadata?.resourcesReleased, true);
       assert.equal(quarantined.metadata?.uncertainSideEffects, true);
-      assert((await gateway.workloads(binding.instanceId)).every(workload => workload.removedAt), "quarantine left compute running");
+      assert((await gateway.workloads(binding.instanceId)).every(workload => workload.removalConfirmedAt), "quarantine did not confirm removal");
       assertInstanceAbsent(kubeconfig, binding.instanceId);
       const recoveredEvents = (await fetch(`${base}/tasks/${taskId}/events`, { headers }).then(r => r.json()) as any).events;
       evidence.push({ turn: 1, task: quarantined, events: recoveredEvents, snapshots: snapshots[1], gatedReplacement: gated });
@@ -463,7 +469,7 @@ try {
     for (const instance of instances) await gateway.pauseInstance(instance.meta.id, "Live acceptance cleanup; retain state");
     for (let attempt = 0; ; attempt++) {
       let active = false;
-      for (const instance of instances) if ((await gateway.workloads(instance.meta.id)).some(workload => !workload.removedAt) || instancePods(kubeconfig, instance.meta.id).length) active = true;
+      for (const instance of instances) if ((await gateway.workloads(instance.meta.id)).some(workload => !workload.removalConfirmedAt) || instancePods(kubeconfig, instance.meta.id).length) active = true;
       if (!active) break;
       if (attempt >= 90) throw new Error("fixture workloads did not release during cleanup");
       await delay(1000);

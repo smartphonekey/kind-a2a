@@ -13,6 +13,8 @@ test("Agyn driver: identity reconciliation, inbox wake before gated setup, and r
   let instance: Record<string, unknown> | undefined;
   let thread: Record<string, unknown> | undefined;
   let removed = false;
+  let removalConfirmed = false;
+  let omitWorkloads = false;
   let workloadId = "workload";
   let workloadStatus = "WORKLOAD_STATUS_RUNNING";
   const server = createServer((request, response) => {
@@ -31,7 +33,9 @@ test("Agyn driver: identity reconciliation, inbox wake before gated setup, and r
       else if (method === "PauseInstance") output = { instance: instance = { ...instance, state: "AGENT_INSTANCE_STATE_PAUSED" } };
       else if (method === "ResumeInstance") output = { instance: instance = { ...instance, state: "AGENT_INSTANCE_STATE_ACTIVE" } };
       else if (method === "SendMessage") output = { message: { id: "request", threadId: input.threadId, body: input.body } };
-      else if (method === "ListWorkloadsByAgentInstance") output = { workloads: [{ meta: { id: workloadId }, agentInstanceId: "instance", status: workloadStatus, ...(removed ? { removedAt: new Date().toISOString() } : {}) }] };
+      else if (method === "ListWorkloadsByAgentInstance") output = { workloads: omitWorkloads ? [] : [{ meta: { id: workloadId }, agentInstanceId: "instance", status: workloadStatus,
+        ...(removed ? { removedAt: new Date().toISOString() } : {}),
+        ...(removalConfirmed ? { removalConfirmedAt: new Date().toISOString() } : {}) }] };
       else { response.writeHead(404).end(); return; }
       response.setHeader("content-type", "application/json"); response.end(JSON.stringify(output));
     });
@@ -73,7 +77,16 @@ test("Agyn driver: identity reconciliation, inbox wake before gated setup, and r
   assert.deepEqual(await driver.release(dispatch, signal), { stopped: false });
   removed = true;
   assert.equal(await driver.observe(bound, signal), "interrupted");
+  assert.deepEqual(await driver.release(dispatch, signal), { stopped: false }, "metering end does not prove physical removal");
+  workloadStatus = "WORKLOAD_STATUS_FAILED";
+  assert.deepEqual(await driver.release(dispatch, signal), { stopped: false }, "runner-reported failure does not confirm removal");
+  removalConfirmed = true;
   assert.deepEqual(await driver.release(dispatch, signal), { stopped: true });
+  omitWorkloads = true;
+  assert.deepEqual(await driver.release(bound, signal), { stopped: false }, "an empty list cannot confirm an acknowledged dispatch");
+  omitWorkloads = false; workloadId = "different";
+  assert.deepEqual(await driver.release(bound, signal), { stopped: false }, "another workload's confirmation cannot retire the pinned workload");
+  workloadId = "workload";
   await driver.prepare(dispatch, signal);
   assert(requests.includes("ResumeInstance"));
 });

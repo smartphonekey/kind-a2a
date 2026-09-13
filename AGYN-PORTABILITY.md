@@ -6,6 +6,11 @@ reporting adapter, focused daemon patches and an operator-selected live profile.
 The evidence below separates successful completed-turn recovery from earlier
 failures and the still-required interrupted/concurrent lifecycle scenarios.
 
+The latest attempted interrupted-turn test failed before fault injection and
+exposed an independent [workload-removal contract bug](AGYN-REMOVAL.md).
+The historical successful profile below is no longer sufficient for the current
+driver. Coordinated Runners/Gateway/orchestrator rollout is pending.
+
 ## Reporting Adapter
 
 `src/reporting/agent-config.ts` selects configuration from the `sdk` field in the
@@ -148,9 +153,10 @@ wrapper keeps its own libraries separate. Native evidence exports identity
 metadata, not message bodies. Parallel proof compares normalized provider
 identities rather than nonexistent Codex fields in Claude records.
 
-Use the resource/network wrapper documented in [AGYN-RESOURCES.md](AGYN-RESOURCES.md)
+The recorded tests used the resource/network wrapper in [AGYN-RESOURCES.md](AGYN-RESOURCES.md)
 with `AGYN_LIVE_INIT_IMAGE=a2a-agynd-reporting-init:beb1f23` and the profile-file
-variable. Claude runtime `2.1.225` was inspected at digest
+variable. That old stack must be upgraded before another acceptance run; see
+[AGYN-REMOVAL.md](AGYN-REMOVAL.md). Claude runtime `2.1.225` was inspected at digest
 `sha256:c431db3091a76154ff6be7620f54204fffe30555f1f14adf182b9140c325deb4`;
 the combined init image is
 `sha256:0b8a6acca261790c5d3b7ac56442d65a85df68727871796e1c53326bfb945969`.
@@ -179,8 +185,19 @@ The catalog's CLI-version tags differ from older GitHub release tags. See its
    non-canceled turns finish their native Stop normally during release and
    names the execution in reminders/stop notices. Genuine cancellation and
    missing-outcome release still stop. Regression tests cover these distinctions.
+3. `.state/agyn-reporting-live-Q1g9Uf/evidence.json`, task
+   `24eca313-a0c3-4ce5-babc-c7247489848f`: the intended interrupted-turn test
+   failed on a native error result before injection or the append side effect.
+   The corrected daemon left the inbox journal pending and did not acknowledge
+   success. The service quarantined the execution without automatic redispatch,
+   but wrongly accepted billing `removedAt` while the failed Pod remained.
+   Read-only native metadata showed no tool calls or synthetic error body, so
+   the native failure is unclassified, not an established recurrence of the 401.
+   The failed fixture Pod required UID-checked operator deletion; the PVC was
+   retained and stock deployments restored. Temporary subscription credentials
+   were removed. Source fixes and remaining rollout are in [AGYN-REMOVAL.md](AGYN-REMOVAL.md).
 
-Neither failure is evidence of safe interrupted-turn recovery. The first
+None of these failures is evidence of safe interrupted-turn recovery. The first
 authentication failure remains unexplained: the stored subscription matched the
 unexpired host token, and a fresh direct native two-process test with that token
 passed (`.state/claude-sdk-session-2211818625/evidence.json`, session
@@ -216,7 +233,7 @@ Claude Code `2.1.225` and `claude-sonnet-5`:
   fixture Pods and policies were removed while the task PVC was retained.
   Restoration record: `.state/agyn-lifecycle-deploy-5Af9Oy/before.json`.
 
-The expanded build and test suite passes all 122 top-level tests (133 including
+At this completed-turn checkpoint the build and suite passed 122 top-level tests (133 including
 the receiver's 11 subcases). This result proves completed-turn continuation, not
 safe interrupted-side-effect recovery, streaming recovery or parallel Claude
 isolation. The earlier 401 remains an open reliability issue, not a resolved

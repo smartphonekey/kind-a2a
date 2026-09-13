@@ -19,6 +19,11 @@ The separate durable service now has [live-tested reporting and native-session
 recovery](AGYN-REPORTING.md) using focused daemon and orchestrator patches. It remains a gated
 trusted-local integration; the legacy adapter and original deployment are preserved.
 
+The current service now requires a separate [workload removal confirmation](AGYN-REMOVAL.md)
+because Runners' billing timestamp can be set while a failed Pod remains.
+Source/database fixes are tested; coordinated deployment and live failure
+acceptance are pending. The older integration images are not compatible.
+
 [Live network checks](AGYN-NETWORK.md) found and locally repaired missing CNI
 enforcement despite installed policies. Pod-network isolation has separate
 evidence; the real runtime is not yet a hardened sandbox.

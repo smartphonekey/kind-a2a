@@ -5,6 +5,22 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { runInNewContext } from "node:vm";
 import { claudeNativeProbe, liveAgentProfileSchema, nativeIdentities, persistentAgentEnv } from "./live/agent-profile.js";
+import { assertReviewedDeployment } from "./live/kubernetes-proof.js";
+
+test("live deployment preflight requires a reviewed image and complete observed rollout", () => {
+  const deployment = { metadata: { name: "runners", uid: randomUUID(), generation: 5 },
+    spec: { replicas: 1, template: { spec: { containers: [{ name: "runners", image: "reviewed:confirmation" }] } } },
+    status: { observedGeneration: 5, replicas: 1, updatedReplicas: 1, readyReplicas: 1, availableReplicas: 1 } };
+  assertReviewedDeployment(deployment, "runners", "reviewed:confirmation");
+  assert.throws(() => assertReviewedDeployment(deployment, "runners", ""));
+  assert.throws(() => assertReviewedDeployment(deployment, "runners", "legacy:billing"));
+  assert.throws(() => assertReviewedDeployment(deployment, "gateway", "reviewed:confirmation"));
+  for (const status of [{ observedGeneration: 4 }, { replicas: 2 }, { updatedReplicas: 0 }, { readyReplicas: 0 }, { availableReplicas: 0 }]) {
+    assert.throws(() => assertReviewedDeployment({ ...deployment, status: { ...deployment.status, ...status } }, "runners", "reviewed:confirmation"));
+  }
+  assert.throws(() => assertReviewedDeployment({ ...deployment, metadata: { ...deployment.metadata, deletionTimestamp: new Date().toISOString() } }, "runners", "reviewed:confirmation"));
+  assert.throws(() => assertReviewedDeployment({ ...deployment, spec: { ...deployment.spec, replicas: 0 } }, "runners", "reviewed:confirmation"));
+});
 
 test("live agent profiles carry references, not credentials or controller overrides", () => {
   const profile = { version: 1, sdk: "claude", model: "claude-sonnet-5", runtimeImageId: randomUUID(),

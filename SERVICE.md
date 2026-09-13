@@ -12,6 +12,14 @@ Use a supported Node release with `node:sqlite`, then `npm ci && npm test`.
 Configure an existing Agyn gateway and agent classes with per-instance durable
 volumes. The worker does not create Kubernetes objects itself.
 
+The current driver requires the additive `removalConfirmedAt` contract in
+Runners, Gateway and the orchestrator. Stock Agyn and the earlier local
+integration images are incompatible: `removedAt` ends metering and can be set
+while a failed Pod still exists. Source and real database checks pass, but the
+coordinated rollout and live failure acceptance are pending. See
+[the incident and rollout requirements](AGYN-REMOVAL.md). Do not start new tasks
+on the old stack expecting them to settle with this driver.
+
 The service requires `A2A_SERVICE_CONFIG_FILE`, an operator-owned JSON file:
 
 ```json
@@ -139,9 +147,10 @@ Streamable HTTP; no new A2A or MCP wire format is introduced.
 
 The runtime's operator-provided `/agyn/config.json` selects the reporting config
 adapter. Codex uses system TOML; Claude uses its settings and user MCP JSON
-files. Unknown runtimes fail setup. Native Claude configuration checks and an
-independent SDK resume check pass, but full Claude-through-Agyn acceptance still
-requires daemon changes and a subscription binding. See [AGYN-PORTABILITY.md](AGYN-PORTABILITY.md).
+files. Unknown runtimes fail setup. Claude completed-turn A2A/Pod recovery now
+passes with the focused daemon patches and an explicit subscription binding;
+the remaining lifecycle scenarios and native errors are still open. See
+[AGYN-PORTABILITY.md](AGYN-PORTABILITY.md).
 
 The gate also installs a trusted inbox control file authorizing only the current
 provider message. The daemon's durable journal records intent before the agent
@@ -190,9 +199,10 @@ reminds at most twice, then requests a stop and controller reconciliation.
   administrative recovery interface, not an agent-facing tool.
 - Cancellation waits for removal evidence. A pause ACK, FAILED status or a
   reported outcome does not authorize the next queued turn.
-  This requires the corrected orchestrator's confirmed-removal contract: stock
-  Agyn can set `removedAt` as soon as Kubernetes accepts deletion, or on runner
-  contact loss. See [the paired lifecycle patches](CONTRIBUTING-AGYN.md).
+  This requires explicit `removalConfirmedAt` for every workload, including the
+  pinned identity. Runners can set `removedAt` on failed/stopped status purely to
+  end metering; it is never sufficient release evidence. See
+  [the coordinated API/Runners/orchestrator changes](AGYN-REMOVAL.md).
   `STOP_INACTIVE_INSTANCES=true` is explicit operator policy for stopping busy
   paused instances; it is not the upstream default. The service cannot attest
   provider behavior from a timestamp or image name alone.
@@ -209,7 +219,8 @@ reminds at most twice, then requests a stop and controller reconciliation.
   existing running execution without a pinned workload ID is quarantined rather
   than adopted. Never roll back the daemon alone under an inbox-guard profile.
   Also drain/audit workloads created by older orchestrators before trusting their
-  removal timestamps. Runner/node partitions, force-deleted pods and late
+  state; historical billing timestamps must not be backfilled as confirmation.
+  Runner/node partitions, force-deleted pods and late
   in-flight creates need infrastructure fencing and explicit reconciliation;
   these are not solved by the local cancellation test.
 

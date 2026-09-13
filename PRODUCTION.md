@@ -4,6 +4,12 @@ Status: implementation in progress. The existing 0.4.0 Agyn adapter is a trusted
 local lab, not a production deployment. Passing the baseline tests does not
 remove any of the gates below.
 
+Latest release blocker: a failed Pod exposed that Runners stamps `removedAt`
+for metering, independently of deletion. The old contract is not sufficient.
+The additive confirmation field passes source/real database checks, but its
+coordinated deployment and live failure proof are pending. See
+[the incident and replacement contract](AGYN-REMOVAL.md).
+
 ## Objective
 
 Expose Agyn agents over A2A with an isolated, durable environment per agent/task,
@@ -16,7 +22,7 @@ agent profile must not change the A2A controller or workflow implementation.
 
 | Gate | Status | Required evidence |
 | --- | --- | --- |
-| Existing behavior | Baseline preserved | Build and all 122 top-level tests pass on 2026-09-13 (133 including subtests), including the 10 baseline tests. |
+| Existing behavior | Baseline preserved | Build and all 124 top-level tests pass on 2026-09-13 (135 including subtests), including the 10 baseline tests. |
 | Durable task ownership and execution | Module/process and live restart verified | Transactional submissions, scoped idempotency, FIFO turns, fenced leases and six-process contention pass. Live controller SIGKILL plus pod replacement recovers a pinned execution without redispatch. Remaining failover/storage boundaries need verification. |
 | Authenticated protocol boundary | HTTP/SSE tests verified; deployment pending | Unauthorized and cross-owner send/get/list/cancel/events checks, disconnect/reconnect and subscription credential revocation pass. TLS deployment acceptance remains. |
 | Protocol conformance | Blocking/stream lifetime and real agent continuation verified; full audit pending | [Protocol acceptance](A2A-PROTOCOL.md) includes a real 79.326-second blocking send and two approximately 110-second streams across idle compute release and Pod replacement. Store-driven tests cover races, large snapshots, heartbeat/proxy behavior, bounded slow-reader cleanup, error envelopes and eight-reader fan-out. Error/validation conformance, production ingress and sustained load acceptance remain. |
@@ -24,14 +30,14 @@ agent profile must not change the A2A controller or workflow implementation.
 | Stop outcome check | Both native reminders and completed follow-ups verified | Native Codex and Claude Stop reminders caused real MCP outcomes. The false cancellation notice on normal release is corrected; fresh two-turn Claude and Codex Pod tests pass. Full second-agent lifecycle and live failing-init fault injection remain. |
 | Durable runtime | Completed, interrupted and concurrent continuation live verified | Same Agyn instance, native Codex session and PVC across changed pod UIDs. After explicit recovery, an unconditional append remains one line and the old inbox request is acknowledged without execution. Parallel follow-up also preserves identity while another task stays active. |
 | Recovery and cancellation | Healthy-runner checks also pass under enforced network policy | The network-profile cancellation settled in 6.551s, after observed Pod deletion; its retained PVC showed a stopped heartbeat and no late-write marker. SIGKILL/pod-loss quarantine and explicit retirement also pass under that policy. Unknown provider identities still cannot resume. Node partitions and late in-flight creates need fencing/reconciliation. |
-| Compute release | Corrected contract and healthy local Pod checks verified | Patched orchestrator confirms runner NotFound before removedAt and retains failed/unreachable workloads. Live deletion observation preceded cancellation settlement; completed/interrupted tests independently found no instance Pods on settlement. Stock/historical timestamps only prove acknowledgement, not physical absence. Upgrade drain/audit and infrastructure fencing remain required. |
+| Compute release | Live failure found; additive contract source-tested, rollout pending | [Runners metering can stamp removedAt while a failed Pod remains](AGYN-REMOVAL.md), invalidating the previous general contract claim. New removalConfirmedAt API/persistence/orchestrator/driver checks and real PostgreSQL migration tests pass. Earlier independently observed Pod deletions retain only their scenario-specific evidence. Coordinated Gateway/Runners/orchestrator rollout, failed-Pod live acceptance, upgrade audit and infrastructure fencing remain required. |
 | Parallelism | Real same-agent tasks and FIFO verified | [Two live tasks](AGYN-PARALLEL.md) ran in separate pods/PVCs/native sessions; an earlier queued follow-up did not block the other task. Follow-up claim occurred after old-pod removal and reused only its own state while the other task kept advancing. Final turns released all instance pods. |
-| Agent portability | Claude completed A2A/Pod recovery verified; full gate pending | [Portability evidence](AGYN-PORTABILITY.md) now includes two completed turns, real MCP reports/Stop reminder, unchanged native session/PVC across changed Pod UIDs, resource bounds and idle release. Error-result acknowledgement and a persisted false cancellation notice have fixes. Earlier native 401 remains unexplained. Claude streaming, parallel, cancellation and interrupted-side-effect acceptance remain. |
+| Agent portability | Claude completed A2A/Pod recovery verified; full gate pending | [Portability evidence](AGYN-PORTABILITY.md) includes two completed turns, real MCP reports/Stop reminder, unchanged native session/PVC across changed Pod UIDs, resource bounds and idle release. A later attempted interruption failed before injection: the daemon correctly rejected a native error result, but the removal contract failed. That native error and the earlier 401 remain unexplained. Claude streaming, parallel, cancellation and interrupted-side-effect acceptance remain. |
 | Sandbox and network enforcement | Pod-network, parallel and lifecycle checks verified after local repair; full gate pending | The repeated credential-free preflight passed 92 checks; real concurrent tasks denied cross-pod TCP/UDP, and completion/interruption/cancellation have passing network-profile reruns. See [network evidence](AGYN-NETWORK.md) and [parallel scope](AGYN-PARALLEL.md). Adversarial hardening, cross-task overlay authorization and fail-closed bootstrap remain required. Unconfined is lab-only. |
 | Resource containment | Per-container bounds and real-agent lifecycle verified; aggregate gate pending | [Typed API, runner enforcement and flavor/MCP mapping](AGYN-RESOURCES.md) pass source tests and live kernel probes. Completed, parallel/FIFO, interrupted and cancellation tests pass using the bounded profile; nine Agyn Pods have matching specs/main cgroups. Aggregate admission/accounting, agent OOM recovery, production sizing and mandatory production-profile enforcement remain required. Stock deployment was restored after testing. |
 | Startup reliability | Unexplained failure remains | One live workload became FAILED during setup before fault injection, with no reason exposed by Gateway. The accepted request was quarantined and cleanup confirmed removal. Passing fresh fixtures do not explain that failure; improve diagnosability and investigate it before release. |
 | Operations | Pending; local streaming resilience and two-component restoration verified | 27 subprocess cases cover scenario forwarding, restoration, partial deployment, lost patch acknowledgement, rollout failure, external edits, identity changes and busy-lab refusal. Live restoration, capability withdrawal and zero leftover Pods were independently checked again after streaming acceptance. Bounded HTTP backpressure tests pass; production admission/load, graceful draining, readiness, backup/restore, schema migration, retention and disaster recovery still need acceptance. |
-| Upstream contribution | Twelve focused branches; proposal drafted | Existing branches plus Claude SDK session selection `0cdc814`, daemon persistence `f29925c` and independent error-result handling `1b1dd62`. Ordinary suites and focused race checks pass; native SDK process recovery is independently verified. Resource checks retain their separate Buf/Go/race/live evidence. Unrelated upstream race-test failures remain disclosed. No upstream PR submitted yet. |
+| Upstream contribution | Fourteen focused branches; proposal drafted | New API `0125665` and Runners `890f759` confirmation branches, plus updated independent orchestrator branch `f83ce83`. Buf compatibility, ordinary Go, full Runners race and real PostgreSQL checks pass; orchestrator race checks retain the disclosed unrelated exclusion. Prior daemon/SDK/resource branches retain their separate evidence. No upstream PR submitted yet. |
 
 Native session persistence is required for correct continuation. Bulk session
 analytics, auto-improvement pipelines and prompt/tool customization UI are next
@@ -62,6 +68,7 @@ claim of multi-node HA.
 - [Compute resource enforcement and remaining profile acceptance](AGYN-RESOURCES.md)
 - [Blocking/streaming protocol acceptance and remaining audit](A2A-PROTOCOL.md)
 - [Second-agent portability evidence and remaining integration](AGYN-PORTABILITY.md)
+- [Failed-Pod incident and explicit removal confirmation](AGYN-REMOVAL.md)
 - [Contribution guide and patch evidence](CONTRIBUTING-AGYN.md)
 
 - [A2A specification](https://a2a-protocol.org/latest/specification/)

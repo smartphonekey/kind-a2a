@@ -4,6 +4,7 @@ import { once } from "node:events";
 import { createServer } from "node:http";
 import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync, lstatSync, symlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -18,6 +19,60 @@ import { DurableTaskStore } from "./service/task-store.js";
 import { createServiceApp } from "./service/http.js";
 import { serviceCard } from "./service/card.js";
 import { deliverBinding } from "./service/agyn-terminal.js";
+import type { AgynWorkload } from "./agyn-client.js";
+
+test("Agyn installer does not hide unconfirmed failed/stopped workloads behind billing end", async t => {
+  const setup = { executionId: randomUUID(), instanceId: randomUUID(), threadId: randomUUID(), requestId: randomUUID(),
+    retiredRequestIds: [], profileId: "test", reporting: { url: "https://reporting.invalid", token: "A".repeat(43) } };
+  let workloads: AgynWorkload[] = [];
+  let terminalRequests: string[] = [];
+  const server = createServer((request, response) => {
+    let body = "";
+    request.on("data", chunk => { body += chunk; });
+    request.on("end", () => {
+      response.setHeader("content-type", "application/json");
+      const method = request.url?.split("/").at(-1);
+      if (method === "GetInstance") response.end(JSON.stringify({ instance: { meta: { id: setup.instanceId }, state: "AGENT_INSTANCE_STATE_ACTIVE" } }));
+      else if (method === "ListWorkloadsByAgentInstance") response.end(JSON.stringify({ workloads }));
+      else if (method === "CreateTerminalSession") {
+        terminalRequests.push(JSON.parse(body).workloadId);
+        // Only selection is under test; no remote terminal or credential delivery.
+        response.writeHead(503).end("{}");
+      } else response.writeHead(404).end("{}");
+    });
+  });
+  t.after(async () => { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); });
+  server.listen(0, "127.0.0.1"); await once(server, "listening");
+  const address = server.address(); assert(address && typeof address !== "string");
+  for (const scenario of [
+    { name: "failed alone", status: "WORKLOAD_STATUS_FAILED", confirmed: false, replacement: false },
+    { name: "unconfirmed failed replacement", status: "WORKLOAD_STATUS_FAILED", confirmed: false, replacement: true },
+    { name: "unconfirmed stopped replacement", status: "WORKLOAD_STATUS_STOPPED", confirmed: false, replacement: true },
+    { name: "confirmed failed predecessor", status: "WORKLOAD_STATUS_FAILED", confirmed: true, replacement: true },
+    { name: "confirmed stopped predecessor", status: "WORKLOAD_STATUS_STOPPED", confirmed: true, replacement: true }
+  ]) {
+    const replacementId = randomUUID();
+    workloads = [{ meta: { id: randomUUID() }, agentInstanceId: setup.instanceId, status: scenario.status,
+      removedAt: new Date().toISOString(), ...(scenario.confirmed ? { removalConfirmedAt: new Date().toISOString() } : {}) }];
+    if (scenario.replacement) workloads.push({ meta: { id: replacementId }, agentInstanceId: setup.instanceId, status: "WORKLOAD_STATUS_RUNNING" });
+    terminalRequests = [];
+    const child: ChildProcessWithoutNullStreams = spawn(process.execPath, [new URL("./service/agyn-reporting-installer.js", import.meta.url).pathname], {
+      env: { ...process.env, AGYN_GATEWAY_URL: `http://127.0.0.1:${address.port}`, AGYN_TOKEN: "test-gateway",
+        AGYN_ORGANIZATION_ID: randomUUID(), AGYN_IDENTITY_ID: randomUUID() }, timeout: 5000, killSignal: "SIGKILL"
+    });
+    const exited = once(child, "close");
+    let output = "", errors = "";
+    child.stdout.on("data", chunk => { output += chunk; }); child.stderr.on("data", chunk => { errors += chunk; });
+    t.after(async () => { if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL"); await exited; });
+    child.stdin.end(JSON.stringify(setup));
+    const [code, terminationSignal] = await exited;
+    assert.equal(terminationSignal, null, `${scenario.name}: installer did not fail promptly`);
+    assert.equal(code, 1, scenario.name);
+    assert.equal(output, "", scenario.name);
+    assert.equal(errors, "Agyn execution reporting setup failed\n", scenario.name);
+    assert.deepEqual(terminalRequests, scenario.confirmed ? [replacementId] : [], scenario.name);
+  }
+});
 
 test("managed runtime config preserves tracing and existing tools without exposing credentials", () => {
   const source = '[mcp_servers.existing]\ncommand="existing"\n[[hooks.Stop]]\n[[hooks.Stop.hooks]]\ntype="command"\ncommand="agynd-trace-hook"\n';

@@ -22,7 +22,7 @@ export async function runParallelAcceptance(context: Context): Promise<void> {
   const evidence: any = { agentId, startedAt: new Date().toISOString(), passed: false, samples: [], network: [], reporters: [] };
   const save = () => writeFileSync(join(context.directory, "parallel.json"), JSON.stringify(evidence, null, 2), { mode: 0o600 });
   const markers = { a: `a-${suffix}`, b: `b-${suffix}` };
-  const prompt = (marker: string, turn: 1 | 2) => `Parallel-isolation acceptance, turn ${turn}. Report progress, then run this JavaScript once using exec_command and /agyn/bin/node -e. Keep waiting for the command until it exits; poll its session if needed. The operator, not you, releases its barrier. Do not create release files, detach it, report an outcome, or perform other work while it runs. If it fails, report the failure and do not retry or repair the fixture. After success, read /workspace/reporting-proof.txt, publish its exact contents as a text artifact, and report turn_done. JavaScript: ${parallelProgram({ root: "/workspace", marker, turn })}`;
+  const prompt = (marker: string, turn: 1 | 2) => `Parallel-isolation acceptance, turn ${turn}. Report progress, then run this JavaScript once using your command-execution tool and /agyn/bin/node -e. Keep waiting for the command until it exits; poll its running-command handle if needed. The operator, not you, releases its barrier. Do not create release files, detach it, report an outcome, or perform other work while it runs. If it fails, report the failure and do not retry or repair the fixture. After success, read /workspace/reporting-proof.txt, publish its exact contents as a text artifact, and report turn_done. JavaScript: ${parallelProgram({ root: "/workspace", marker, turn })}`;
   const send = async (marker: string, turn: 1 | 2, taskId?: string) => {
     const messageId = randomUUID();
     const result = await rpc("SendMessage", { message: { messageId, taskId, role: "ROLE_USER", parts: [{ text: prompt(marker, turn) }] }, configuration: { returnImmediately: true } });
@@ -106,7 +106,7 @@ export async function runParallelAcceptance(context: Context): Promise<void> {
         assert(history.some(event => event.executionId === turn.executionId && event.kind === "agent.artifact" && event.payload.text === turn.marker));
         assert(!instancePods(kubeconfig, snapshot.instanceId).some(pod => pod.metadata.uid === snapshot.uid), "settlement preceded old Pod removal");
         const workloads = await gateway.workloads(snapshot.instanceId);
-        assert(workloads.find(workload => workload.meta.id === snapshot.labels["workload_key"])?.removedAt, "old workload has no confirmed removal");
+        assert(workloads.find(workload => workload.meta.id === snapshot.labels["workload_key"])?.removalConfirmedAt, "old workload has no confirmed removal");
         if (!anotherTurnQueued) {
           assertInstanceAbsent(kubeconfig, snapshot.instanceId);
           const task = await rpc("GetTask", { id: turn.taskId });

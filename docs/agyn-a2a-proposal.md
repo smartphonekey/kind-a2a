@@ -74,9 +74,12 @@ boundary against a malicious agent or repository.
 3. Can instance/thread creation and message submission accept caller-owned
    idempotency keys? Current protobuf requests do not provide them.
 4. Which runner observation is the authoritative proof of workload removal?
-   Stock `removed_at` can mean only deletion acceptance or runner contact loss.
-   The focused orchestrator patch now waits for inspection to confirm absence,
-   keeping failed-but-unremoved workloads tracked. What capability/fencing
+   Runners uses `removed_at` to end metering on failed/stopped status; it is not
+   deletion proof. The proposed additive `removal_confirmed_at` separates the
+   trusted lifecycle observation from billing. The updated orchestrator waits
+   for inspection and the exact durable ACK, keeping unconfirmed workloads
+   tracked. [Source/database checks pass; live rollout remains pending](../AGYN-REMOVAL.md).
+   What capability/fencing
    contract should cover node partitions, forced deletion and in-flight creates?
    An opt-in immediate stop on pause is separate from removal confirmation.
 5. How should the daemon persist message execution intent and prevent automatic

@@ -86,12 +86,15 @@ Two independent, runtime-neutral changes are pushed in
   `STOP_INACTIVE_INSTANCES=true` stops paused/terminated instances despite fresh
   daemon keepalives. Default behavior is unchanged; unavailable lifecycle reads
   do not authorize immediate stops.
-- `fix/confirmed-workload-removal`, commits `230977d` and `e0f57d8`: do not set `removed_at`
-  from a stop ACK, runner outage or failure alone. Confirm absence by inspection,
-  retain failed-but-unremoved workloads and block their replacements. Hold
-  persistent-volume TTL until every workload has confirmed removal.
+- `fix/confirmed-workload-removal`, now `f83ce83` after `230977d`/`e0f57d8`:
+  require the new `removal_confirmed_at` independently of billing's `removed_at`.
+  Confirm absence by inspection, retain failed/stopped unconfirmed workloads,
+  block replacement and hold volume TTL. Reject missing/wrong durable update
+  acknowledgements before identity cleanup. This branch now requires local API
+  generation from the separate confirmation contribution below.
 - Local `lab/a2a-lifecycle-integration`, commit `cba941a`, combines these for
-  acceptance only. No upstream PR has been opened.
+  earlier acceptance only; it does not include `f83ce83`. Neither does the old
+  `lab/resource-integration` at `5edf8a4`. No upstream PR has been opened.
 
 Both independent branches pass ordinary `go test ./...`; the combined branch
 builds and passes `go test -race ./... -skip
@@ -105,10 +108,42 @@ ungenerated checkouts cannot run the Go suite. Exclude generated API churn from
 the contribution.
 
 These changes contain no A2A state machine, MCP protocol, agent prompt or
-Kubernetes-specific controller logic. They use the existing Agents/Runner APIs.
+Kubernetes-specific controller logic. Immediate-stop uses existing APIs;
+confirmed removal now requires the additive API and Runners changes below.
 Discuss the confirmed-removal contract and node-partition fencing with maintainers;
 a runner's `NotFound` is not proof against externally force-deleted pods or a late
-in-flight start. Historical `removed_at` values need an operator drain/audit.
+in-flight start. Historical `removed_at` values need an operator drain/audit,
+not a confirmation backfill. Broader generic sandbox paths still need migration
+and acceptance; these agent-instance checks do not establish that entire contract.
+
+## Removal Confirmation API And Storage
+
+A [live failed-Pod incident](AGYN-REMOVAL.md) found that the separate Runners
+service stamps `removed_at` on failed/stopped status for metering. The earlier
+orchestrator-only fix could not make that field physical-removal evidence.
+Preserve billing behavior and propose explicit confirmation in two review units:
+
+- API: [spk-ai/api](https://github.com/spk-ai/api/tree/feat/workload-removal-confirmation),
+  `feat/workload-removal-confirmation`, `0125665`, based on `50ef648`.
+  Add optional timestamps to Workload and UpdateWorkloadRequest, not runner
+  failure reports. Buf lint and breaking checks against main pass.
+- Runners: [spk-ai/runners](https://github.com/spk-ai/runners/tree/feat/workload-removal-confirmation),
+  `feat/workload-removal-confirmation`, `890f759`, based on `f76154d`.
+  Add migration `0017` without backfilling historical records, require terminal
+  state, retain the first confirmation and prevent reopening with a database
+  constraint. No A2A, agent prompt or Kubernetes dependencies are introduced.
+
+Both branches are pushed, with existing repository licenses retained. Runners
+ordinary and full race suites pass. A bounded disposable PostgreSQL test also
+passes under the race detector, exercising actual migrations, authenticated
+runner reporting, billing/confirmation separation, retry durability and the
+reopening constraint. No deployed database was changed. These tests do not prove
+Gateway forwarding or Kubernetes deletion.
+
+The API must be published before default BSR builds can consume it; the Runners
+and orchestrator READMEs describe local source generation. Gateway must also be
+regenerated. The coordinated images, deployment-wrapper changes and credential-free
+live failure acceptance are still pending. No upstream PR has been submitted.
 
 ## Runner Ingress Isolation
 

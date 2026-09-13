@@ -59,7 +59,7 @@ export class AgynRuntimeDriver implements RuntimeDriver {
     const instance = await this.client.getInstance(runtime.instanceId, signal);
     if (instance.state !== "AGENT_INSTANCE_STATE_ACTIVE") return "interrupted";
     const workloads = await this.client.workloads(runtime.instanceId, signal);
-    const active = workloads.filter(workload => !workload.removedAt);
+    const active = workloads.filter(workload => !workload.removalConfirmedAt);
     if (!execution.workloadId || active.length !== 1 || active[0].meta.id !== execution.workloadId ||
         active[0].agentInstanceId !== runtime.instanceId || active[0].status !== "WORKLOAD_STATUS_RUNNING") return "interrupted";
     // Chat replies are not completion events. Only the authenticated reporting channel supplies outcomes.
@@ -78,9 +78,10 @@ export class AgynRuntimeDriver implements RuntimeDriver {
       }
       if (!["AGENT_INSTANCE_STATE_PAUSED", "AGENT_INSTANCE_STATE_TERMINATED"].includes(instance.state)) stopped = false;
       const workloads = await this.client.workloads(instance.meta.id, signal);
-      // Requires the provider's confirmed-removal contract, not the stock
-      // deletion-accepted timestamp. FAILED/STOPPING or pause alone is insufficient.
-      if (workloads.some(workload => !workload.removedAt)) stopped = false;
+      if (execution.requestId && !workloads.length || execution.workloadId && !workloads.some(workload => workload.meta.id === execution.workloadId)) stopped = false;
+      // removedAt ends metering and may be stamped by a FAILED status report.
+      // Only explicit lifecycle confirmation proves runner-observed absence.
+      if (workloads.some(workload => !workload.removalConfirmedAt)) stopped = false;
     }
     return { stopped };
   }

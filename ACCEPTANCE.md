@@ -2,6 +2,16 @@
 
 Evidence below spans the preserved `kind-aira-a2a-lab` baseline and the new self-hosted Agyn backend. Each section identifies its environment; fake-agent tests and live-model evidence are deliberately separated.
 
+## Removal Contract Correction (2026-09-13)
+
+A later failed-Pod test disproved the general removal contract asserted by the
+earlier orchestrator-only patches. Runners stamps `removedAt` for metering even
+when a failed Pod still exists. The service now requires an additive explicit
+confirmation field. Source and real PostgreSQL tests pass; coordinated
+Runners/Gateway/orchestrator rollout and live fault acceptance remain pending.
+See [the failure, focused fixes and exact verification scope](AGYN-REMOVAL.md).
+Earlier independent Pod observations remain evidence only for those scenarios.
+
 ## Hard Cancellation And Confirmed Removal (2026-09-13)
 
 The service passes **47 local tests** and three separate real-model scenarios
@@ -39,8 +49,9 @@ that the native SDK turn completed before shutdown.
 **Correction to earlier evidence:** older runs below waited for Agyn `removedAt`
 and checked zero Pods after cleanup. Upstream stamped that field on deletion
 acceptance and some runner failures. Those runs did not prove physical absence
-at settlement. The new independent orchestrator patches fix the observed
-contract, but cannot retroactively validate old timestamps. Forced Pod deletion,
+at settlement. The later Runners metering incident above also invalidates the
+general orchestrator-only fix claim; the additive contract cannot retroactively
+validate old timestamps. Forced Pod deletion,
 partitioned nodes and delayed creates remain explicit production gates.
 
 ## Interrupted Inbox Recovery (2026-09-13)

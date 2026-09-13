@@ -4,6 +4,14 @@ This is a tested **trusted-local** integration, not a hardened deployment. It
 keeps Agyn responsible for pod/PVC lifecycle and the A2A service responsible for
 task ownership, dispatch and durable reports. No upstream PR has been submitted.
 
+**Compatibility correction:** the earlier images and reproduction commands below
+do not implement the current removal contract. A later failed Pod proved that
+Runners can stamp `removedAt` for metering without deletion. The new service
+requires `removalConfirmedAt`; coordinated API/Runners/Gateway/orchestrator
+rollout and live fault acceptance remain pending. See [AGYN-REMOVAL.md](AGYN-REMOVAL.md)
+before running another fixture. The live preflight now requires reviewed Runners
+and Gateway images as well as the previous components.
+
 ## Network Acceptance Caveat
 
 The original lifecycle results below did not prove network isolation. Subsequent live
@@ -16,7 +24,7 @@ reruns; an earlier unexplained workload startup failure remains disclosed in
 [AGYN-NETWORK.md](AGYN-NETWORK.md). See that report for evidence and
 the `AGYN_LIVE_RUNNER_CHART` opt-in command; do not broadly allow host/LAN egress.
 
-## Required Components
+## Components Used For Earlier Runs
 
 - `agynd-cli` persistence patch `c933329`, branch `fix/codex-home-persistence`.
 - Independent required-init patch `591543b`, branch `feat/required-init-scripts`.
@@ -27,7 +35,8 @@ the `AGYN_LIVE_RUNNER_CHART` opt-in command; do not broadly allow host/LAN egres
   `fix/confirmed-workload-removal` (`230977d`, then volume-retention fix `e0f57d8`),
   combined only for testing on `lab/a2a-lifecycle-integration` (`cba941a`). Explicit
   `STOP_INACTIVE_INSTANCES=true` bypasses idle delay for paused instances.
-  Stop/failure acknowledgements alone no longer stamp removal or start volume TTL.
+  These earlier patches stopped the orchestrator itself from stamping removal
+  on failure/stop ACK, but did not account for the separate Runners billing path.
 - `ops/Dockerfile.agyn-reporting-init` adds the patched daemon and Node to the
   original init image. The workspace image, Codex image and model are unchanged.
   Node's C++ libraries are private to its wrapper, not injected into Codex.
@@ -65,10 +74,10 @@ behavior is opt-in in the contribution patch, retaining existing defaults.
    not authorize agent startup on the required-init daemon.
 7. Reports commit to the service database before ACK. Only workload removal
    evidence permits settlement or a queued follow-up, not an outcome or pause ACK.
-   This requires the corrected orchestrator: stock `removedAt` may only mean
-   deletion was accepted, or even that the runner became unreachable. The patch
-   checks runner inspection before recording removal and retains unremoved
-   failures so a replacement cannot skip their cleanup.
+   The current contract requires explicit `removalConfirmedAt` from the updated
+   Runners/Gateway/orchestrator stack. Billing's `removedAt` is insufficient.
+   The replacement patch checks runner inspection and the exact durable ACK,
+   and retains unconfirmed failures so replacements cannot skip their cleanup.
    An acknowledged non-canceled outcome lets native Stop finish normally while
    compute is releasing; it must not write a false cancellation notice into the
    resumable conversation. Actual cancellation and unacknowledged release still
@@ -83,6 +92,11 @@ same instance, thread, PVC and native Codex session. Generic reporting code is
 outside the agent runtime image; Codex-specific configuration is a small adapter.
 
 ## Reproduce The Local Test
+
+The following records the earlier test profile. It is not currently sufficient
+for the new driver; complete the coordinated rollout in
+[AGYN-REMOVAL.md](AGYN-REMOVAL.md) first. Do not label stock images as reviewed
+confirmation images to bypass the new preflight.
 
 Build and test the service with `npm ci && npm test`. From the combined daemon
 checkout, build the integration binary into the lab's dedicated build context:

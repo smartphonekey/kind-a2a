@@ -8,6 +8,12 @@ wrapper temporarily deployed the combined images, then restored the stock
 deployments. This is not a permanent production upgrade. Aggregate admission,
 whole-task accounting, sizing and adversarial hardening remain release gates.
 
+The resource measurements remain valid, but these historical lifecycle images
+do not implement the new [removal-confirmation contract](AGYN-REMOVAL.md).
+An unrelated failed-Pod case disproved billing `removedAt` as deletion evidence.
+The new service requires coordinated Runners/Gateway/orchestrator updates before
+repeating the model tests; the source fixes have not yet had that live rollout.
+
 ## Problem And Contract
 
 The previously observed agent Pods had no CPU/memory requests or limits on their
@@ -115,6 +121,11 @@ The observed behavior matches Kubernetes v1.33's documented
 No Pod-level alpha resource feature is needed.
 
 ## Bounded Agent Profile
+
+This section records the earlier deployed profile, not a currently validated
+reproduction recipe. The old wrapper manages only two deployments; new Runners
+and Gateway image management and failure tests must be added as described in
+[the rollout requirements](AGYN-REMOVAL.md).
 
 The operator wrapper now optionally deploys both combined images. It snapshots
 only managed fields and deployment UIDs, uses resource-version-checked patches,

@@ -28,7 +28,7 @@ async function main() {
   while (!signal.aborted) {
     const instance = await client.getInstance(setup.instanceId, signal);
     if (instance.state !== "AGENT_INSTANCE_STATE_ACTIVE") throw new Error("runtime no longer active");
-    const workloads = (await client.workloads(setup.instanceId, signal)).filter(workload => !workload.removedAt);
+    const workloads = (await client.workloads(setup.instanceId, signal)).filter(workload => !workload.removalConfirmedAt);
     if (workloads.length > 1 || workloads.some(workload => workload.agentInstanceId !== setup.instanceId)) throw new Error("ambiguous workload identity");
     const workload = workloads[0];
     if (workload?.status === "WORKLOAD_STATUS_FAILED") throw new Error("runtime failed");

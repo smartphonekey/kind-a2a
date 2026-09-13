@@ -2,7 +2,7 @@ export type AgynParticipant = { id: string; nickname?: string };
 export type AgynThread = { id: string; participants: AgynParticipant[]; messageCount?: number };
 export type AgynMessage = { id: string; threadId: string; senderId: string; body: string; createdAt: string };
 export type AgynInstance = { meta: { id: string }; state: string; handle: string; defaultThreadId?: string; label?: string; agentId?: string };
-export type AgynWorkload = { meta: { id: string }; status: string; removedAt?: string; agentInstanceId?: string };
+export type AgynWorkload = { meta: { id: string }; status: string; removedAt?: string; removalConfirmedAt?: string; agentInstanceId?: string };
 
 type GatewayError = { code?: string; message?: string };
 

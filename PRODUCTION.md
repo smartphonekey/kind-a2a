@@ -16,10 +16,10 @@ agent profile must not change the A2A controller or workflow implementation.
 
 | Gate | Status | Required evidence |
 | --- | --- | --- |
-| Existing behavior | Baseline preserved | Build and all 82 tests pass on 2026-09-13, including the 10 baseline tests. |
+| Existing behavior | Baseline preserved | Build and all 101 tests pass on 2026-09-13, including the 10 baseline tests and 19 new request/stream lifetime checks. |
 | Durable task ownership and execution | Module/process and live restart verified | Transactional submissions, scoped idempotency, FIFO turns, fenced leases and six-process contention pass. Live controller SIGKILL plus pod replacement recovers a pinned execution without redispatch. Remaining failover/storage boundaries need verification. |
 | Authenticated protocol boundary | HTTP/SSE tests verified; deployment pending | Unauthorized and cross-owner send/get/list/cancel/events checks, disconnect/reconnect and subscription credential revocation pass. TLS deployment acceptance remains. |
-| Protocol conformance | Further work required | The live tests use nonblocking sends. Blocking SendMessage currently returns after a 30-second wait even when still in progress; this must be corrected and tested against the specification. Streaming lifetime also needs a full conformance audit. |
+| Protocol conformance | Blocking/stream lifetime fixed and official-client tested; full audit pending | [Protocol acceptance](A2A-PROTOCOL.md) holds real HTTP requests open past 30 seconds, verifies terminal closure, queued-turn/cancellation races, ordered subscribers and bounded large-snapshot replay. These tests drive the durable store, not an agent. Error/validation conformance, SSE heartbeats, ingress and load acceptance remain. |
 | Reporting MCP and durable events | Live Codex verified in gated lab | Real progress/artifact/outcome calls, stdio-to-HTTP relay and private execution-scoped terminal delivery pass. Hardened delivery/deployment remains. |
 | Stop outcome check | Live Codex reminder verified | Native Stop reminder caused the real agent to report its missing outcome. Durable reminder bounds and outage behavior have subprocess tests. Second-agent behavior and live failing-init fault injection remain. |
 | Durable runtime | Completed, interrupted and concurrent continuation live verified | Same Agyn instance, native Codex session and PVC across changed pod UIDs. After explicit recovery, an unconditional append remains one line and the old inbox request is acknowledged without execution. Parallel follow-up also preserves identity while another task stays active. |
@@ -60,6 +60,7 @@ claim of multi-node HA.
 - [Network enforcement failure, repair and acceptance](AGYN-NETWORK.md)
 - [Live parallel tasks and same-task FIFO](AGYN-PARALLEL.md)
 - [Compute resource enforcement and remaining profile acceptance](AGYN-RESOURCES.md)
+- [Blocking/streaming protocol acceptance and remaining audit](A2A-PROTOCOL.md)
 - [Contribution guide and patch evidence](CONTRIBUTING-AGYN.md)
 
 - [A2A specification](https://a2a-protocol.org/latest/specification/)

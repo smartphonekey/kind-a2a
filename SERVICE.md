@@ -72,13 +72,25 @@ non-loopback client or reporter traffic. Browser origins are rejected; there is
 no browser authentication flow in this service.
 
 `SendMessage` persists and queues an execution. `configuration.returnImmediately`
-returns without waiting; blocking and streaming requests have bounded waits and
-can reconnect. Follow-ups set `message.taskId` and reuse that task's stored
+returns without waiting. Blocking sends wait for the submitted execution to
+settle and the task to be terminal or interrupted; they no longer return a
+partial success after 30 seconds. Follow-ups set `message.taskId` and reuse that task's stored
 profile. The API never accepts a runtime executable, image or Agyn handle in a
 request. Task IDs and contexts do not grant cross-owner access.
 
-Streaming snapshots omit history unless requested and send artifacts as separate
-bounded artifact-update frames. `GetTask` provides the stored history/artifacts.
+JSON-RPC streams follow the task across interrupted states and subsequent turns,
+closing on terminal status, disconnect, authorization failure or service shutdown.
+An open stream does not keep an agent container running. Subscribing to an already
+terminal task returns `UnsupportedOperationError`; use `GetTask` to inspect it.
+Disconnecting a blocking send or stream does not cancel an accepted execution.
+
+Streams start with an atomic task snapshot. History is omitted unless requested
+and may be further limited to fit the initial frame. Small snapshots include all
+artifacts; larger ones deliver artifacts in separate bounded updates marked with
+`metadata.snapshotSequence`. Subsequent durable status/artifact updates carry
+their own increasing `metadata.eventSequence`. Snapshot replay is not a new event.
+`GetTask` provides stored history/artifacts. See [protocol acceptance and remaining
+work](A2A-PROTOCOL.md), including proxy idle timeouts and streaming error handling.
 
 ## Reporting Setup Contract
 

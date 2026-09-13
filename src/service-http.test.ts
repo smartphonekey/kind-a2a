@@ -24,7 +24,7 @@ test("service HTTP: auth, tenant isolation, scoped list/replay/cancel, validatio
   const store = new DurableTaskStore(join(dir, "tasks.sqlite"));
   const abort = new AbortController();
   const server = createServer(createServiceApp({ store, card: serviceCard("http://localhost"), profileId: "agent-one",
-    authorize: fileAuthorizer(path), signal: abort.signal, waitMs: 200, pollMs: 5 }));
+    authorize: fileAuthorizer(path), signal: abort.signal, pollMs: 5 }));
   server.listen(0, "127.0.0.1"); await once(server, "listening");
   t.after(async () => { abort.abort(); server.closeAllConnections(); await new Promise<void>(r => server.close(() => r())); store.close(); await rm(dir, { recursive: true, force: true }); });
   const address = server.address(); assert(address && typeof address !== "string");

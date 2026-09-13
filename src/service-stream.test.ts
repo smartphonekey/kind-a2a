@@ -21,7 +21,7 @@ test("A2A stream: disconnect releases admission, reconnect sees durable state, c
   const shutdown = new AbortController();
   const server = createServer(createServiceApp({ store, card: serviceCard("http://localhost"), profileId: "changed-default",
     signal: shutdown.signal, authorize: async header => header === "Bearer token" && valid ? scope : undefined,
-    pollMs: 5, waitMs: 1000, maxRequestsPerOwner: 1 }));
+    pollMs: 5, maxRequestsPerOwner: 1 }));
   server.listen(0, "127.0.0.1"); await once(server, "listening");
   const address = server.address(); assert(address && typeof address !== "string");
   const base = `http://127.0.0.1:${address.port}`;
@@ -34,7 +34,7 @@ test("A2A stream: disconnect releases admission, reconnect sees durable state, c
   const reader = first.body!.getReader();
   const initial = await reader.read(); assert(new TextDecoder().decode(initial.value).includes(submitted.task.id));
   let snapshotFrames = new TextDecoder().decode(initial.value);
-  while (!snapshotFrames.includes("artifactUpdate")) {
+  while (!snapshotFrames.includes("progress-file")) {
     const frame = await reader.read(); assert(!frame.done); snapshotFrames += new TextDecoder().decode(frame.value);
   }
   assert(snapshotFrames.includes("progress-file"), "snapshot must not lose pre-subscription artifacts");

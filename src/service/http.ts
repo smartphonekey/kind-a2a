@@ -11,7 +11,7 @@ import { reportingRouter } from "../reporting/http.js";
 
 export type HttpOptions = {
   store: DurableTaskStore; card: AgentCard; profileId: string; authorize: Authorize;
-  signal: AbortSignal; pollMs?: number; waitMs?: number; maxRequestsPerOwner?: number;
+  signal: AbortSignal; pollMs?: number; maxRequestsPerOwner?: number;
   ready?: () => boolean;
 };
 const reconciliation = z.object({ resolution: z.enum(["continue", "fail"]), reason: z.string().trim().min(1).max(4096) }).strict();
@@ -20,7 +20,7 @@ export function createServiceApp(options: HttpOptions) {
   const app = express();
   app.disable("x-powered-by");
   const active = new Map<string, number>();
-  const handler = new DurableA2AHandler(options.store, options.card, options.profileId, options.pollMs, options.waitMs);
+  const handler = new DurableA2AHandler(options.store, options.card, options.profileId, options.pollMs);
   const transport = new JsonRpcTransportHandler(handler);
   app.use((_request, response, next) => {
     response.setHeader("cache-control", "no-store");
@@ -41,6 +41,8 @@ export function createServiceApp(options: HttpOptions) {
     let principal: Principal | undefined;
     try { principal = await options.authorize(request.headers.authorization); }
     catch { response.status(503).json({ error: "authentication service unavailable" }); return; }
+    if (request.aborted || response.destroyed) return;
+    if (options.signal.aborted) { response.sendStatus(503); return; }
     if (!principal) { response.setHeader("www-authenticate", "Bearer"); response.sendStatus(401); return; }
     const key = JSON.stringify([principal.tenant, principal.subject]);
     const count = active.get(key) ?? 0;
@@ -57,25 +59,35 @@ export function createServiceApp(options: HttpOptions) {
   app.post("/a2a", async (request, response) => {
     const principal = response.locals.principal as Principal;
     const disconnected = new AbortController();
+    let authFailure: 401 | 503 | undefined;
     const abort = () => disconnected.abort();
     response.once("close", abort);
     request.once("aborted", abort);
+    if (request.aborted || response.destroyed) abort();
     const signal = AbortSignal.any([disconnected.signal, options.signal]);
     const context = new ServerCallContext({
       user: { isAuthenticated: true, userName: principal.subject }, tenant: principal.tenant,
       requestedVersion: request.header("A2A-Version") ?? "0.3",
       state: new Map<string, unknown>([[PRINCIPAL, principal], [SIGNAL, signal], [CHECK_AUTH, async () => {
-        const current = await options.authorize(request.headers.authorization);
+        let current: Principal | undefined;
+        try { current = await options.authorize(request.headers.authorization); }
+        catch { authFailure = 503; abort(); throw new Error("authentication service unavailable"); }
         if (!current || current.tenant !== principal.tenant || current.subject !== principal.subject) {
-          disconnected.abort();
+          authFailure = 401; abort();
           throw new Error("authorization expired");
         }
       }]])
     });
     try {
+      signal.throwIfAborted();
       validateVersion(context.requestedVersion, options.card, "JSONRPC");
       const result = await transport.handle(request.body, context);
-      if (!(Symbol.asyncIterator in result)) { response.json(result); return; }
+      signal.throwIfAborted();
+      if (!(Symbol.asyncIterator in result)) {
+        const error = "error" in result ? result.error as ReturnType<typeof JsonRpcTransportHandler.mapToJSONRPCError> : undefined;
+        if (error?.code === -32603) result.error = { code: -32603, message: "Internal service error" };
+        response.json(result); return;
+      }
       // Keep the SDK's parser/serializer; own only HTTP streaming lifetime and backpressure.
       for await (const event of result) {
         if (signal.aborted) break;
@@ -90,7 +102,11 @@ export function createServiceApp(options: HttpOptions) {
       }
       response.end();
     } catch (error) {
-      if (signal.aborted || response.headersSent) { response.end(); return; }
+      if (response.headersSent || response.destroyed) { response.end(); return; }
+      if (signal.aborted) {
+        if (authFailure === 401) response.setHeader("www-authenticate", "Bearer");
+        response.sendStatus(authFailure ?? 503); return;
+      }
       const mapped = JsonRpcTransportHandler.mapToJSONRPCError(error);
       if (mapped.code === -32603) mapped.message = "Internal service error";
       response.json({ jsonrpc: "2.0", id: rpcId(request), error: mapped });

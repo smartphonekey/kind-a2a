@@ -29,6 +29,12 @@ export async function installRuntime(directory: string, systemConfig: string, no
   const status = await remoteReportingClient(bindingFile).status();
   if (status.executionId !== expected.executionId || status.canceled || status.outcome || status.phase !== "dispatching") throw new Error("execution is not eligible to start");
   if (process.env.AGENT_INSTANCE_ID !== expected.instanceId) throw new Error("runtime identity mismatch");
+  const control = z.object({ version: z.literal(1), instance_id: z.literal(expected.instanceId),
+    allowed_message_id: z.string().uuid(), ack_only_message_ids: z.array(z.string().uuid()).max(256)
+  }).strict().parse(JSON.parse(readFileSync(join(directory, "inbox-control.json"), "utf8")));
+  if (new Set([control.allowed_message_id, ...control.ack_only_message_ids]).size !== control.ack_only_message_ids.length + 1 ||
+      process.env.AGYN_INBOX_JOURNAL_DIR !== "/workspace/.agyn/inbox-journal" ||
+      process.env.AGYN_INBOX_CONTROL_FILE !== join(directory, "inbox-control.json")) throw new Error("inbox replay guard is not configured");
   const stat = lstatSync(systemConfig);
   if (!stat.isFile() || stat.size > 1024 * 1024) throw new Error("invalid managed config");
   const configured = managedReportingConfig(readFileSync(systemConfig, "utf8"), directory, node);

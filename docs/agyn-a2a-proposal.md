@@ -58,8 +58,8 @@ boundary against a malicious agent or repository.
 | --- | --- |
 | Queued, no provider call | Claim once and start normally. |
 | Provision acknowledgement lost | Reconcile deterministic instance identity and thread. Do not create another instance. |
-| Dispatch intent committed, acknowledgement lost | Stop/quarantine and reconcile side effects. Do not resend automatically. |
-| Running, no outcome, daemon or pod replaced | A persisted thread alone is insufficient. Require an execution journal and explicit resume/reconcile semantics. |
+| Dispatch intent committed, acknowledgement lost | Stop/quarantine and reconcile side effects. Do not resend automatically. Reuse is refused without a known provider request ID. |
+| Running, no outcome, daemon or pod replaced | A persisted thread alone is insufficient. Persist intent before invocation, quarantine, and require explicit retirement of the old request before a new instruction. |
 | Outcome committed, response lost | Return the original receipt on retry; finish compute release without re-executing. |
 | Pause accepted, workload still present | Retry/observe release. Do not dispatch the next queued turn. |
 | Completed turn, new follow-up | Reuse instance, native session and volume; create new execution credentials. |
@@ -78,6 +78,10 @@ boundary against a malicious agent or repository.
    alone do not demonstrate that sidecars have stopped.
 5. How should the daemon persist message execution intent and prevent automatic
    replay after an interrupted turn, including pending inbox redelivery?
+   The independent `feat/durable-inbox-guard` prototype journals before invocation
+   and uses a trusted message allowlist plus acknowledgement-only retirement.
+   This is a proposed daemon contract, not a request to weaken self-only inbox
+   permissions or put A2A policy inside the runtime.
 6. Which lifecycle hook interface should work across supported CLIs while keeping
    the A2A state machine outside `agynd-cli`?
 
@@ -86,9 +90,13 @@ boundary against a malicious agent or repository.
 The accompanying implementation tests scoped submissions, SQL transactions,
 cross-process claims, MCP wire calls, durable receipts, bounded stop reminders,
 HTTP authorization/revocation, FIFO work and injected release/dispatch failures.
-It is a trusted local prototype. Live credential delivery, interrupted daemon
-recovery, native session persistence across pods, hard cancellation, enforced
-network isolation, operational recovery, and a second live agent remain gates.
+It is a trusted local prototype. Live credential delivery, native Stop reminders,
+completed-turn recovery, and explicit interrupted-turn recovery now pass. The
+fault test kills the controller and replaces a pod after a non-idempotent append;
+the follow-up keeps the native session/PVC and does not repeat the append.
+Bounded hard cancellation, enforced network/sandbox isolation, operational
+recovery and a second live agent remain gates. See the dated acceptance report
+for separate live evidence and deterministic tests.
 
 The focused `CODEX_HOME` daemon patch is independently useful: it lets native
 sessions and Agyn's native-session mapping use the same per-instance durable

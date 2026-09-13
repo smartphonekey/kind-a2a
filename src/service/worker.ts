@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
-import { DurableTaskStore, TaskStoreError, type Execution, type Runtime } from "./task-store.js";
+import { DurableTaskStore, TaskStoreError, type DispatchReceipt, type Execution, type Runtime } from "./task-store.js";
 
 /** Provider operations must not retry non-idempotent sends. Reporting is a separate channel. */
 export interface RuntimeDriver {
   provision(execution: Execution, recovering: boolean, signal: AbortSignal): Promise<Runtime>;
   prepare(execution: Execution, signal: AbortSignal): Promise<void>;
-  dispatch(execution: Execution, signal: AbortSignal): Promise<string>;
+  dispatch(execution: Execution, signal: AbortSignal, onAccepted: (receipt: DispatchReceipt) => void): Promise<string>;
   observe(execution: Execution, signal: AbortSignal): Promise<"running" | "interrupted">;
   release(execution: Execution, signal: AbortSignal): Promise<{ stopped: boolean }>;
 }
@@ -83,7 +83,7 @@ export class ExecutionWorker {
             await this.driver.prepare(execution, signal);
             signal.throwIfAborted();
             const dispatch = this.store.beginDispatch(lease);
-            const requestId = await this.driver.dispatch(dispatch, signal);
+            const requestId = await this.driver.dispatch(dispatch, signal, receipt => this.store.recordDispatchReceipt(lease, receipt));
             this.store.dispatched(lease, requestId);
           } else if (execution.phase === "dispatching") {
             this.store.markUncertain(lease, "Dispatch acknowledgement missing; automatic resend is disabled");

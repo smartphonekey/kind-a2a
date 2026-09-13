@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import { AgynClient } from "../agyn-client.js";
-import type { Execution, Runtime } from "./task-store.js";
+import type { DispatchReceipt, Execution, Runtime } from "./task-store.js";
 import type { RuntimeDriver } from "./worker.js";
 
 export type AgynExecutionProfile = { id: string; agentId: string };
-export type ExecutionSetup = (execution: Execution, signal: AbortSignal) => Promise<void>;
+export type ExecutionSetup = (execution: Execution, signal: AbortSignal) => Promise<{ workloadId: string }>;
 
 export class AgynRuntimeDriver implements RuntimeDriver {
   private readonly profiles: Map<string, AgynExecutionProfile>;
@@ -40,14 +40,17 @@ export class AgynRuntimeDriver implements RuntimeDriver {
     else if (instance.state !== "AGENT_INSTANCE_STATE_ACTIVE") throw new Error("runtime cannot resume");
   }
 
-  async dispatch(execution: Execution, signal: AbortSignal): Promise<string> {
+  async dispatch(execution: Execution, signal: AbortSignal, onAccepted: (receipt: DispatchReceipt) => void): Promise<string> {
     const runtime = this.runtime(execution);
     const prompt = execution.message.parts.map(part => part.content?.value).join("\n");
     const request = await this.client.sendMessage(runtime.threadId, prompt, signal);
     if (!request.id || request.threadId !== runtime.threadId) throw new Error("invalid dispatch acknowledgement");
+    onAccepted({ requestId: request.id });
     // Agyn starts a pod only for an inbox item. A trusted init gate must prevent
     // agent execution until setup installs reporting in that exact workload.
-    await this.setup(execution, signal);
+    const { workloadId } = await this.setup({ ...execution, requestId: request.id }, signal);
+    if (!workloadId) throw new Error("setup did not bind a workload");
+    onAccepted({ requestId: request.id, workloadId });
     return request.id;
   }
 
@@ -56,7 +59,9 @@ export class AgynRuntimeDriver implements RuntimeDriver {
     const instance = await this.client.getInstance(runtime.instanceId, signal);
     if (instance.state !== "AGENT_INSTANCE_STATE_ACTIVE") return "interrupted";
     const workloads = await this.client.workloads(runtime.instanceId, signal);
-    if (workloads.some(workload => !workload.removedAt && workload.status === "WORKLOAD_STATUS_FAILED")) return "interrupted";
+    const active = workloads.filter(workload => !workload.removedAt);
+    if (!execution.workloadId || active.length !== 1 || active[0].meta.id !== execution.workloadId ||
+        active[0].agentInstanceId !== runtime.instanceId || active[0].status !== "WORKLOAD_STATUS_RUNNING") return "interrupted";
     // Chat replies are not completion events. Only the authenticated reporting channel supplies outcomes.
     return "running";
   }

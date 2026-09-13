@@ -2,7 +2,40 @@
 
 Evidence below spans the preserved `kind-aira-a2a-lab` baseline and the new self-hosted Agyn backend. Each section identifies its environment; fake-agent tests and live-model evidence are deliberately separated.
 
-## Live Gated Reporting (2026-09-13)
+## Interrupted Inbox Recovery (2026-09-13)
+
+The new inbox guard and service wiring pass 41 local tests and a real native Codex fault test on
+the combined daemon `b8db063`. This is trusted-local crash-recovery evidence, not
+exactly-once side effects, hardened isolation or bounded hard cancellation.
+
+| Check | Status | Evidence |
+| --- | --- | --- |
+| Durable intent before side effect | PASS, LIVE | Task `c06bbd04-c942-4cc4-8a8c-fb7c940032cb` unconditionally appended `mtztzf24` and reported the file. Operator inspection found one line and a pending journal record for provider message `8cd8f81f-ff2c-44b6-b526-8cbace96adb3`. |
+| Controller and pod loss | PASS, LIVE | Controller was SIGKILLed; the active fixture pod was deleted. Pod UID `47e3b70f-6128-496a-9d5f-0a1fca0aea9b` was replaced by gated UID `cdea9a1e-aa94-43fa-b28a-9307f171ebc6`. The replacement had no execution authorization and retained the unchanged pending journal/marker. |
+| Quarantine and removal | PASS, LIVE | Restarted controller detected the changed workload and quarantined execution `0f55cf47-5943-4c90-8347-38bb8f66c9ce`. Removal was confirmed before `resourcesReleased=true`; an attempted follow-up before reconciliation was rejected. |
+| Explicit recovery, no replay | PASS, LIVE | An owner-authorized reconciliation with recorded reason retired the old request. In the follow-up pod its journal state was `ack_only`, not `completed`; the file still contained exactly one line. |
+| Same durable environment/session | PASS, LIVE | Follow-up UID `866da4fa-a6df-48da-a22c-04e73edaaddf` kept instance `1399cc45-6b7a-46f8-8464-f8e864fb92e5`, thread `8e00c96c-318b-46e2-9f56-52df50b7da06`, PVC `pv-1399cc45-6b7-2c62af1e-196`, and Codex session `01a09ae3-763b-7003-b5c4-a065ba41c9d0`. Real MCP `turn_done` then settled after removal. |
+| Dispatch identity and replay guard | PASS, DETERMINISTIC | Provider ACK persists before installer failure; workload identity cannot change; missing/replaced/stopped workloads interrupt. Unknown request IDs cannot be reconciled for reuse. Go tests cover lost ACK, process death after a side effect, eight competing processes, corrupt state and exact control binding. |
+
+Private evidence: `.state/agyn-reporting-live-C2pShG/evidence.json`. The fixture
+retains its PVC, pauses its instance and verifies workload removal during cleanup.
+The old message was not retried; a new instruction read existing state after
+review. This does not establish safety for arbitrary external side effects or
+malicious repositories. The journal/control file remain writable by a root agent
+in this explicit lab profile.
+
+The normal two-turn regression also passed with the same combined daemon:
+task `6dc9744b-d84b-4d4c-b1db-633fc6281005`, native session
+`01a09ae7-7f10-7fb2-b12f-2f0d3b7c5a32`, and unchanged PVC
+`pv-67a3c661-d28-e8edcf4b-6fa` across pod UIDs
+`256e0ef7-3db8-48bd-812a-3d6b63ba5eb7` and
+`622fb2af-769b-4fb1-9d7c-6dcfd90adbda`. Stop check
+`e93febb4-395f-4a77-adce-7c6283838c56` reminded the agent, which then reported
+its real MCP outcome. Evidence: `.state/agyn-reporting-live-NiuEyY/evidence.json`.
+After both runs the workload namespace was empty and the original daemon image
+`ghcr.io/agynio/agynd-cli-init:0.24.2` was restored and rolled out. No PVCs were deleted.
+
+## Live Gated Reporting (2026-09-13, Earlier Milestone)
 
 The new service now passes 38 deterministic/HTTP/subprocess tests and a separate
 real-model Agyn acceptance. This is still a trusted local lab, not production.
@@ -19,7 +52,7 @@ contains the native agent configuration.
 | Native session persistence | PASS, LIVE | Both pods mapped to Codex session `01a09ac0-a07d-72d3-acae-8e318bc6b004` under `CODEX_HOME=/workspace/.codex`; HOME remained ephemeral. Operator inspection confirmed the matching native rollout and persisted proof file. |
 | Compute release | PASS, LIVE | Both turns returned `INPUT_REQUIRED` after removal evidence. Independent kubectl inspection found zero workload pods after cleanup. The original daemon image was restored. |
 | Runtime failure controls | PASS, GO/WIRE TESTS | Required-init failure stops later scripts; invalid mode and cancellation fail closed. Terminal wrong-identity, missing-ACK, nonzero-exit and disconnect checks reject delivery. Deliberately failed initialization still needs dedicated live fault injection. |
-| Interrupted turn | PENDING | This live run replaced pods only after completed turns. It does not establish safe retry of potentially completed side effects. |
+| Interrupted turn | SEPARATELY VERIFIED ABOVE | This earlier run replaced pods only after completed turns. The later fault test separately validates explicit reconciliation, not automatic retry. |
 
 The successful machine-readable evidence is retained privately at
 `.state/agyn-reporting-live-kcBFHI/evidence.json`. Test cleanup cancels the A2A

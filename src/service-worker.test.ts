@@ -90,6 +90,27 @@ test("worker: lease recovery after durable outcome retries release but never rer
   assert.equal(store.get(scope, first.task.id).status?.state, TaskState.TASK_STATE_COMPLETED);
 });
 
+test("worker: acknowledged send survives installer failure and requires explicit retirement before reuse", async t => {
+  const store = new DurableTaskStore(":memory:"); const base = new Driver();
+  let sends = 0;
+  const driver: RuntimeDriver = { ...base, dispatch: async (_execution, _signal, accepted) => {
+    sends++;
+    accepted({ requestId: "accepted-before-install" });
+    throw new Error("installer failed after send acknowledged");
+  } };
+  const first = store.submit(scope, input(), "agent-one");
+  const runner = worker(store, driver);
+  t.after(async () => { await runner.stop(); store.close(); });
+  runner.start(); await until(() => store.execution(first.execution.id)?.phase === "uncertain");
+  assert.equal(store.execution(first.execution.id)?.requestId, "accepted-before-install");
+  assert.equal(sends, 1);
+  assert(base.stops.has(first.execution.id));
+  store.resolveUncertain(scope, first.execution.id, "continue", "Gated setup never released agent; retire queued request");
+  await runner.stop();
+  const next = store.submit(scope, input(first.task.id), "agent-one");
+  assert.deepEqual(store.retiredRequestIds(next.execution.id), ["accepted-before-install"]);
+});
+
 test("worker: recovery during dispatch never calls dispatch again; shutdown leaves a recoverable lease", async t => {
   const store = new DurableTaskStore(":memory:"); const driver = new Driver(); driver.allowStop = false;
   const first = store.submit(scope, input(), "agent-one");

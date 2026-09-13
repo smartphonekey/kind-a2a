@@ -2,7 +2,8 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
 import { createServer } from "node:http";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -12,7 +13,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { parse } from "smol-toml";
 import { WebSocketServer } from "ws";
 import { z } from "zod";
-import { managedReportingConfig } from "./reporting/runtime.js";
+import { installRuntime, managedReportingConfig } from "./reporting/runtime.js";
 import { DurableTaskStore } from "./service/task-store.js";
 import { createServiceApp } from "./service/http.js";
 import { serviceCard } from "./service/card.js";
@@ -61,6 +62,47 @@ test("bundled stdio MCP relays to real authenticated HTTP and reloads rotated cr
   assert.equal((await client.callTool({ name: "report_outcome", arguments: { eventId: "done", outcome: "turn_done", message: "Done" } })).isError, undefined);
   assert.equal(store.execution(submitted.execution.id)!.outcome?.outcome, "turn_done");
   assert(!errors.includes("Bearer"));
+});
+
+test("runtime installation requires an exact inbox control binding and a still-dispatching execution", async t => {
+  const directory = mkdtempSync(join(tmpdir(), "reporting-install-"));
+  const store = new DurableTaskStore(":memory:");
+  const scope = { tenant: "org", subject: "test" };
+  const submitted = store.submit(scope, Message.fromJSON({ messageId: "one", role: "ROLE_USER", parts: [{ text: "work" }] }), "agent");
+  const lease = store.claim("worker", 10_000, 1)!.lease;
+  const instanceId = randomUUID();
+  store.bind(lease, { instanceId, threadId: randomUUID(), profileId: "agent" }); store.beginDispatch(lease);
+  const server = createServer(createServiceApp({ store, card: serviceCard("http://localhost"), profileId: "agent",
+    signal: new AbortController().signal, authorize: async () => undefined }));
+  server.listen(0, "127.0.0.1"); await once(server, "listening");
+  const address = server.address(); assert(address && typeof address !== "string");
+  const environment = { AGENT_INSTANCE_ID: instanceId, AGYN_INBOX_JOURNAL_DIR: "/workspace/.agyn/inbox-journal",
+    AGYN_INBOX_CONTROL_FILE: join(directory, "inbox-control.json") };
+  const previous = Object.fromEntries(Object.keys(environment).map(key => [key, process.env[key]]));
+  Object.assign(process.env, environment);
+  t.after(async () => {
+    for (const [key, value] of Object.entries(previous)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+    server.closeAllConnections(); await new Promise<void>(r => server.close(() => r())); store.close(); rmSync(directory, { recursive: true, force: true });
+  });
+  writeFileSync(join(directory, "binding.json"), JSON.stringify({ url: `http://127.0.0.1:${address.port}/reporting`,
+    token: store.issueReportingCredential(submitted.execution.id, 60_000), allowInsecureLocal: true }), { mode: 0o600 });
+  writeFileSync(join(directory, "expected.json"), JSON.stringify({ executionId: submitted.execution.id, instanceId }), { mode: 0o600 });
+  const configFile = join(directory, "config.toml");
+  writeFileSync(configFile, 'model="test"\n');
+  await assert.rejects(installRuntime(directory, configFile));
+  assert(!existsSync(join(directory, "configured.json")));
+  const control = { version: 1, instance_id: instanceId, allowed_message_id: randomUUID(), ack_only_message_ids: [randomUUID()] };
+  writeFileSync(environment.AGYN_INBOX_CONTROL_FILE, JSON.stringify({ ...control, ack_only_message_ids: [control.allowed_message_id] }), { mode: 0o600 });
+  await assert.rejects(installRuntime(directory, configFile), /replay guard/);
+  assert.equal(readFileSync(configFile, "utf8"), 'model="test"\n');
+  writeFileSync(environment.AGYN_INBOX_CONTROL_FILE, JSON.stringify(control));
+  delete process.env.AGYN_INBOX_JOURNAL_DIR;
+  await assert.rejects(installRuntime(directory, configFile), /replay guard/);
+  process.env.AGYN_INBOX_JOURNAL_DIR = environment.AGYN_INBOX_JOURNAL_DIR;
+  await installRuntime(directory, configFile);
+  assert.deepEqual(JSON.parse(readFileSync(join(directory, "configured.json"), "utf8")), { executionId: submitted.execution.id, instanceId, reportingConfigured: true });
+  store.dispatched(lease, control.allowed_message_id);
+  await assert.rejects(installRuntime(directory, configFile), /not eligible/);
 });
 
 test("Agyn terminal delivery waits for verified raw-mode readiness and requires an exact ACK plus successful exit", async t => {

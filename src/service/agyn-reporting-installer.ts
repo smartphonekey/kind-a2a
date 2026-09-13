@@ -15,6 +15,7 @@ async function main() {
     if (Buffer.byteLength(input) > 16384) throw new Error("installer input limit");
   }
   const setup = z.object({ executionId: z.string().uuid(), instanceId: z.string().uuid(), threadId: z.string().uuid(),
+    requestId: z.string().uuid(), retiredRequestIds: z.array(z.string().uuid()).max(256),
     profileId: z.string().min(1).max(128), reporting: z.object({ url: z.string().url(), token: z.string().regex(/^[A-Za-z0-9_-]{43}$/) }).strict()
   }).strict().parse(JSON.parse(input));
   const required = (name: string) => { const value = process.env[name]; if (!value) throw new Error("installer environment missing"); return value; };
@@ -36,7 +37,7 @@ async function main() {
       await deliverBinding(ticket, { ...setup, workloadId: workload.meta.id, runtimeSha256 }, JSON.stringify({
         ...setup, workloadId: workload.meta.id, bundle: gzipSync(bundle).toString("base64"), reporting: { ...setup.reporting, allowInsecureLocal }
       }), signal, allowInsecureLocal);
-      process.stdout.write(JSON.stringify({ executionId: setup.executionId, instanceId: setup.instanceId, reportingConfigured: true }) + "\n");
+      process.stdout.write(JSON.stringify({ executionId: setup.executionId, instanceId: setup.instanceId, workloadId: workload.meta.id, reportingConfigured: true }) + "\n");
       return;
     }
     await delay(500, undefined, { signal });

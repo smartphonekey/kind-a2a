@@ -38,7 +38,7 @@ const client = new AgynClient(required("AGYN_GATEWAY_URL"), required("AGYN_TOKEN
 const driver = new AgynRuntimeDriver(client, config.profiles, async (execution, signal) => {
   const token = store.issueReportingCredential(execution.id, config.turnTimeoutMs + 3_600_000);
   const setupSignal = AbortSignal.any([signal, AbortSignal.timeout(120_000)]);
-  await new Promise<void>((resolve, reject) => {
+  return await new Promise<{ workloadId: string }>((resolve, reject) => {
     // The operator owns this executable. Never accept a command, path or credential from A2A messages.
     const child = spawn(config.reportingSetupExecutable, [], { stdio: ["pipe", "pipe", "ignore"], signal: setupSignal, killSignal: "SIGKILL" });
     let output = "";
@@ -52,11 +52,12 @@ const driver = new AgynRuntimeDriver(client, config.profiles, async (execution, 
       if (code !== 0) { reject(new Error("reporting setup failed")); return; }
       try {
         const ack = z.object({ executionId: z.literal(execution.id), instanceId: z.literal(execution.runtime!.instanceId),
-          reportingConfigured: z.literal(true) }).strict().parse(JSON.parse(output));
-        if (ack.reportingConfigured) resolve();
+          workloadId: z.string().uuid(), reportingConfigured: z.literal(true) }).strict().parse(JSON.parse(output));
+        resolve({ workloadId: ack.workloadId });
       } catch { reject(new Error("reporting setup did not acknowledge the exact execution binding")); }
     });
-    child.stdin.end(JSON.stringify({ executionId: execution.id, ...execution.runtime, reporting: {
+    child.stdin.end(JSON.stringify({ executionId: execution.id, ...execution.runtime,
+      requestId: execution.requestId, retiredRequestIds: store.retiredRequestIds(execution.id), reporting: {
       url: config.reportingUrl, token
     } }));
   });

@@ -8,7 +8,8 @@ task ownership, dispatch and durable reports. No upstream PR has been submitted.
 
 - `agynd-cli` persistence patch `c933329`, branch `fix/codex-home-persistence`.
 - Independent required-init patch `591543b`, branch `feat/required-init-scripts`.
-- Local integration branch `lab/reporting-integration`, commit `9e24c78`, combines
+- Independent inbox-guard patch `8b6056c`, branch `feat/durable-inbox-guard`.
+- Local integration branch `lab/reporting-integration`, commit `b8db063`, combines
   the patches without combining their upstream review units.
 - `ops/Dockerfile.agyn-reporting-init` adds the patched daemon and Node to the
   original init image. The workspace image, Codex image and model are unchanged.
@@ -16,6 +17,9 @@ task ownership, dispatch and durable reports. No upstream PR has been submitted.
 - An operator-owned environment with a per-instance `/workspace` volume,
   `CODEX_HOME=/workspace/.codex`, `AGYN_INIT_SCRIPTS_REQUIRED=true`, and
   `A2A_REPORTING_RUNTIME_SHA256` matching `dist/reporting/runtime.mjs`.
+- `AGYN_INBOX_JOURNAL_DIR=/workspace/.agyn/inbox-journal` and
+  `AGYN_INBOX_CONTROL_FILE=/run/agyn-execution/inbox-control.json`. The journal is
+  durable per instance; the control file is private and ephemeral per workload.
 - `scripts/agyn-execution-gate.cjs` registered as an environment init script,
   executed using `/agyn/bin/node` before the agent CLI starts.
 
@@ -28,7 +32,8 @@ behavior is opt-in in the contribution patch, retaining existing defaults.
 1. The service creates an explicit instance, with the task UUID compacted to
    Agyn's 32-character label limit, and an operator/instance thread.
 2. It records dispatch intent before sending the message. Agyn wakes the pod only
-   when the message reaches the instance's inbox.
+   when the message reaches the instance's inbox. The send ACK is persisted before
+   setup, so an installer failure does not discard a known request identity.
 3. The required init script creates a private, ephemeral gate and waits. Re-entry
    in the same container fails; it cannot silently replay the inbox.
 4. The installer finds the bound workload and connects through TerminalGateway.
@@ -41,6 +46,10 @@ behavior is opt-in in the contribution patch, retaining existing defaults.
    not authorize agent startup on the required-init daemon.
 7. Reports commit to the service database before ACK. Only workload removal
    evidence permits settlement or a queued follow-up, not an outcome or pause ACK.
+8. The daemon journals intent before invoking any SDK. An ambiguous pending record
+   blocks automatic retries. Only this workload's allowed message can execute;
+   explicitly retired predecessors are acknowledged without running the agent.
+   The service pins the configured workload ID to detect unexpected replacement.
 
 The next message repeats startup with a new pod and credential, retaining the
 same instance, thread, PVC and native Codex session. Generic reporting code is
@@ -60,8 +69,8 @@ From this checkout:
 
 ```sh
 docker build -f ops/Dockerfile.agyn-reporting-init \
-  -t a2a-agynd-reporting-init:9e24c78 .state/agyn-init-build
-agyn local load-image a2a-agynd-reporting-init:9e24c78
+  -t a2a-agynd-reporting-init:b8db063 .state/agyn-init-build
+agyn local load-image a2a-agynd-reporting-init:b8db063
 ```
 
 Use an otherwise idle local lab. Record the orchestrator's existing
@@ -71,12 +80,12 @@ run the opt-in acceptance:
 
 ```sh
 kubectl --kubeconfig .state/agyn-kubeconfig -n agyn-platform \
-  set env deployment/agents-orchestrator AGYND_CLI_INIT_IMAGE=a2a-agynd-reporting-init:9e24c78
+  set env deployment/agents-orchestrator AGYND_CLI_INIT_IMAGE=a2a-agynd-reporting-init:b8db063
 kubectl --kubeconfig .state/agyn-kubeconfig -n agyn-platform \
   rollout status deployment/agents-orchestrator --timeout=90s
 NODE_EXTRA_CA_CERTS="$HOME/.agyn/local/certs/agyn-local-ca.pem" \
   AGYN_LIVE_ACCEPTANCE=trusted-local \
-  AGYN_LIVE_INIT_IMAGE=a2a-agynd-reporting-init:9e24c78 \
+  AGYN_LIVE_INIT_IMAGE=a2a-agynd-reporting-init:b8db063 \
   node dist/live/agyn-reporting.js
 ```
 
@@ -87,6 +96,13 @@ turns. Set `AGYN_LIVE_TEMPLATE_ENVIRONMENT` to another native Codex environment 
 needed. `AGYN_LIVE_HOST_IP` defaults to this Lima lab's host address `192.168.5.2`.
 The test uses explicit HTTP reporting on this trusted local link; production
 requires TLS and network policy. It never mounts host Codex authentication.
+
+Set `AGYN_LIVE_SCENARIO=interrupted` on the same command for the fault test. It
+kills the controller and deletes only its fixture pod after an unconditional
+append, inspects the gated replacement's pending journal and marker, restarts
+the controller, and requires quarantine plus removal before explicit recovery.
+The follow-up must keep the native session/PVC, acknowledge-only the old request,
+and read exactly one marker line. This is not automatic retry of the old turn.
 
 Evidence and private task storage are retained in `.state/agyn-reporting-live-*`.
 The service is stopped and its instances paused after the test. Verify zero
@@ -101,8 +117,10 @@ a real native Stop reminder, completed-turn pod replacement, unchanged native
 session identity, unchanged PVC and a persisted file. See [ACCEPTANCE.md](ACCEPTANCE.md).
 
 Required-init exit/cancellation behavior has focused Go tests; a deliberately
-failing init script still needs a dedicated live failure test. Interrupted-turn
-side effects, independent parallel tasks in this new service, a second agent,
+failing init script still needs a dedicated live failure test. A separate real
+interrupted-turn test now verifies controller/pod loss, a gated replacement,
+quarantine, explicit retirement and one unchanged marker line across native
+session recovery. Independent parallel tasks in this new service, a second agent,
 non-root/read-only runtime boundaries, credential isolation from the agent,
 network enforcement, TLS deployment and operational recovery remain gates.
 

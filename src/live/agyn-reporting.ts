@@ -11,6 +11,8 @@ import { setTimeout as delay } from "node:timers/promises";
 import { AgynClient } from "../agyn-client.js";
 
 if (process.env.AGYN_LIVE_ACCEPTANCE !== "trusted-local") throw new Error("Set AGYN_LIVE_ACCEPTANCE=trusted-local to run real-model tests");
+const interrupted = process.env.AGYN_LIVE_SCENARIO === "interrupted";
+if (process.env.AGYN_LIVE_SCENARIO && !interrupted) throw new Error("Unknown live scenario");
 const expectedImage = process.env.AGYN_LIVE_INIT_IMAGE;
 if (!expectedImage) throw new Error("AGYN_LIVE_INIT_IMAGE must identify the reviewed required-init/CODEX_HOME integration image");
 const kubeconfig = resolve(process.env.AGYN_KUBECONFIG ?? ".state/agyn-kubeconfig");
@@ -42,6 +44,7 @@ const { environment } = await call("AgentsGateway", "CreateEnvironment", {
 const environmentId = environment.meta.id;
 await call("AgentsGateway", "CreateVolume", { environmentId, persistent: true, name: "task-workspace", mountPath: "/workspace", size: "1Gi" });
 for (const [name, value] of Object.entries({ CODEX_HOME: "/workspace/.codex", AGYN_INIT_SCRIPTS_REQUIRED: "true",
+  AGYN_INBOX_JOURNAL_DIR: "/workspace/.agyn/inbox-journal", AGYN_INBOX_CONTROL_FILE: "/run/agyn-execution/inbox-control.json",
   A2A_REPORTING_RUNTIME_SHA256: createHash("sha256").update(bundle).digest("hex") })) {
   await call("AgentsGateway", "CreateEnv", { environmentId, name, value });
 }
@@ -78,14 +81,18 @@ writeFileSync(configFile, JSON.stringify({ environmentProfile: "trusted-local", 
   reportingSetupExecutable: new URL("../service/agyn-reporting-installer.js", import.meta.url).pathname, publicUrl: base,
   reportingUrl: `http://${process.env.AGYN_LIVE_HOST_IP ?? "192.168.5.2"}:${address.port}/reporting`, host: "0.0.0.0", port: address.port,
   defaultProfile: "codex-gated-live-v1", profiles: [{ id: "codex-gated-live-v1", agentId }], concurrency: 2, turnTimeoutMs: 180_000 }), { mode: 0o600 });
-const child = spawn(process.execPath, [new URL("../service/main.js", import.meta.url).pathname], { env: {
+const startService = () => {
+  const child = spawn(process.execPath, [new URL("../service/main.js", import.meta.url).pathname], { env: {
   PATH: process.env.PATH, HOME: process.env.HOME, NODE_EXTRA_CA_CERTS: process.env.NODE_EXTRA_CA_CERTS,
   A2A_SERVICE_CONFIG_FILE: configFile, AGYN_GATEWAY_URL: who.gateway_url, AGYN_TOKEN: token,
   AGYN_ORGANIZATION_ID: who.organization, AGYN_IDENTITY_ID: who.user_id, A2A_ALLOW_INSECURE_LOCAL_REPORTING: "true"
-}, stdio: ["ignore", "pipe", "pipe"] });
-const exited = new Promise<void>((resolveExit, reject) => { child.once("close", () => resolveExit()); child.once("error", reject); });
-child.stdout.on("data", data => process.stdout.write(data));
-child.stderr.on("data", data => process.stderr.write(data));
+  }, stdio: ["ignore", "pipe", "pipe"] });
+  const exited = new Promise<void>((resolveExit, reject) => { child.once("close", () => resolveExit()); child.once("error", reject); });
+  child.stdout.on("data", data => process.stdout.write(data));
+  child.stderr.on("data", data => process.stderr.write(data));
+  return { child, exited };
+};
+let { child, exited } = startService();
 const headers = { authorization: `Bearer ${bearer}`, "content-type": "application/json", "A2A-Version": "1.0" };
 const rpc = async (method: string, params: unknown): Promise<any> => {
   const response = await fetch(`${base}/a2a`, { method: "POST", headers, body: JSON.stringify({ jsonrpc: "2.0", id: randomUUID(), method, params }), signal: AbortSignal.timeout(10_000) });
@@ -96,14 +103,39 @@ const rpc = async (method: string, params: unknown): Promise<any> => {
 const tasks: string[] = [];
 const evidence: Record<string, unknown>[] = [];
 const snapshots: Record<number, any[]> = {};
-try {
+const waitService = async () => {
   for (let attempt = 0; ; attempt++) {
     if (await fetch(`${base}/healthz`).then(r => r.ok).catch(() => false)) break;
     if (attempt > 100 || child.exitCode !== null) throw new Error("service did not start");
     await delay(100);
   }
+};
+const inspectInstance = (instanceId: string): any[] => {
+  const pods = JSON.parse(execFileSync("kubectl", ["--kubeconfig", kubeconfig, "get", "pods", "-n", "agyn-workloads", "-o", "json"], { encoding: "utf8" }));
+  const found: any[] = [];
+  for (const pod of pods.items) {
+    const container = pod.spec.containers.find((item: any) => item.env?.some((entry: any) => entry.name === "AGENT_INSTANCE_ID" && entry.value === instanceId));
+    if (!container) continue;
+    try {
+      const state = JSON.parse(execFileSync("kubectl", ["--kubeconfig", kubeconfig, "exec", pod.metadata.name, "-n", "agyn-workloads", "-c", container.name,
+        "--", "/agyn/bin/node", "-e", `const fs=require("node:fs");
+          const records=p=>fs.readdirSync(p).filter(n=>n.endsWith(".json")).map(n=>JSON.parse(fs.readFileSync(p+"/"+n,"utf8")));
+          console.log(JSON.stringify({mapping:records("/workspace/.codex/agyn/thread-mapping"),
+            journal:records("/workspace/.agyn/inbox-journal/"+process.env.AGENT_INSTANCE_ID),
+            marker:fs.readFileSync("/workspace/reporting-proof.txt","utf8"),
+            configured:fs.existsSync("/run/agyn-execution/configured.json")}));`],
+        { encoding: "utf8", timeout: 5000, stdio: ["ignore", "pipe", "pipe"] }));
+      if (state.mapping.length) found.push({ name: pod.metadata.name, uid: pod.metadata.uid,
+        pvc: pod.spec.volumes.filter((v: any) => v.persistentVolumeClaim).map((v: any) => v.persistentVolumeClaim.claimName), ...state });
+    } catch { /* A starting or removed pod is not yet inspectable. */ }
+  }
+  return found;
+};
+try {
+  await waitService();
   const first = await rpc("SendMessage", { message: { messageId: randomUUID(), role: "ROLE_USER", parts: [{ text:
-    `Create /workspace/reporting-proof.txt containing exactly ${suffix}. Report a progress event and publish that value as a text artifact, then run sleep 3 to leave a native-session inspection window. For this stop-hook acceptance test only, give your first final answer without reporting an outcome. If the stop hook reminds you, follow its instruction and report turn_done. Do not rewrite the file on reminders.` }] }, configuration: { returnImmediately: true } });
+    interrupted ? `Interruption acceptance test. Append the line ${suffix} to /workspace/reporting-proof.txt using >>, unconditionally and exactly once. This append is deliberately not idempotent. Report progress and publish the file's exact contents as a text artifact. Then run sleep 120. Do not report an outcome until that sleep finishes. Do not repeat the append on a stop reminder.`
+      : `Create /workspace/reporting-proof.txt containing exactly ${suffix}. Report a progress event and publish that value as a text artifact, then run sleep 3 to leave a native-session inspection window. For this stop-hook acceptance test only, give your first final answer without reporting an outcome. If the stop hook reminds you, follow its instruction and report turn_done. Do not rewrite the file on reminders.` }] }, configuration: { returnImmediately: true } });
   const taskId = first.task.id; tasks.push(taskId);
   console.log(JSON.stringify({ kind: "live.task", taskId, directory }));
   const waitTurn = async (turn: number) => {
@@ -111,21 +143,12 @@ try {
     for (let attempt = 0; attempt < 300; attempt++) {
       const page = await fetch(`${base}/tasks/${taskId}/events`, { headers }).then(r => r.json()) as any;
       const events = page.events as any[];
-      if (events.some(event => event.kind === "execution.uncertain")) throw new Error("live execution quarantined; inspect retained task events");
+      const executionId = events.filter(event => event.kind === "execution.queued")[turn - 1]?.executionId;
+      if (events.some(event => event.executionId === executionId && event.kind === "execution.uncertain")) throw new Error("live execution quarantined; inspect retained task events");
       const newest = events.at(-1)?.kind;
       const binding = events.find(event => event.kind === "runtime.bound")?.payload;
-      const executionId = events.filter(event => event.kind === "execution.queued")[turn - 1]?.executionId;
       if (binding && events.some(event => event.executionId === executionId && event.kind === "agent.artifact") && !snapshots[turn]?.length) {
-        const pods = JSON.parse(execFileSync("kubectl", ["--kubeconfig", kubeconfig, "get", "pods", "-n", "agyn-workloads", "-o", "json"], { encoding: "utf8" }));
-        for (const pod of pods.items) {
-          const container = pod.spec.containers.find((item: any) => item.env?.some((entry: any) => entry.name === "AGENT_INSTANCE_ID" && entry.value === binding.instanceId));
-          if (!container) continue;
-          try {
-            const mapping = JSON.parse(execFileSync("kubectl", ["--kubeconfig", kubeconfig, "exec", pod.metadata.name, "-n", "agyn-workloads", "-c", container.name,
-              "--", "/agyn/bin/node", "-e", 'const fs=require("node:fs"); const p="/workspace/.codex/agyn/thread-mapping"; const records=fs.readdirSync(p).map(n=>JSON.parse(fs.readFileSync(p+"/"+n,"utf8"))); console.log(JSON.stringify(records));'], { encoding: "utf8", timeout: 5000, stdio: ["ignore", "pipe", "pipe"] }));
-            if (mapping.length) snapshots[turn] = [{ uid: pod.metadata.uid, pvc: pod.spec.volumes.filter((v: any) => v.persistentVolumeClaim).map((v: any) => v.persistentVolumeClaim.claimName), mapping }];
-          } catch { /* Mapping is created only after the native session starts. */ }
-        }
+        snapshots[turn] = inspectInstance(binding.instanceId);
       }
       if (newest && newest !== last) { last = newest; console.log(JSON.stringify({ kind: "live.event", turn, event: newest })); }
       if (events.filter(event => event.kind === "runtime.stopped").length >= turn) {
@@ -133,7 +156,7 @@ try {
         evidence.push({ turn, task, events, snapshots: snapshots[turn] ?? [] });
         assert.equal(task.status.state, "TASK_STATE_INPUT_REQUIRED", "turn must finish resumably after releasing compute");
         assert(!task.metadata?.recoveryRequired, "turn was quarantined");
-        assert(events.filter(event => event.kind === "agent.outcome" && event.payload.outcome === "turn_done").length >= turn, "missing real MCP outcome");
+        assert(events.filter(event => event.kind === "agent.outcome" && event.payload.outcome === "turn_done").length >= turn - (interrupted ? 1 : 0), "missing real MCP outcome");
         assert(events.filter(event => event.kind === "agent.artifact" && event.payload.text.trim() === suffix).length >= turn, "missing persistent file artifact");
         if (turn === 1) assert(events.some(event => event.kind === "execution.stop_check" && event.payload.action === "remind"), "native stop hook did not remind");
         return;
@@ -142,7 +165,55 @@ try {
     }
     throw new Error("live turn did not release resources in time");
   };
-  await waitTurn(1);
+  if (interrupted) {
+    let initial: any[] = [];
+    for (let attempt = 0; attempt < 180; attempt++) {
+      initial = (await fetch(`${base}/tasks/${taskId}/events`, { headers }).then(r => r.json()) as any).events;
+      assert(!initial.some(event => event.kind === "execution.uncertain" || event.kind === "agent.outcome"), "turn ended before fault injection");
+      const binding = initial.find(event => event.kind === "runtime.bound")?.payload;
+      if (binding && initial.some(event => event.kind === "agent.artifact") && initial.some(event => event.kind === "execution.dispatched")) {
+        snapshots[1] = inspectInstance(binding.instanceId);
+        if (snapshots[1].length) break;
+      }
+      await delay(1000);
+    }
+    assert.equal(snapshots[1]?.length, 1, "no side-effect inspection window");
+    assert.equal(snapshots[1][0].marker, `${suffix}\n`, "fixture must append exactly once before interruption");
+    assert.equal(snapshots[1][0].journal[0]?.state, "pending", "journal must precede side effects");
+    const binding = initial.find(event => event.kind === "runtime.bound")!.payload;
+    const executionId = initial.find(event => event.kind === "execution.queued")!.executionId;
+    child.kill("SIGKILL"); await exited;
+    execFileSync("kubectl", ["--kubeconfig", kubeconfig, "delete", "pod", snapshots[1][0].name, "-n", "agyn-workloads", "--grace-period=1", "--wait=true", "--timeout=60s"], { encoding: "utf8", timeout: 65000 });
+    let gated: any[] = [];
+    for (let attempt = 0; attempt < 60; attempt++) {
+      gated = inspectInstance(binding.instanceId);
+      if (gated.length) break;
+      await delay(1000);
+    }
+    assert.equal(gated.length, 1, "Agyn did not recreate the unacked workload");
+    assert.notEqual(gated[0].uid, snapshots[1][0].uid);
+    assert.equal(gated[0].configured, false, "replacement must not authorize the old execution");
+    assert.equal(gated[0].marker, `${suffix}\n`, "replacement replayed the append");
+    assert.deepEqual(gated[0].journal, snapshots[1][0].journal);
+    ({ child, exited } = startService()); await waitService();
+    let quarantined: any;
+    for (let attempt = 0; attempt < 150; attempt++) {
+      quarantined = await rpc("GetTask", { id: taskId });
+      if (quarantined.metadata?.resourcesReleased && quarantined.metadata?.recoveryRequired) break;
+      await delay(1000);
+    }
+    assert.equal(quarantined.metadata?.recoveryRequired, true);
+    assert.equal(quarantined.metadata?.resourcesReleased, true);
+    assert.equal(quarantined.metadata?.uncertainSideEffects, true);
+    assert((await gateway.workloads(binding.instanceId)).every(workload => workload.removedAt), "quarantine left compute running");
+    const recoveredEvents = (await fetch(`${base}/tasks/${taskId}/events`, { headers }).then(r => r.json()) as any).events;
+    evidence.push({ turn: 1, task: quarantined, events: recoveredEvents, snapshots: snapshots[1], gatedReplacement: gated });
+    await assert.rejects(rpc("SendMessage", { message: { taskId, messageId: randomUUID(), role: "ROLE_USER", parts: [{ text: "must not run before reconciliation" }] } }));
+    const response = await fetch(`${base}/tasks/${taskId}/executions/${executionId}/reconcile`, { method: "POST", headers,
+      body: JSON.stringify({ resolution: "continue", reason: "Operator inspected the durable marker and pending journal in the gated replacement; append already happened once. Retire the old request without replay." }) });
+    assert.equal(response.status, 200, "explicit reconciliation failed");
+    console.log(JSON.stringify({ kind: "live.interruption-reconciled", taskId, executionId }));
+  } else await waitTurn(1);
   await rpc("SendMessage", { message: { taskId, messageId: randomUUID(), role: "ROLE_USER", parts: [{ text:
     "Read /workspace/reporting-proof.txt. Publish its exact existing contents as an artifact. Do not create or rewrite it. Run sleep 3 to leave an inspection window, then report turn_done." }] }, configuration: { returnImmediately: true } });
   await waitTurn(2);
@@ -151,17 +222,26 @@ try {
   assert.deepEqual(snapshots[1][0].pvc, snapshots[2][0].pvc, "task PVC changed");
   const identity = (records: any[]) => records.map(record => ({ instanceId: record.instance_id, sessionId: record.codex_thread_id, createdAt: record.created_at_unix_ms }));
   assert.deepEqual(identity(snapshots[1][0].mapping), identity(snapshots[2][0].mapping), "native session mapping changed");
-  console.log(JSON.stringify({ kind: "live.passed", taskId, turns: 2 }));
+  assert.equal(snapshots[2][0].marker, interrupted ? `${suffix}\n` : suffix, "follow-up repeated a side effect or changed the file");
+  if (interrupted) assert.equal(snapshots[2][0].journal.find((record: any) => record.message_id === snapshots[1][0].journal[0].message_id)?.state, "ack_only", "old inbox request was not retired explicitly");
+  console.log(JSON.stringify({ kind: "live.passed", taskId, turns: 2, scenario: interrupted ? "interrupted" : "completed" }));
 } finally {
   try {
     for (const taskId of tasks) await rpc("CancelTask", { id: taskId }).catch(() => {});
     const instances = await gateway.instances(agentId);
     for (const instance of instances) await gateway.pauseInstance(instance.meta.id, "Live acceptance cleanup; retain state");
+    for (let attempt = 0; ; attempt++) {
+      let active = false;
+      for (const instance of instances) if ((await gateway.workloads(instance.meta.id)).some(workload => !workload.removedAt)) active = true;
+      if (!active) break;
+      if (attempt >= 90) throw new Error("fixture workloads did not release during cleanup");
+      await delay(1000);
+    }
     console.log(JSON.stringify({ kind: "live.cleanup", directory, instances: instances.map(i => i.meta.id) }));
   } finally {
     child.kill("SIGTERM");
     const timer = setTimeout(() => child.kill("SIGKILL"), 5000);
     await exited; clearTimeout(timer);
-    writeFileSync(join(directory, "evidence.json"), JSON.stringify({ environmentId, agentId, tasks, evidence }, null, 2), { mode: 0o600 });
+    writeFileSync(join(directory, "evidence.json"), JSON.stringify({ environmentId, agentId, tasks, scenario: interrupted ? "interrupted" : "completed", snapshots, evidence }, null, 2), { mode: 0o600 });
   }
 }

@@ -13,10 +13,11 @@ export type Scope = { tenant: string; subject: string };
 export type Phase = "queued" | "provisioning" | "ready" | "dispatching" | "running" | "releasing" | "uncertain" | "settled";
 export type Runtime = { instanceId: string; threadId: string; profileId: string };
 export type Lease = { executionId: string; workerId: string; generation: number };
+export type DispatchReceipt = { requestId: string; workloadId?: string };
 export type Execution = {
   id: string; taskId: string; ordinal: number; phase: Phase; message: Message;
   endTask: boolean; workerId: string | null; generation: number; leaseUntil: number;
-  requestId: string | null; outcome: OutcomeReport | null; canceled: boolean;
+  requestId: string | null; workloadId: string | null; outcome: OutcomeReport | null; canceled: boolean;
   runtime: Runtime | null; profileId: string; createdAt: number; startedAt: number | null; uncertainReason: string | null;
 };
 export type Submission = { task: Task; execution: Execution; duplicate: boolean };
@@ -75,6 +76,9 @@ export class DurableTaskStore {
       );
       CREATE UNIQUE INDEX IF NOT EXISTS task_one_active_execution ON task_executions(task_id)
         WHERE phase NOT IN ('queued', 'settled');
+      CREATE TABLE IF NOT EXISTS execution_workloads (
+        execution_id TEXT PRIMARY KEY REFERENCES task_executions(id), workload_id TEXT NOT NULL UNIQUE
+      );
       CREATE TABLE IF NOT EXISTS task_submissions (
         tenant TEXT NOT NULL, subject TEXT NOT NULL, key_scope TEXT NOT NULL,
         key TEXT NOT NULL, content_hash TEXT NOT NULL,
@@ -197,14 +201,16 @@ export class DurableTaskStore {
   }
 
   execution(id: string): Execution | undefined {
-    const row = this.db.prepare(`SELECT e.*, t.profile_id, r.instance_id, r.thread_id,
+    const row = this.db.prepare(`SELECT e.*, t.profile_id, r.instance_id, r.thread_id, w.workload_id,
       (SELECT at FROM task_events WHERE execution_id=e.id AND kind='execution.dispatching' LIMIT 1) AS started_at FROM task_executions e
-      JOIN execution_tasks t ON t.id=e.task_id LEFT JOIN runtime_bindings r ON r.task_id=e.task_id WHERE e.id=?`).get(id) as Row | undefined;
+      JOIN execution_tasks t ON t.id=e.task_id LEFT JOIN runtime_bindings r ON r.task_id=e.task_id
+      LEFT JOIN execution_workloads w ON w.execution_id=e.id WHERE e.id=?`).get(id) as Row | undefined;
     return row ? {
       id: String(row.id), taskId: String(row.task_id), ordinal: Number(row.ordinal), phase: row.phase as Phase,
       message: JSON.parse(String(row.message_json)) as Message, endTask: row.end_task === 1,
       workerId: row.worker_id as string | null, generation: Number(row.generation), leaseUntil: Number(row.lease_until),
       requestId: row.request_id as string | null, outcome: row.outcome_json ? JSON.parse(String(row.outcome_json)) as OutcomeReport : null,
+      workloadId: row.workload_id as string | null,
       canceled: row.canceled === 1, profileId: String(row.profile_id), createdAt: Number(row.created_at),
       startedAt: row.started_at === null ? null : Number(row.started_at),
       uncertainReason: row.uncertain_reason as string | null,
@@ -319,10 +325,40 @@ export class DurableTaskStore {
     });
   }
 
+  recordDispatchReceipt(lease: Lease, receipt: DispatchReceipt): void {
+    this.transaction(() => {
+      const execution = this.assertLease(lease);
+      if (!["dispatching", "releasing"].includes(execution.phase) || !receipt.requestId || receipt.requestId.length > 256 ||
+          receipt.workloadId !== undefined && (!receipt.workloadId || receipt.workloadId.length > 256)) {
+        throw new TaskStoreError("conflict", "unexpected provider receipt");
+      }
+      if (execution.requestId && execution.requestId !== receipt.requestId ||
+          execution.workloadId && receipt.workloadId && execution.workloadId !== receipt.workloadId) {
+        throw new TaskStoreError("conflict", "provider receipt cannot change its binding");
+      }
+      if (execution.requestId === receipt.requestId && (!receipt.workloadId || execution.workloadId === receipt.workloadId)) return;
+      this.db.prepare("UPDATE task_executions SET request_id=? WHERE id=?").run(receipt.requestId, execution.id);
+      if (receipt.workloadId && !execution.workloadId) this.db.prepare("INSERT INTO execution_workloads VALUES(?,?)").run(execution.id, receipt.workloadId);
+      this.append(execution.taskId, execution.id, "execution.provider_receipt", receipt);
+    });
+  }
+
+  retiredRequestIds(executionId: string): string[] {
+    const execution = this.execution(executionId);
+    if (!execution) throw new TaskStoreError("not_found", "execution not found");
+    // Settled predecessors have physical removal evidence. An ambiguous one can
+    // only settle through explicit reconciliation; never retire pending work.
+    const rows = this.db.prepare(`SELECT request_id FROM task_executions WHERE task_id=? AND ordinal<?
+      AND phase='settled' AND request_id IS NOT NULL ORDER BY ordinal`).all(execution.taskId, execution.ordinal) as Row[];
+    return rows.map(row => String(row.request_id));
+  }
+
   dispatched(lease: Lease, requestId: string): void {
     this.transaction(() => {
       const execution = this.assertLease(lease);
-      if (execution.phase !== "dispatching" || !requestId) throw new TaskStoreError("conflict", "unexpected dispatch acknowledgement");
+      if (execution.phase !== "dispatching" || !requestId || execution.requestId && execution.requestId !== requestId) {
+        throw new TaskStoreError("conflict", "unexpected dispatch acknowledgement");
+      }
       this.db.prepare("UPDATE task_executions SET phase='running',request_id=? WHERE id=?").run(requestId, execution.id);
       this.append(execution.taskId, execution.id, "execution.dispatched", { requestId });
     });
@@ -501,6 +537,9 @@ export class DurableTaskStore {
       if (!execution) throw new TaskStoreError("not_found", "execution not found");
       this.get(scope, execution.taskId);
       if (execution.phase !== "uncertain") throw new TaskStoreError("conflict", "execution is not stopped awaiting reconciliation");
+      if (resolution === "continue" && execution.startedAt !== null && !execution.requestId) {
+        throw new TaskStoreError("conflict", "provider request identity is unknown; continuing could replay an untracked inbox item");
+      }
       this.db.prepare("UPDATE task_executions SET phase='settled' WHERE id=?").run(executionId);
       this.append(execution.taskId, executionId, "execution.reconciled", { resolution, reason, actor: scope.subject });
       this.setStatus(execution.taskId, resolution === "fail" ? TaskState.TASK_STATE_FAILED : TaskState.TASK_STATE_INPUT_REQUIRED,

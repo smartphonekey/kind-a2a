@@ -32,6 +32,8 @@ const directory = "/run/agyn-execution";
   fs.writeFileSync(`${directory}/runtime.mjs`, bundle, { mode: 0o500, flag: "wx" });
   fs.writeFileSync(`${directory}/binding.json`, JSON.stringify(payload.reporting), { mode: 0o600, flag: "wx" });
   fs.writeFileSync(`${directory}/expected.json`, JSON.stringify({ executionId: payload.executionId, instanceId: gate.instanceId }), { mode: 0o600, flag: "wx" });
+  fs.writeFileSync(`${directory}/inbox-control.json`, JSON.stringify({ version: 1, instance_id: gate.instanceId,
+    allowed_message_id: payload.requestId, ack_only_message_ids: payload.retiredRequestIds }), { mode: 0o600, flag: "wx" });
   fs.writeFileSync(`${directory}/received`, "", { mode: 0o600, flag: "wx" });
   const deadline = Date.now() + 15_000;
   while (!fs.existsSync(`${directory}/configured.json`)) {

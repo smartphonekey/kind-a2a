@@ -81,6 +81,7 @@ test("durable store: restart reclaims existing dispatch without authorizing a re
   const first = original.claim("first", 100, 2)!;
   original.bind(first.lease, { instanceId: "instance", threadId: "thread", profileId: profile });
   original.beginDispatch(first.lease);
+  original.recordDispatchReceipt(first.lease, { requestId: "provider-request", workloadId: "provider-workload" });
   original.close();
   const restarted = new DurableTaskStore(path, { clock: () => now }); t.after(() => restarted.close());
   assert.equal(restarted.claim("second", 100, 2), undefined);
@@ -88,10 +89,17 @@ test("durable store: restart reclaims existing dispatch without authorizing a re
   const takeover = restarted.claim("second", 100, 2)!;
   assert.equal(takeover.execution.id, task.execution.id);
   assert.equal(takeover.execution.phase, "dispatching");
+  assert.equal(takeover.execution.requestId, "provider-request");
+  assert.equal(takeover.execution.workloadId, "provider-workload");
   assert.equal(takeover.recovered, true);
   assert.throws(() => restarted.beginDispatch(takeover.lease), hasCode("conflict"));
   assert.throws(() => restarted.dispatched(first.lease, "late"), hasCode("stale_lease"));
   assert.throws(() => restarted.heartbeat(first.lease, 100), hasCode("stale_lease"));
+  assert.throws(() => restarted.recordDispatchReceipt(first.lease, { requestId: "late" }), hasCode("stale_lease"));
+  assert.throws(() => restarted.recordDispatchReceipt(takeover.lease, { requestId: "changed" }), hasCode("conflict"));
+  assert.throws(() => restarted.recordDispatchReceipt(takeover.lease, { requestId: "provider-request", workloadId: "changed" }), hasCode("conflict"));
+  restarted.recordDispatchReceipt(takeover.lease, { requestId: "provider-request", workloadId: "provider-workload" });
+  assert.equal(restarted.events(alice, task.task.id).filter(event => event.kind === "execution.provider_receipt").length, 1);
   assert.equal(statSync(path).mode & 0o777, 0o600);
 });
 
@@ -158,7 +166,23 @@ test("durable store: ambiguous execution releases compute but cannot resume befo
   assert.equal(store.claim("worker", 10_000, 1), undefined);
   store.resolveUncertain(alice, first.execution.id, "continue", "Inspected workspace; side effects already completed");
   const next = store.submit(alice, message("continue without repeating", first.task.id), profile);
+  assert.deepEqual(store.retiredRequestIds(next.execution.id), [store.execution(first.execution.id)!.requestId]);
   assert.equal(store.claim("worker", 10_000, 1)?.execution.id, next.execution.id);
+});
+
+test("durable store: an unknown provider request cannot be silently reconciled for reuse", t => {
+  const store = new DurableTaskStore(":memory:"); t.after(() => store.close());
+  const first = store.submit(alice, message(), profile);
+  const claim = store.claim("worker", 10_000, 1)!;
+  store.bind(claim.lease, { instanceId: "instance", threadId: "thread", profileId: profile });
+  store.beginDispatch(claim.lease);
+  store.markUncertain(claim.lease, "send acknowledgement lost");
+  store.settle(claim.lease, { stopped: true });
+  assert.throws(() => store.resolveUncertain(alice, first.execution.id, "continue", "inspect later"), hasCode("conflict"));
+  assert.equal(store.execution(first.execution.id)?.phase, "uncertain");
+  assert(!store.events(alice, first.task.id).some(event => event.kind === "execution.reconciled"));
+  store.resolveUncertain(alice, first.execution.id, "fail", "Keep paused; request identity needs provider-side investigation");
+  assert.equal(store.get(alice, first.task.id).status?.state, TaskState.TASK_STATE_FAILED);
 });
 
 test("durable store: artifacts survive continuation and terminal states do not resurrect", t => {

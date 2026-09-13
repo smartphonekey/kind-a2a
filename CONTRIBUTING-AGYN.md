@@ -51,15 +51,38 @@ and treats context cancellation as a real setup failure in either mode.
 - The branch is pushed; no upstream PR has been submitted.
 
 This patch contains no A2A, MCP or terminal-delivery logic. The local integration
-branch combines it with persistence only to test the runnable system. The lab's
-Node/init-image packaging is not part of either proposed daemon PR.
+branch combines the focused patches only to test the runnable system. The lab's
+Node/init-image packaging is not part of the proposed daemon PRs.
+
+### Durable Inbox Guard
+
+A third independent patch adds a runtime-neutral, opt-in inbox journal. It
+persists intent before the SDK turn and completion before the inbox ACK, so an
+ambiguous prior attempt cannot silently rerun and an ACK retry does not repeat
+the agent. An optional trusted control file allows one message and retires exact
+older message IDs through instance-owned acknowledgement only.
+
+- Branch: `feat/durable-inbox-guard`, commit `8b6056c`.
+- Compare: <https://github.com/agynio/agynd-cli/compare/main...spk-ai:agynd-cli:feat/durable-inbox-guard>
+- Ordinary Go tests and
+  `go test -race ./internal/inboxjournal ./internal/daemon -run 'Journal|InboxControl' -count=1` pass.
+- Tests cover process death after a side effect, competing process starts,
+  lost ACKs, pending/corrupt state, exact message binding and explicit retirement.
+- The branch and combined integration branch are pushed; no upstream PR has been submitted.
+
+The daemon stores no prompt text and knows nothing about A2A tasks, reporting
+tokens, HTTP controllers or workflow policy. The coordinator must audit recovery
+and verify the previous workload stopped before installing a new control file.
+This is a replay guard, not exactly-once execution or a root-agent security
+boundary. The control-file contract is a review proposal, not an accepted Agyn
+API; discuss it with maintainers before extending Gateway.
 
 ## Proposed Subsequent Contributions
 
 | Review unit | Suggested home | Boundary |
 | --- | --- | --- |
 | Execution lifecycle and reporting contract | `agynio/architecture` | Start with [the draft proposal](docs/agyn-a2a-proposal.md), not a claim that it is accepted architecture. |
-| Generic outcome check and persistent execution journal | `agynio/agynd-cli` | Runtime-neutral lifecycle policy; Codex/Claude translate hook mechanics only. No A2A state machine in an image. |
+| Generic outcome check | `agynio/agynd-cli` | Runtime-neutral lifecycle policy; Codex/Claude translate hook mechanics only. The inbox journal is a separate focused branch above. No A2A state machine in an image. |
 | Authenticated execution reports | API/Gateway or a focused service, subject to agreement | Derive instance and execution from authenticated context, not model arguments. ACK after durable commit. |
 | A2A connector | A focused repository agreed with maintainers | Official A2A SDK, ownership and task mapping, typed provider interface. Agyn retains runner/PVC/network lifecycle. |
 | Native session export | Separate proposal and PR | Export session artifacts without credentials; retention, access and deletion policy before analytics. |

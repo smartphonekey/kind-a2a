@@ -84,11 +84,11 @@ bounded artifact-update frames. `GetTask` provides the stored history/artifacts.
 
 The Agyn installer is now implemented and live-tested with the gated local
 environment in [AGYN-REPORTING.md](AGYN-REPORTING.md). The daemon must include the
-required-init patch and the environment must opt in. Stock Agyn logs failed init
+required-init and inbox-guard patches and the environment must opt in. Stock Agyn logs failed init
 scripts and continues, so an init script alone is NOT a startup safety gate.
 
 Agyn only starts an agent pod after an inbox message arrives. The service records
-dispatch intent, sends the message once, then invokes `reportingSetupExecutable`
+dispatch intent, sends the message once, persists the returned request ID, then invokes `reportingSetupExecutable`
 directly, without a shell, passing one JSON document on stdin. The trusted init
 gate holds the daemon before Codex starts until reporting is configured:
 
@@ -98,16 +98,18 @@ gate holds the daemon before Codex starts until reporting is configured:
   "instanceId": "agyn-instance-id",
   "threadId": "agyn-thread-id",
   "profileId": "codex-v1",
+  "requestId": "agyn-message-id",
+  "retiredRequestIds": ["settled-predecessor-message-id"],
   "reporting": { "url": "https://execution-service.example/reporting", "token": "<scoped-token>" }
 }
 ```
 
 The installer configures the exact runtime's MCP relay and stop check,
 without putting the token into prompts, transcripts, command arguments or logs.
-It must be idempotent, finish within 120 seconds, and return only:
+It must finish within 120 seconds and return only:
 
 ```json
-{"executionId":"execution-id","instanceId":"agyn-instance-id","reportingConfigured":true}
+{"executionId":"execution-id","instanceId":"agyn-instance-id","workloadId":"agyn-workload-id","reportingConfigured":true}
 ```
 
 It waits for the instance's one live workload, then uses Agyn's authenticated
@@ -119,8 +121,16 @@ the authenticated execution status and installs the managed MCP/Stop config
 before releasing startup. The relay uses the official MCP SDK over stdio and
 Streamable HTTP; no new A2A or MCP wire format is introduced.
 
-The installer ACK requires exact execution/instance identity plus a successful
+The gate also installs a trusted inbox control file authorizing only the current
+provider message. The daemon's durable journal records intent before the agent
+runs and completion before its inbox ACK. Settled predecessor requests are
+acknowledged without agent execution. Re-entry cannot replace a configured gate;
+an ambiguous installer result is quarantined, not retried with a new binding.
+
+The installer ACK requires exact execution/instance/workload identity plus a successful
 remote exit. An ambiguous send/setup is quarantined, never automatically resent.
+The worker pins that workload ID; a missing, stopped or replacement workload is
+an interruption, even if Agyn still reports the instance as ACTIVE.
 Live MCP calls, a native Stop reminder, pod removal and same-session continuation
 passed, independently of the installer ACK. Native workload-identity delivery
 remains an architecture question; this terminal-based installer is an explicit
@@ -148,6 +158,11 @@ reminds at most twice, then requests a stop and controller reconciliation.
   `/tasks/:taskId/executions/:executionId/reconcile`. Only an already stopped,
   uncertain execution is eligible. Inspect side effects before deciding; this
   does not replay the old message or restore skipped queued messages.
+  A dispatch whose provider request ID was lost cannot continue; fail it and
+  retain its paused environment for provider-side investigation. For a known
+  request, the next workload receives an acknowledgement-only retirement entry.
+  Retirement discards the old inbox item; it does not assert the side effects
+  completed successfully. The decision, actor and reason remain in durable events.
 - The same privileged owner can issue/rotate an execution reporting credential
   at `/tasks/:taskId/executions/:executionId/reporting-credential`. This is an
   administrative recovery interface, not an agent-facing tool.
@@ -162,9 +177,13 @@ reminds at most twice, then requests a stop and controller reconciliation.
 - SQLite WAL must use a local/PVC filesystem with working locks, not a network
   shared filesystem. This is not multi-node HA. Backup/restore, schema migration,
   deletion/retention and disaster recovery remain unverified.
+- Drain old workers before upgrading the service/daemon profile together. An
+  existing running execution without a pinned workload ID is quarantined rather
+  than adopted. Never roll back the daemon alone under an inbox-guard profile.
 
 An agent daemon can retry or redeliver work independently of this service. The
-ephemeral startup gate prevents an unprepared replacement from starting Codex,
-but interrupted-turn fault injection and an execution journal remain required.
-Controller fencing and completed-turn recovery must not be described as
-exactly-once execution or safe automatic side-effect recovery.
+ephemeral startup gate prevents an unprepared replacement from starting Codex;
+the opt-in durable journal prevents replay of a pending inbox attempt. Neither
+controller fencing nor this journal makes external side effects exactly once.
+The journal and control file must be protected from the agent in a hardened
+deployment; the current trusted-local root agent does not provide that boundary.

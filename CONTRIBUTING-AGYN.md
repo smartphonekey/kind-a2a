@@ -156,8 +156,9 @@ submitted. Existing repository licenses are retained.
 
 Buf lint/breaking, ordinary Go suites, full runner race tests and assembler race
 tests pass. A real credential-free Kubernetes test verifies cgroups, CPU
-throttling, OOM handling and neighbor progress. The combined Agyn resource-profile
-deployment is **not yet live-tested**. See [exact evidence and remaining
+throttling, OOM handling and neighbor progress. The combined Agyn resource profile
+also passes completed, parallel/FIFO, interrupted and cancellation scenarios,
+with nine bounded Pods, main cgroup evidence and restored deployments. See [exact evidence and remaining
 acceptance](AGYN-RESOURCES.md). These allocations do not establish whole-task
 quotas or sandbox hardening.
 
@@ -166,7 +167,10 @@ orchestrator lifecycle/removal patches for subsequent acceptance, not for
 bundling into upstream PRs. Runner `4dd12a8` and orchestrator `5edf8a4` are pushed;
 ordinary combined Go suites and runner Helm checks pass. The combined
 orchestrator race suite passes with the previously documented unrelated test
-excluded. All 62 standalone lab tests remain passing.
+excluded. All 82 standalone lab tests remain passing, including 26 deployment
+wrapper cases. The A2A controller and workflow code did not change for this
+resource profile. Aggregate admission, accounting and production hardening are
+not established by the tiny agent fixtures.
 
 ## Proposed Subsequent Contributions
 

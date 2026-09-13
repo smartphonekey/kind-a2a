@@ -13,6 +13,7 @@ import { AgynClient } from "../agyn-client.js";
 import { assertInstanceAbsent, inspectRetainedCancellationPvc, instancePods } from "./kubernetes-proof.js";
 import { agentNetworkPolicies, assertPolicyUnchanged, managedLabel, NetworkFixtures } from "./network-proof.js";
 import { runParallelAcceptance } from "./agyn-parallel.js";
+import { assertCgroupComputeBounds, assertPodComputeBounds, parseComputeBounds, type ComputeBounds } from "./resource-proof.js";
 
 if (process.env.AGYN_LIVE_ACCEPTANCE !== "trusted-local") throw new Error("Set AGYN_LIVE_ACCEPTANCE=trusted-local to run real-model tests");
 const interrupted = process.env.AGYN_LIVE_SCENARIO === "interrupted";
@@ -21,6 +22,11 @@ const parallel = process.env.AGYN_LIVE_SCENARIO === "parallel";
 if (process.env.AGYN_LIVE_SCENARIO && !interrupted && !cancellation && !parallel) throw new Error("Unknown live scenario");
 if (parallel) assert(process.env.AGYN_LIVE_RUNNER_CHART, "parallel acceptance requires explicit workload network policies");
 const scenario = interrupted ? "interrupted" : cancellation ? "cancellation" : parallel ? "parallel" : "completed";
+const bounded = process.env.AGYN_LIVE_COMPUTE_RESOURCES === "true";
+assert(!process.env.AGYN_LIVE_COMPUTE_RESOURCES || bounded, "invalid compute resource opt-in");
+const resourceEvidence: any = { enabled: bounded, pods: {} };
+let mainBounds: ComputeBounds | undefined;
+const supportingBounds = bounded ? parseComputeBounds(JSON.parse(process.env.AGYN_LIVE_SUPPORTING_RESOURCES ?? "null")) : undefined;
 const inspectorImage = process.env.AGYN_LIVE_INSPECTOR_IMAGE;
 if (cancellation) assert(inspectorImage && /@sha256:[a-f0-9]{64}$/.test(inspectorImage), "cancellation requires a digest-pinned Node inspector image");
 const expectedImage = process.env.AGYN_LIVE_INIT_IMAGE;
@@ -53,6 +59,32 @@ const bundle = readFileSync(new URL("../reporting/runtime.mjs", import.meta.url)
 const gate = readFileSync(new URL("../../scripts/agyn-execution-gate.cjs", import.meta.url), "utf8");
 const templateId = process.env.AGYN_LIVE_TEMPLATE_ENVIRONMENT ?? "618e9cec-45a5-4b9d-8c28-91d40f053b65";
 const { environment: template } = await call("AgentsGateway", "GetEnvironment", { id: templateId });
+if (bounded) {
+  assert(networkTemplate, "resource acceptance requires explicit network policy");
+  const runnerDeployment = JSON.parse(execFileSync("kubectl", ["--kubeconfig", kubeconfig, "get", "deployment", "k8s-runner", "-n", "agyn-platform", "-o", "json"], { encoding: "utf8", timeout: 10_000 }));
+  const runnerContainer = runnerDeployment.spec.template.spec.containers.find((item: any) => item.name === "k8s-runner");
+  assert(process.env.AGYN_LIVE_RUNNER_IMAGE && runnerContainer?.image === process.env.AGYN_LIVE_RUNNER_IMAGE, "expected resource runner is not deployed");
+  assert.deepEqual(parseComputeBounds(JSON.parse(runnerContainer.env.find((entry: any) => entry.name === "SUPPORTING_CONTAINER_RESOURCES")?.value ?? "null")), supportingBounds);
+  let runner: any;
+  for (let attempt = 0; attempt < 60; attempt++) {
+    ({ runner } = await call("RunnersGateway", "GetRunner", { id: template.runnerId }));
+    if (runner.capabilities?.includes("compute-resources")) break;
+    await delay(1000);
+  }
+  assert(runner?.capabilities?.includes("compute-resources"), "selected runner did not advertise compute-resources");
+  const flavors: any[] = [];
+  let pageToken = "";
+  do {
+    const page = await call("RunnersGateway", "ListFlavors", { runnerId: template.runnerId, pageSize: 100, pageToken });
+    flavors.push(...(page.flavors ?? [])); pageToken = page.nextPageToken ?? "";
+  } while (pageToken);
+  const selected = flavors.filter(item => item.runnerId === template.runnerId && item.name === template.flavor);
+  assert.equal(selected.length, 1, "selected flavor is absent or ambiguous");
+  mainBounds = parseComputeBounds(selected[0].resources);
+  Object.assign(resourceEvidence, { runnerId: template.runnerId, capabilities: runner.capabilities, flavor: template.flavor,
+    main: mainBounds, supporting: supportingBounds, runnerImage: runnerContainer.image });
+  console.log(JSON.stringify({ kind: "live.resources-configured", ...resourceEvidence }));
+}
 const { environment } = await call("AgentsGateway", "CreateEnvironment", {
   organizationId: who.organization, name: `a2a-reporting-${suffix}`, runnerId: template.runnerId, flavor: template.flavor,
   workspaceImageId: template.workspaceImageId, workspaceImageTag: template.workspaceImageTag,
@@ -76,11 +108,13 @@ assert(subscription?.subscriptionId, "template has no subscription");
 assert.equal(attachments.subscriptionAttachments?.length ?? 0, 0);
 await call("LLMGateway", "CreateSubscriptionAttachment", { environmentId, subscriptionId: subscription.subscriptionId });
 const { agent } = await call("AgentsGateway", "CreateAgent", { organizationId: who.organization, environmentId,
+  ...(bounded ? { capabilities: ["compute-resources"] } : {}),
   name: `A2A Reporting Acceptance ${suffix}`, nickname: `a2a-reporting-${suffix}`, modelName: "gpt-5.5",
   idleTimeout: "10s", instanceIdleTtl: "24h", availability: "AGENT_AVAILABILITY_PRIVATE", finalMessage: "AGENT_FINAL_MESSAGE_DISCARD",
   configuration: JSON.stringify({ system_prompt: "Work only on the current task in /workspace. Report progress and artifacts with the execution_reporting MCP. Follow the task's acceptance-test instructions about when to report an outcome. In a stop-hook test, deliberately omit the first outcome, then obey the stop hook's reminder and call report_outcome. Use turn_done to retain the task for follow-up. After the outcome acknowledgement, perform no further work." })
 });
 const agentId = agent.meta.id;
+if (bounded) assert(agent.capabilities?.includes("compute-resources"), "fixture agent lost the required capability");
 await call("AgentsGateway", "SetEnvironmentRole", { environmentId, identityId: agentId, role: "ENVIRONMENT_ROLE_USER" });
 console.log(JSON.stringify({ kind: "live.fixture", environmentId, agentId }));
 
@@ -148,21 +182,28 @@ const inspectInstance = (instanceId: string): any[] => {
     }
     const container = pod.spec.containers.find((item: any) => item.env?.some((entry: any) => entry.name === "AGENT_INSTANCE_ID" && entry.value === instanceId));
     if (!container) continue;
+    const bounds = bounded ? assertPodComputeBounds(pod, container.name, mainBounds!, supportingBounds!) : undefined;
+    let state: any;
     try {
-      const state = JSON.parse(execFileSync("kubectl", ["--kubeconfig", kubeconfig, "exec", pod.metadata.name, "-n", "agyn-workloads", "-c", container.name,
+      state = JSON.parse(execFileSync("kubectl", ["--kubeconfig", kubeconfig, "exec", pod.metadata.name, "-n", "agyn-workloads", "-c", container.name,
         "--", "/agyn/bin/node", "-e", `const fs=require("node:fs");
           const records=p=>fs.readdirSync(p).filter(n=>n.endsWith(".json")).map(n=>JSON.parse(fs.readFileSync(p+"/"+n,"utf8")));
           const control=fs.existsSync("/workspace/cancel-control.json")?JSON.parse(fs.readFileSync("/workspace/cancel-control.json","utf8")):null;
           let alive=false;if(control)try{process.kill(control.pid,0);alive=true;}catch{}
           console.log(JSON.stringify({mapping:records("/workspace/.codex/agyn/thread-mapping"),
+            cgroup:${bounded ? '{cpuMax:fs.readFileSync("/sys/fs/cgroup/cpu.max","utf8").trim(),memoryMax:fs.readFileSync("/sys/fs/cgroup/memory.max","utf8").trim()}' : "null"},
             journal:records("/workspace/.agyn/inbox-journal/"+process.env.AGENT_INSTANCE_ID),
             marker:fs.readFileSync("/workspace/reporting-proof.txt","utf8"),
             cancellation:control?{...control,alive,signals:fs.readFileSync("/workspace/cancel-signals.txt","utf8"),heartbeat:fs.readFileSync("/workspace/cancel-heartbeat.txt","utf8")}:null,
             configured:fs.existsSync("/run/agyn-execution/configured.json")}));`],
         { encoding: "utf8", timeout: 5000, stdio: ["ignore", "pipe", "pipe"] }));
-      if (state.mapping.length) found.push({ name: pod.metadata.name, uid: pod.metadata.uid, labels: pod.metadata.labels,
-        pvc: pod.spec.volumes.filter((v: any) => v.persistentVolumeClaim).map((v: any) => v.persistentVolumeClaim.claimName), ...state });
-    } catch { /* A starting or removed pod is not yet inspectable. */ }
+    } catch { continue; /* A starting or removed pod is not yet inspectable. */ }
+    if (bounded) {
+      assertCgroupComputeBounds(state.cgroup, mainBounds!);
+      resourceEvidence.pods[pod.metadata.uid] = { instanceId, name: pod.metadata.name, observedAt: new Date().toISOString(), bounds, cgroup: state.cgroup };
+    }
+    if (state.mapping.length) found.push({ name: pod.metadata.name, uid: pod.metadata.uid, labels: pod.metadata.labels,
+      pvc: pod.spec.volumes.filter((v: any) => v.persistentVolumeClaim).map((v: any) => v.persistentVolumeClaim.claimName), ...state });
   }
   return found;
 };
@@ -378,7 +419,7 @@ try {
       if (networkFixtures && workloadsReleased) { await networkFixtures.close(); networkEvidence.cleanedUp = true; }
       else if (networkFixtures) networkEvidence.retained = "Workload cleanup was not confirmed; keep isolation policies until operator reconciliation";
     } finally {
-      writeFileSync(join(directory, "evidence.json"), JSON.stringify({ environmentId, agentId, tasks, scenario, snapshots, evidence, network: networkEvidence }, null, 2), { mode: 0o600 });
+      writeFileSync(join(directory, "evidence.json"), JSON.stringify({ environmentId, agentId, tasks, scenario, snapshots, evidence, network: networkEvidence, resources: resourceEvidence }, null, 2), { mode: 0o600 });
     }
   }
 }

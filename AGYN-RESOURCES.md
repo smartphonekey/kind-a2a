@@ -2,10 +2,11 @@
 
 # Agyn Compute Resource Enforcement
 
-Status: source-level integration and credential-free Kubernetes enforcement
-passed on 2026-09-13. The stock Agyn deployments and existing live agent profiles
-have **not** been upgraded by this test. Resource-bounded real-agent continuation,
-parallelism and aggregate admission remain release gates.
+Status: source-level integration, credential-free kernel enforcement and real
+resource-bounded Agyn lifecycle acceptance passed on 2026-09-13. The operator
+wrapper temporarily deployed the combined images, then restored the stock
+deployments. This is not a permanent production upgrade. Aggregate admission,
+whole-task accounting, sizing and adversarial hardening remain release gates.
 
 ## Problem And Contract
 
@@ -113,21 +114,141 @@ The observed behavior matches Kubernetes v1.33's documented
 [CPU throttling and reactive OOM enforcement](https://v1-33.docs.kubernetes.io/docs/concepts/configuration/manage-resources-containers/#requests-and-limits).
 No Pod-level alpha resource feature is needed.
 
+## Bounded Agent Profile
+
+The operator wrapper now optionally deploys both combined images. It snapshots
+only managed fields and deployment UIDs, uses resource-version-checked patches,
+re-reads between rollout steps, and preserves unrelated edits. It restores the
+deployments independently in reverse order, so a conflict in one does not prevent
+restoration of the other. Missing capability/configuration, partial deployment,
+lost patch acknowledgement, rollout failure and external edits have subprocess
+tests. If workload Pods remain at cleanup, it keeps the integration deployments
+in place for operator reconciliation instead of downgrading active workloads.
+
+Build the binaries using the corresponding `lab/resource-integration` checkouts
+and local API generation described above. The runner build context is
+`.state/agyn-runner-build/k8s-runner`; the orchestrator context is
+`.state/agyn-orchestrator-build/orchestrator`. Both use `CGO_ENABLED=0 GOOS=linux
+GOARCH=amd64 go build -trimpath`, targeting `./cmd/k8s-runner` and
+`./cmd/orchestrator` respectively.
+
+From the lab checkout:
+
+```sh
+docker build -f ops/Dockerfile.agyn-runner \
+  -t a2a-agyn-runner:4dd12a8 .state/agyn-runner-build
+docker build -f ops/Dockerfile.agyn-orchestrator \
+  -t a2a-agyn-orchestrator:5edf8a4 .state/agyn-orchestrator-build
+agyn local load-image a2a-agyn-runner:4dd12a8
+agyn local load-image a2a-agyn-orchestrator:5edf8a4
+```
+
+Use the previously reviewed daemon/init image `a2a-agynd-reporting-init:b8db063`.
+Run the credential-free [network preflight](AGYN-NETWORK.md) before credentialed
+acceptance, then use an otherwise idle lab:
+
+```sh
+env NODE_EXTRA_CA_CERTS=/home/alex/.agyn/local/certs/agyn-local-ca.pem \
+  AGYN_LIVE_ACCEPTANCE=trusted-local \
+  AGYN_KUBECONFIG=/home/alex/work/aira-a2a-lab/.state/agyn-kubeconfig \
+  AGYN_LIVE_INIT_IMAGE=a2a-agynd-reporting-init:b8db063 \
+  AGYN_LIVE_ORCHESTRATOR_IMAGE=a2a-agyn-orchestrator:5edf8a4 \
+  AGYN_LIVE_RUNNER_IMAGE=a2a-agyn-runner:4dd12a8 \
+  AGYN_LIVE_COMPUTE_RESOURCES=true \
+  AGYN_LIVE_SUPPORTING_RESOURCES='{"requestsCpu":"50m","requestsMemory":"64Mi","limitsCpu":"500m","limitsMemory":"256Mi"}' \
+  AGYN_LIVE_RUNNER_CHART=/home/alex/work/agyn-contrib/k8s-runner/charts/k8s-runner \
+  AGYN_LIVE_INSPECTOR_IMAGE=node:22-bookworm-slim@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5 \
+  node scripts/agyn-live-lifecycle.mjs completed parallel interrupted cancellation
+```
+
+The fixture waits for the selected runner's advertised capability, resolves its
+actual flavor through Gateway, and requires the capability on a new temporary
+agent. It compares every main/supporting Pod specification to the operator's
+bounds and the main process's `cpu.max`/`memory.max` to the flavor. This includes
+replacement and parallel Pods; resource mismatches are fatal assertions, not
+ignored setup retries. `evidence.json` includes a `resources` section keyed by
+observed Pod UID. No A2A controller, worker, workflow or agent prompt changes are
+needed to enable this profile. No existing user profile is modified.
+
+These are test sizing values, not production recommendations. The actual main
+flavor is `ram-2gb`: 500m CPU/2Gi requests and 2 CPU/2Gi limits. The supporting
+allocation is additional, including the restartable Ziti sidecar. The test uses
+the existing ChatGPT subscription reference, not copied credentials or paid API
+inference. For process/host failure, the private
+`.state/agyn-lifecycle-deploy-*/before.json` lists managed fields under
+`deployments`; it is the manual recovery record, not proof of restored state.
+
+## Real Agent Acceptance Results
+
+The four scenarios ran in one invocation of the command above. Before credentialed
+work, network preflight run `9d342a81` passed all 92 checks and confirmed cleanup:
+`.state/agyn-network-live-PT5api/evidence.json`.
+
+All **nine** observed Agyn Pod UIDs had seven bounded container specifications:
+the main agent plus `ziti-enroll`, `ziti-sidecar`, `agynd-cli-init`, `agyn-cli-init`,
+`agent-runtime` and `ziti-wait`. Every inspected main cgroup reported
+`cpu.max=200000 100000` and `memory.max=2147483648`. This establishes actual main
+cgroups and all Pod resource specifications; the separate kernel probe establishes
+supporting-container cgroup enforcement. We did not read an already exited Agyn
+init container's cgroup and do not claim to have done so.
+
+| Scenario | Result | Evidence directory under `.state/` |
+| --- | --- | --- |
+| Completed turn and follow-up | Passed; new Pod UID, same instance/PVC/native session, real MCP outcome and Stop reminder, physical cleanup. | `agyn-reporting-live-hnVmB3` |
+| Same-agent parallel tasks and FIFO | Passed; distinct Pods/PVCs/sessions, queued follow-up reused only A's state while B advanced, four cross-Pod TCP/UDP denials and scoped reporter credentials. | `agyn-reporting-live-X0ylVs` |
+| Interrupted turn | Passed; controller SIGKILL and Pod loss, gated replacement, quarantine, explicit retirement, one unchanged append and same native session after recovery. | `agyn-reporting-live-cnkrgq` |
+| Hard cancellation | Passed in 6.045s; Pod deletion observed before settlement, retained heartbeat stopped and no late-write marker. | `agyn-reporting-live-OqkS2e` |
+
+Each directory contains private `evidence.json` with its `resources` and network
+sections. The parallel directory also contains `parallel.json`. No model retry
+was needed for these four runs; their success does not explain the separate
+historical startup failure in [the network report](AGYN-NETWORK.md).
+
+Completed task `4ad362f1-6b91-4594-8643-af05227be923` retained instance
+`318a780f-3f23-4747-9e74-bf5ff27804c6`, PVC `pv-318a780f-3f2-0971e70d-cff`, and
+native session `01a09ba4-19a7-7a83-81bb-b74317383d6b`. Pod UID changed from
+`9426d8ff-a5fc-4c65-86a4-f14513dfeafd` to `b577957e-0626-416a-8a16-8e5ac91cc93d`.
+
+Parallel A task `4e86bb19-39a7-4d1e-8a6c-1a7a1dd14239` used instance
+`43f37cfd-edc1-431e-967d-99439b3891f6`; B task
+`a49c33f9-289f-4b4f-9236-48ce178486e1` used instance
+`c5910189-3f32-4a5b-b74a-cfa9772c80a4`. A1's `runtime.stopped` was sequence 28;
+A2 was claimed at sequence 31. Their native sessions and PVCs were distinct;
+A2 retained A1's mapping across changed Pod UIDs. This ran from 16:41:22 to
+16:44:26 UTC without modifying the A2A controller or workflow code.
+
+Interrupted task `e8ba526a-33a6-40a4-9975-412fdecbb57c` retained native session
+`01a09ba8-289b-70a1-90a1-202f636b5d33` and exactly one appended marker line.
+The old inbox message `aa59e6d1-35d6-46df-a212-01ea2c0f97a5` became `ack_only`
+after explicit reconciliation, not automatic replay. All three Pod UIDs,
+including the gated replacement, had the expected resource bounds.
+
+Cancellation task `8f4ab284-231a-4032-a513-cab7277fe1a3` had physical Pod deletion
+observed at `2026-09-13T16:47:21.633Z`, before `runtime.stopped` at
+`16:47:25.915Z`. A read-only PVC inspector found an identical heartbeat on reads
+1.5 seconds apart and no late side effect. Cancellation stayed terminal.
+
+Deployment recovery record: `.state/agyn-lifecycle-deploy-VgjyKi/before.json`.
+Independent checks after the wrapper exited confirmed both stock images ready
+(`k8s-runner:0.12.0`, `agents-orchestrator:0.23.0`), no workload Pods or Services,
+and only the pre-existing `agent-workload-egress` policy. The stock runner's
+Gateway capability report returned to `["docker"]`, without `compute-resources`.
+All five fixture PVCs were independently confirmed Bound and task state was
+retained; running the bounded profiles again
+requires the reviewed resource-capable images, not the restored stock runner.
+
+All 82 lab tests pass, including 26 deployment-wrapper subprocess cases and two
+resource-proof validation tests. The normal agent tasks are tiny fixtures, not
+a production sizing benchmark or a proof of isolation against hostile code.
+
 ## Remaining Acceptance
 
-1. Build and deploy combined lab runner/orchestrator images while preserving the
-   existing ingress, inactive-instance stop and confirmed-removal patches. The
-   prepared `lab/resource-integration` branches combine only these contributions;
-   they are not upstream review branches.
-2. Restore-safe operator tooling must set explicit supporting bounds, wait for
-   the runner's capability report, opt a temporary profile in, then verify all
-   actual Agyn containers and cgroups through completion and continuation.
-3. Repeat same-agent parallel/FIFO, interruption and cancellation tests using
-   that profile. Prior live task tests used the unbounded stock resource path;
-   they do not prove sizing or continuation under the new bounds.
-4. Add scheduler/admission and whole-task accounting evidence, aggregate
-   backpressure/quotas, and appropriate production sizing. Test supporting
-   runtime failure and OOM recovery without unsafe side-effect replay.
+Add scheduler/admission and whole-task accounting evidence, aggregate
+backpressure/quotas, and appropriate production sizing. Test supporting runtime
+failure and real-agent OOM recovery without unsafe side-effect replay. The kernel
+OOM probe is not an agent OOM-recovery acceptance test. The selected capability
+remains opt-in for compatibility; a production profile must require enforcement,
+not silently fall back to the unbounded legacy path.
 
 This work does not close the broader [production gates](PRODUCTION.md), including
 adversarial sandbox hardening, fail-closed networking, storage/HA operations,

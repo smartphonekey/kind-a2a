@@ -9,39 +9,68 @@ assert.equal(process.env.AGYN_LIVE_ACCEPTANCE, "trusted-local");
 const image = process.env.AGYN_LIVE_ORCHESTRATOR_IMAGE;
 const initImage = process.env.AGYN_LIVE_INIT_IMAGE;
 assert(image && initImage, "explicit reviewed orchestrator and daemon integration images are required");
+const bounded = process.env.AGYN_LIVE_COMPUTE_RESOURCES === "true";
+assert(!process.env.AGYN_LIVE_COMPUTE_RESOURCES || bounded, "AGYN_LIVE_COMPUTE_RESOURCES must be true when set");
+const runnerImage = process.env.AGYN_LIVE_RUNNER_IMAGE;
+const supportingResources = process.env.AGYN_LIVE_SUPPORTING_RESOURCES;
+if (bounded) {
+  assert(runnerImage && supportingResources, "resource acceptance requires explicit runner image and supporting bounds");
+  const bounds = JSON.parse(supportingResources);
+  assert(bounds && typeof bounds === "object" && !Array.isArray(bounds));
+  assert.deepEqual(Object.keys(bounds).sort(), ["limitsCpu", "limitsMemory", "requestsCpu", "requestsMemory"]);
+  assert(Object.values(bounds).every(value => typeof value === "string" && value.trim()), "supporting bounds must be complete strings");
+  assert(process.env.AGYN_LIVE_RUNNER_CHART, "resource acceptance requires the reviewed network policy chart");
+} else assert(!runnerImage && !supportingResources, "resource settings require AGYN_LIVE_COMPUTE_RESOURCES=true");
 const scenarios = process.argv.slice(2);
 assert(scenarios.length && scenarios.every(value => ["completed", "interrupted", "cancellation", "parallel"].includes(value)), "supply one or more known acceptance scenarios");
 if (scenarios.includes("parallel")) assert(process.env.AGYN_LIVE_RUNNER_CHART, "parallel acceptance requires the reviewed network policy chart");
 const kubeconfig = resolve(process.env.AGYN_KUBECONFIG ?? ".state/agyn-kubeconfig");
 const k = (args, input) => execFileSync("kubectl", ["--kubeconfig", kubeconfig, ...args], { input, encoding: "utf8", timeout: 90_000 });
-const deployment = () => JSON.parse(k(["get", "deployment", "agents-orchestrator", "-n", "agyn-platform", "-o", "json"]));
-const container = value => value.spec.template.spec.containers.find(item => item.name === "agents-orchestrator");
-const managed = new Map([["AGYND_CLI_INIT_IMAGE", initImage], ["STOP_INACTIVE_INSTANCES", "true"], ["STOP_TIMEOUT_SEC", "5"]]);
-const original = deployment();
-const previous = container(original);
-assert(previous, "orchestrator container not found");
-assert.equal(JSON.parse(k(["get", "pods", "-n", "agyn-workloads", "-o", "json"])).items.length, 0, "refusing a global image change while workloads exist");
+const deployment = name => JSON.parse(k(["get", "deployment", name, "-n", "agyn-platform", "-o", "json"]));
+const container = (value, name) => value.spec.template.spec.containers.find(item => item.name === name);
+const targets = [
+  ...(bounded ? [{ name: "k8s-runner", image: runnerImage, managed: new Map([["SUPPORTING_CONTAINER_RESOURCES", supportingResources]]) }] : []),
+  { name: "agents-orchestrator", image, managed: new Map([["AGYND_CLI_INIT_IMAGE", initImage], ["STOP_INACTIVE_INSTANCES", "true"], ["STOP_TIMEOUT_SEC", "5"]]) }
+].map(target => {
+  const original = deployment(target.name), previous = container(original, target.name);
+  assert(previous, `${target.name} container not found`);
+  return { ...target, original, previous, attempted: false };
+});
+const assertIdle = message => assert.equal(JSON.parse(k(["get", "pods", "-n", "agyn-workloads", "-o", "json"])).items.length, 0, message);
+assertIdle("refusing a global image change while workloads exist");
 mkdirSync(resolve(".state"), { recursive: true, mode: 0o700 });
 const directory = mkdtempSync(resolve(".state/agyn-lifecycle-deploy-"));
-writeFileSync(join(directory, "before.json"), JSON.stringify({ image: previous.image,
-  env: previous.env.filter(entry => managed.has(entry.name)) }, null, 2), { mode: 0o600 });
-const patch = (current, targetImage, replacements) => {
-  const index = current.spec.template.spec.containers.findIndex(item => item.name === "agents-orchestrator");
-  const env = container(current).env.filter(entry => !managed.has(entry.name)).concat(replacements);
+writeFileSync(join(directory, "before.json"), JSON.stringify({ deployments: targets.map(target => ({ name: target.name,
+  uid: target.original.metadata.uid, image: target.previous.image,
+  env: (target.previous.env ?? []).filter(entry => target.managed.has(entry.name)) })) }, null, 2), { mode: 0o600 });
+const patch = (target, current, targetImage, replacements) => {
+  assert.equal(current.metadata.uid, target.original.metadata.uid, `${target.name} deployment identity changed`);
+  const index = current.spec.template.spec.containers.findIndex(item => item.name === target.name);
+  assert(index >= 0, `${target.name} container removed`);
+  const currentContainer = container(current, target.name);
+  const env = (currentContainer.env ?? []).filter(entry => !target.managed.has(entry.name)).concat(replacements);
   const patchFile = join(directory, "patch.json");
   writeFileSync(patchFile, JSON.stringify([
     { op: "test", path: "/metadata/resourceVersion", value: current.metadata.resourceVersion },
     { op: "replace", path: `/spec/template/spec/containers/${index}/image`, value: targetImage },
-    { op: "replace", path: `/spec/template/spec/containers/${index}/env`, value: env }
+    { op: currentContainer.env ? "replace" : "add", path: `/spec/template/spec/containers/${index}/env`, value: env }
   ]), { mode: 0o600 });
-  try { k(["patch", "deployment", "agents-orchestrator", "-n", "agyn-platform", "--type=json", `--patch-file=${patchFile}`]); }
+  try { k(["patch", "deployment", target.name, "-n", "agyn-platform", "--type=json", `--patch-file=${patchFile}`]); }
   finally { rmSync(patchFile, { force: true }); }
 };
-const rollout = () => k(["rollout", "status", "deployment/agents-orchestrator", "-n", "agyn-platform", "--timeout=80s"]);
+const rollout = name => k(["rollout", "status", `deployment/${name}`, "-n", "agyn-platform", "--timeout=80s"]);
+const sameManaged = (target, left, right) => left && right && left.image === right.image && [...target.managed.keys()].every(name =>
+  JSON.stringify(left.env?.find(entry => entry.name === name)) === JSON.stringify(right.env?.find(entry => entry.name === name)));
 try {
-  patch(original, image, [...managed].map(([name, value]) => ({ name, value })));
-  rollout();
-  console.log(JSON.stringify({ kind: "live.deployed", image, initImage, directory }));
+  for (const target of targets) {
+    assertIdle("workloads appeared during deployment setup; refusing further changes");
+    const current = deployment(target.name);
+    assert(sameManaged(target, container(current, target.name), target.previous), `${target.name} managed settings changed during setup`);
+    target.attempted = true;
+    patch(target, current, target.image, [...target.managed].map(([name, value]) => ({ name, value })));
+    rollout(target.name);
+  }
+  console.log(JSON.stringify({ kind: "live.deployed", image, initImage, runnerImage, bounded, directory }));
   for (const scenario of scenarios) {
     const child = spawn(process.execPath, ["dist/live/agyn-reporting.js"], { stdio: "inherit", env: {
       ...process.env, AGYN_LIVE_SCENARIO: scenario === "completed" ? "" : scenario
@@ -50,17 +79,25 @@ try {
     if (code !== 0) throw new Error(`${scenario} acceptance failed (${code})`);
   }
 } finally {
-  const current = deployment();
-  const ours = container(current);
-  const unchanged = ours.image === previous.image && [...managed.keys()].every(name =>
-    JSON.stringify(ours.env.find(entry => entry.name === name)) === JSON.stringify(previous.env.find(entry => entry.name === name)));
-  if (!unchanged) {
-    assert.equal(ours.image, image, "orchestrator image changed externally; refusing to overwrite it");
-    for (const [name, value] of managed) {
-      assert.deepEqual(ours.env.find(entry => entry.name === name), { name, value }, `managed setting ${name} changed externally`);
-    }
-    patch(current, previous.image, previous.env.filter(entry => managed.has(entry.name)));
-    rollout();
+  assertIdle("workload cleanup unconfirmed; retaining integration deployments for reconciliation");
+  const errors = [];
+  for (const target of [...targets].reverse().filter(target => target.attempted)) {
+    try {
+      const current = deployment(target.name), ours = container(current, target.name), previous = target.previous;
+      assert.equal(current.metadata.uid, target.original.metadata.uid, `${target.name} deployment identity changed`);
+      assert(ours, `${target.name} container removed`);
+      if (!sameManaged(target, ours, previous)) {
+        assert.equal(ours.image, target.image, `${target.name} image changed externally; refusing to overwrite it`);
+        for (const [name, value] of target.managed) {
+          assert.deepEqual(ours.env?.find(entry => entry.name === name), { name, value }, `managed setting ${name} changed externally`);
+        }
+        patch(target, current, previous.image, (previous.env ?? []).filter(entry => target.managed.has(entry.name)));
+        rollout(target.name);
+      }
+      console.log(JSON.stringify({ kind: "live.deployment-restored", deployment: target.name, image: previous.image, directory }));
+    } catch (error) { errors.push(error); }
   }
-  console.log(JSON.stringify({ kind: "live.deployment-restored", image: previous.image, directory }));
+  if (errors.length) {
+    throw new AggregateError(errors, "deployment restoration requires operator reconciliation");
+  }
 }

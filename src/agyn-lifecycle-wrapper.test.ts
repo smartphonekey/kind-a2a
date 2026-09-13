@@ -53,6 +53,7 @@ process.exit(process.env.FAKE_MODE==="child-failure"?1:0);
 `);
     const result = spawnSync(process.execPath, [wrapper, mode.startsWith("parallel") ? "parallel" : "completed"], { cwd: directory, encoding: "utf8", timeout: 15_000,
       env: { ...process.env, PATH: `${join(directory, "bin")}:${process.env.PATH}`, AGYN_LIVE_ACCEPTANCE: "trusted-local",
+        AGYN_LIVE_COMPUTE_RESOURCES: "", AGYN_LIVE_RUNNER_IMAGE: "", AGYN_LIVE_SUPPORTING_RESOURCES: "",
         AGYN_LIVE_RUNNER_CHART: mode === "parallel-no-network" ? "" : "/reviewed/chart",
         AGYN_LIVE_INIT_IMAGE: "reviewed-init:1", AGYN_LIVE_ORCHESTRATOR_IMAGE: "reviewed:1", FAKE_DEPLOYMENT: stateFile, FAKE_MODE: mode } });
     assert.ifError(result.error);

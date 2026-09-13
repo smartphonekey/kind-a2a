@@ -13,7 +13,14 @@ Agyn owns Kubernetes scheduling, workload lifecycle, persistent volumes, runtime
 
 The earlier custom kind/Agent Sandbox/ACP implementation remains intact as a comparison and rollback backend. Its controller owns A2A state, Sandbox lifecycle, approvals, transcripts and artifacts; its runner owns the protocol-neutral ACP harness. Existing workspaces retain their recorded profiles and are not silently migrated.
 
-The live Agyn installation uses CLI `0.19.0`, platform chart `0.72.1`, Codex runtime `0.147.0` and model `gpt-5.5`. Repository dependencies retain A2A JS SDK `1.0.0`, ACP SDK `1.4.0`, Codex ACP `1.11.0`, and the legacy Kubernetes Agent Sandbox `v0.5.2` integration.
+The live Agyn installation uses CLI `0.19.0`, platform chart `0.72.1`, Codex runtime `0.147.0` and model `gpt-5.5`. Repository dependencies use A2A JS SDK `1.1.0`, MCP SDK `1.30.0`, ACP SDK `1.4.0`, Codex ACP `1.11.0`, and the legacy Kubernetes Agent Sandbox `v0.5.2` integration.
+
+The new [durable execution service](SERVICE.md) adds authenticated A2A routing,
+transactional queued turns, reporting MCP, bounded outcome checks and a recoverable
+worker. It is a development implementation with explicit [production gates](PRODUCTION.md),
+not a replacement for the live acceptance evidence below. See the
+[Agyn contribution guide](CONTRIBUTING-AGYN.md) for the focused daemon patch and
+proposed upstream boundaries. New service code has scoped [AGPL-3.0 licensing](LICENSING.md).
 
 ## Agyn Quick Start
 

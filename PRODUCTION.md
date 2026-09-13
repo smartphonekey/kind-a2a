@@ -1,0 +1,60 @@
+# Production Readiness
+
+Status: implementation in progress. The existing 0.4.0 Agyn adapter is a trusted
+local lab, not a production deployment. Passing the baseline tests does not
+remove any of the gates below.
+
+## Objective
+
+Expose Agyn agents over A2A with an isolated, durable environment per agent/task,
+concurrent execution across tasks, serialized execution within a task, and no
+running workload between turns. Follow-up messages retain the task's identity,
+runtime profile, agent session and workspace. Switching the operator-selected
+agent profile must not change the A2A controller or workflow implementation.
+
+## Gates
+
+| Gate | Status | Required evidence |
+| --- | --- | --- |
+| Existing behavior | Baseline verified | Build and 10 existing tests passed on 2026-09-13; preserve these tests. |
+| Durable task ownership and execution | Module/process tests verified | Transactional submissions, scoped idempotency, FIFO turns, fenced leases and six-process contention pass. Live process/pod failure boundaries still need verification. |
+| Authenticated protocol boundary | HTTP/SSE tests verified; deployment pending | Unauthorized and cross-owner send/get/list/cancel/events checks, disconnect/reconnect and subscription credential revocation pass. TLS deployment acceptance remains. |
+| Reporting MCP and durable events | MCP wire tests verified; live agent pending | Official MCP client over HTTP, commit-before-ACK, exact retries, conflict/late-event checks and reporting credential rotation pass. Live agent delivery remains. |
+| Stop outcome check | Store/subprocess tests verified; runtime hook pending | Durable bounded reminders, idempotent checks, cancellation and hook executable outage behavior pass. Actual Codex/second-agent invocation still needs live acceptance. |
+| Durable runtime | Pending | Same Agyn instance, native agent session and PVC survive actual pod replacement; new tasks use different instances/PVCs. |
+| Recovery and cancellation | Provider simulations verified; daemon behavior pending | Fault injection covers lost dispatch ACK, lease recovery after outcome and failed release. Agyn's own interrupted-turn/inbox replay is not yet made safe. |
+| Compute release | Driver contract tested; live verification pending | Worker waits for removal evidence and retries release failures; same-task FIFO tests pass. Real runner removal semantics still need verification. |
+| Parallelism and portability | Pending | Concurrent isolated live tasks; same-task FIFO; second real agent profile with unchanged controller/workflows. |
+| Sandbox and network enforcement | Pending | Nonprivileged workloads, restricted mounts/service accounts, enforced egress and cross-task denial; explicit runtime isolation profile. Unconfined is lab-only. |
+| Operations | Pending | Bounded admission, backpressure, graceful shutdown, readiness, backup/restore, schema migration and retention tests; deployment and rollback instructions. |
+| Upstream contribution | Focused patch pushed; proposal drafted | `spk-ai/agynd-cli` branch `fix/codex-home-persistence`, commit `c933329`, builds and passes tests. Draft architecture proposal, contribution guide and scoped AGPL-3.0-only licensing added. No upstream PR submitted yet. |
+
+Native session persistence is required for correct continuation. Bulk session
+analytics, auto-improvement pipelines and prompt/tool customization UI are next
+steps, not substitutes for the gates above.
+
+## Contribution Boundaries
+
+- `src/service/`: A2A task ownership, execution scheduling and durable events.
+- Agyn adapter: translate provider operations; no LLM-specific control logic.
+- Reporting MCP: generic progress and outcome contract, separate from chat.
+- `agynio/agynd-cli`: generic persistent state location and lifecycle hooks.
+- `agynio/architecture`: discuss the contract before declaring a native API.
+- API/Gateway changes are separate PRs only where existing APIs cannot meet the
+  agreed contract. Runtime images remain binary packaging.
+
+The first storage implementation uses SQLite WAL on a single local/PVC
+filesystem, with transactions and fencing across local worker processes. WAL
+must not be put on a shared network filesystem. A production storage profile,
+backup/restore procedure and failover tests remain release gates; this is not a
+claim of multi-node HA.
+
+## References
+
+- [Service setup and current limitations](SERVICE.md)
+- [Contribution guide and patch evidence](CONTRIBUTING-AGYN.md)
+
+- [A2A specification](https://a2a-protocol.org/latest/specification/)
+- [Agyn architecture conventions](https://github.com/agynio/architecture)
+- [Agyn daemon development](https://github.com/agynio/agynd-cli)
+- [Current lab acceptance](ACCEPTANCE.md)

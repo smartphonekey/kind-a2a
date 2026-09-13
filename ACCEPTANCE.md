@@ -2,6 +2,35 @@
 
 Evidence below spans the preserved `kind-aira-a2a-lab` baseline and the new self-hosted Agyn backend. Each section identifies its environment; fake-agent tests and live-model evidence are deliberately separated.
 
+## Durable Service Foundation (2026-09-13)
+
+The new `src/service/main.ts` entry point is a development service, not a completed
+production migration. The existing Agyn deployment and legacy controller remain
+unchanged. `npm test` builds first and passes all 35 tests, including the original
+10 tests. Dependencies are pinned to A2A SDK `1.1.0` and MCP SDK `1.30.0`.
+
+| Check | Status | Evidence |
+| --- | --- | --- |
+| Transactional task storage | PASS, LOCAL | Scoped idempotency, conflicting retries, FIFO turns, immutable profiles, leases and restart durability; six separate Node processes contend without duplicate task/lease. |
+| Authenticated A2A boundary | PASS, HTTP | Send/get/list/cancel/events ownership checks, tenant spoof rejection, history/pagination validation, credential rotation/revocation and Agent Card security serialization. |
+| Subscription lifetime | PASS, HTTP/SSE | Disconnect releases admission without canceling work, reconnect sees durable state, revocation closes the stream, follow-ups retain the original profile after the configured default changes. |
+| Reporting MCP | PASS, MCP HTTP | Official MCP client/server calls, execution-only credentials, ACK after store commit, exact retries, conflict/late report rejection and scoped token rotation. |
+| Stop check | PASS, SUBPROCESS | Real hook subprocess calls HTTP checker; at most two reminders even with the same native turn ID; missing credentials/outage return stop, not success. Durable checks survive store reopen. |
+| Worker recovery | PASS, SIMULATED PROVIDER | Lost dispatch ACK never resends; outcome-before-crash recovers to release; release failures retry; queued follow-up waits for removal evidence; outcome committed during a failed observation wins. |
+| Agyn driver | PASS, SIMULATED GATEWAY | Deterministic instance lookup, no create on unresolved recovery, reporting setup before send, pause/resume and explicit workload removal evidence. |
+| Service process | PASS, SUBPROCESS | Entry point binds real HTTP, rejects anonymous requests and exits cleanly on SIGTERM. No live work was dispatched by this test. |
+| Focused daemon patch | PASS, GO TESTS | Pushed `spk-ai/agynd-cli:fix/codex-home-persistence`, commit `c933329`; full ordinary tests and build pass, targeted Codex persistence race tests pass. The broader daemon race suite finds an unrelated unchanged shell-test cleanup race. |
+| Live Agyn MCP/hook delivery | PENDING | Operator installer contract exists, but it has not been installed or verified in a real Agyn runtime. |
+| Native session after pod replacement | PENDING | Daemon unit test replaces ephemeral HOME while retaining state. This is not a live native Codex session recovery test. |
+| Interrupted Agyn daemon turn | PENDING | Controller simulations do not prove safe daemon inbox redelivery or side-effect retry after pod replacement. |
+| Hardened deployment and second live agent | PENDING | Network/sandbox enforcement, hard cancellation, operational recovery and a second live agent still require acceptance. |
+
+The local Agyn platform was rechecked as healthy with zero workload Pods and five
+retained bound PVCs. No VM policy was weakened and no live agent/PVC was deleted
+for these tests. See [PRODUCTION.md](PRODUCTION.md) for all remaining gates,
+[SERVICE.md](SERVICE.md) for setup boundaries and
+[CONTRIBUTING-AGYN.md](CONTRIBUTING-AGYN.md) for upstream review units.
+
 ## Agyn Backend 0.4.0
 
 Run on 2026-09-11 against the self-hosted Agyn local platform (chart `0.72.1`) in its separate Lima/k3s VM. Agent `@a2a-codex` used Codex runtime `0.147.0`, model `gpt-5.5`, a 10 GiB per-instance volume mounted at `/workspace`, and existing ChatGPT subscription authentication stored by Agyn.

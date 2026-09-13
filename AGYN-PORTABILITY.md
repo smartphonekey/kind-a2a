@@ -12,6 +12,9 @@ The historical successful profile below is no longer sufficient for the current
 driver. Coordinated local rollout, model-free failed-Pod acceptance and all five
 Codex lifecycle regressions now pass. No new Claude lifecycle result is claimed;
 its native error investigation and remaining scenarios are still required.
+An isolated native HTTP 401 diagnostic now passes without provider credentials
+or a model backend. It verifies the proposed diagnostic path, not the cause of
+the historical failures or another Claude A2A lifecycle scenario.
 
 ## Reporting Adapter
 
@@ -83,6 +86,77 @@ This proves completed-turn native process recovery, not Pod replacement, a
 second A2A task, approval handling, or interrupted-side-effect recovery. The
 SDK branch keeps its upstream MIT license; the new service adapter is
 AGPL-3.0-only. No upstream PR has been submitted.
+
+## Native Failure Diagnostics
+
+Two focused contributions preserve error metadata without logging message bodies:
+
+- SDK `feat/result-diagnostics`, `16286f3`, based on upstream `bc88c1b`:
+  expose result subtype, optional `api_error_status` and `terminal_reason` in
+  `TurnResult`. These fields match the
+  [official SDK result schema](https://github.com/anthropics/claude-agent-sdk-python/blob/main/src/claude_agent_sdk/types.py).
+  Full SDK race tests pass, including legacy/unknown values and malformed status
+  rejection. This branch is independent of session selection and retains MIT.
+- Daemon `fix/claude-error-diagnostics`, `b884d27`, stacked on
+  `fix/claude-error-results`: allowlist diagnostic names and HTTP 400-599, keep
+  the terminal error sentinel, and do not publish or ACK failed turns. Bodies,
+  arbitrary stop reasons and native session identifiers are not logged. Ordinary
+  Go tests and focused `ClaudeError|ClaudeDiagnostic` race tests pass. The broader
+  daemon race-suite exclusion is unchanged. Both branches are pushed; no PR has
+  been submitted. The daemon's temporary SDK fork pin needs an upstream release.
+
+On 2026-09-13 at 23:09 UTC, `TestClaudeDiagnosticNative401` passed with actual
+Agyn-packaged Claude Code `2.1.225`, running as UID 1000. A test-owned loopback
+server consumed a bounded request body and returned HTTP 401 with
+`x-should-retry: false`; tools and auto-update were disabled. The actual CLI/SDK
+returned `result_subtype=success`, `terminal_reason=api_error`, `api_status=401`.
+The daemon treated it as terminal and made zero Threads replies or inbox ACKs.
+No model backend, provider credential or Agyn subscription was used. Threads
+are a test double: this is not a full deployed task lifecycle test.
+
+- Private evidence: `.state/agyn-claude-diagnostic-live-y3ivej/evidence.json`.
+- Pod UID: `5d5115d2-6c2d-4e3e-8c1a-463c6d7dee57`; native test took 0.80 seconds.
+- Test image: `docker.io/library/a2a-claude-diagnostics@sha256:ac0a80c019928ea48a36c004da0722c33fb4ebd144827793ae57d129d5cffd9c`.
+- Test-binary SHA-256: `8a3f5ee789e0f1f4f1ef2c962955f2265e7dd3828e86167ab89bca62c4c9e9a7`;
+  its source tree was subsequently committed as daemon `b884d27`.
+- Runtime image: `registry.agyn.dev/agyn-platform/claude@sha256:c431db3091a76154ff6be7620f54204fffe30555f1f14adf182b9140c325deb4`.
+- The bounded test Pod had RuntimeDefault seccomp, read-only root filesystems,
+  no capabilities, no service-account token and only emptyDir mounts. The
+  packaged-runtime init container explicitly ran as root to copy its files;
+  the native test container was nonroot. No PVC or host directory was mounted.
+- A run-specific deny-all ingress/egress policy was installed. The preceding
+  credential-free network preflight passed all 92 checks in
+  `.state/agyn-network-live-aJahHm/evidence.json`. This is local CNI evidence,
+  not adversarial or fail-closed bootstrap acceptance.
+- UID-precondition cleanup observed both Pod and policy absence. All 46 prior
+  PVC UIDs/phases were unchanged. A separate post-run audit also verified the
+  four stock deployment UIDs/images/generations, zero workload Pods/Services
+  and only the original workload egress policy. No deployment was changed.
+
+The operator script is `scripts/agyn-claude-diagnostics.mjs`; build its test
+image with `ops/Dockerfile.claude-diagnostics` and a reviewed Linux/amd64
+`go test -c` binary named `agynd-daemon.test`. It requires explicit
+`AGYN_LIVE_ACCEPTANCE=trusted-local`, `AGYN_KUBECONFIG`,
+`AGYN_CLAUDE_DIAGNOSTIC_IMAGE` and `AGYN_CLAUDE_DIAGNOSTIC_RUNTIME_IMAGE`.
+Both images must be digest-pinned and the workload namespace must be idle.
+The test image must already be registered by digest in the selected VM;
+`agyn local load-image` importing only its tag did not satisfy `imagePullPolicy: Never`.
+Run `node scripts/agyn-claude-diagnostics.mjs` after the network preflight.
+Nine subprocess tests cover success, unsafe preconditions, native failure,
+lost create acknowledgements and resource/PVC identity changes. Uncertain
+creation/removal retains isolation and requires operator reconciliation.
+
+Three earlier diagnostic attempts are failures, not passes: image registration
+consumed the first Pod's deadline, and two earlier HTTP/initialization fixtures
+timed out. Their private records are `agyn-claude-diagnostic-live-5qj2bn`,
+`agyn-claude-diagnostic-live-La7esu` and `agyn-claude-diagnostic-live-GjN8br`
+under `.state`. All owned Pods/policies were removed and PVCs retained.
+The final controlled, explicitly non-retryable response does not establish
+general provider retry behavior or explain either historical native error.
+
+The current combined daemon/init image `beb1f23` does not contain these new
+diagnostics. Combine the separate SDK session/metadata patches, update the
+integration daemon pin and rebuild before rerunning real Claude lifecycle tests.
 
 ## Remaining Integration
 
@@ -195,6 +269,10 @@ The catalog's CLI-version tags differ from older GitHub release tags. See its
    but wrongly accepted billing `removedAt` while the failed Pod remained.
    Read-only native metadata showed no tool calls or synthetic error body, so
    the native failure is unclassified, not an established recurrence of the 401.
+   A later UID-checked, read-only PVC inspection found only native transcript
+   metadata and no surviving debug log; see the private
+   `.state/agyn-reporting-live-Q1g9Uf/diagnostic-metadata.json`. It did not
+   recover a failure status or establish a cause.
    The failed fixture Pod required UID-checked operator deletion; the PVC was
    retained and stock deployments restored. Temporary subscription credentials
    were removed. Source fixes and remaining rollout are in [AGYN-REMOVAL.md](AGYN-REMOVAL.md).

@@ -2,6 +2,19 @@
 
 Evidence below spans the preserved `kind-aira-a2a-lab` baseline and the new self-hosted Agyn backend. Each section identifies its environment; fake-agent tests and live-model evidence are deliberately separated.
 
+## Native Error Diagnostics (2026-09-13)
+
+The build and all 166 local tests pass (155 top-level), including nine new
+diagnostic operator cases. An additional isolated Pod test ran the actual
+packaged Claude Code `2.1.225` against a credential-free local HTTP 401 server,
+with no model backend. The daemon preserved safe failure metadata and made no
+Threads reply or inbox ACK. Its diagnostic Pod/policy were removed with UID
+preconditions and observed absence; all 46 PVCs and stock deployments remained
+unchanged. [Exact evidence and limits](AGYN-PORTABILITY.md#native-failure-diagnostics)
+include the earlier failed attempts. This is not a Claude A2A lifecycle pass or
+an explanation of the historical provider errors. The combined integration
+image does not yet contain the new diagnostic patches.
+
 ## Removal Contract Correction (2026-09-13)
 
 A later failed-Pod test disproved the general removal contract asserted by the

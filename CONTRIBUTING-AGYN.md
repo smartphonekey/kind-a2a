@@ -272,6 +272,33 @@ authentication and stop-notice failures found during Agyn testing, separately
 from the passed native process and completed A2A/Pod recovery tests. These forks retain their existing licenses;
 the standalone reporting/service changes retain AGPL-3.0-only.
 
+## Claude Failure Diagnostics
+
+Two additional focused review units improve observability, not retry behavior:
+
+- SDK [feat/result-diagnostics](https://github.com/spk-ai/claude-sdk-go/tree/feat/result-diagnostics),
+  `16286f3`, based on upstream `bc88c1b`: preserve subtype, optional HTTP error
+  status and terminal reason. Legacy results remain compatible and full
+  `go test -race ./...` passes. This keeps MIT and does not include the separate
+  session-selection contribution.
+- Daemon [fix/claude-error-diagnostics](https://github.com/spk-ai/agynd-cli/tree/fix/claude-error-diagnostics),
+  `b884d27`, stacked on `fix/claude-error-results` (`1b1dd62`): format only
+  allowlisted metadata while preserving the terminal failure/no reply/no ACK
+  contract. It keeps the existing daemon license. Ordinary Go tests and focused
+  `go test -race ./internal/daemon -run 'ClaudeError|ClaudeDiagnostic' -count=1`
+  pass with an isolated HOME. The unrelated full daemon race failure remains.
+
+Both branches are pushed, bringing the focused branch count to seventeen; no
+upstream PR is submitted. Review the daemon diff against its error-result
+prerequisite, and replace its temporary SDK fork pin with an upstream release
+before merge. The native opt-in test passed using the real packaged CLI and a
+credential-free loopback HTTP 401 fixture in a network-denied Pod, with no model
+backend. [Evidence and limitations](AGYN-PORTABILITY.md#native-failure-diagnostics)
+separate that diagnostic proof from the still-unexplained provider failures.
+The lab's operator/Dockerfile/subprocess tests are separate AGPL-3.0-only code;
+do not include Kubernetes or A2A wiring in the proposed SDK/daemon changes.
+The current combined integration init image has not yet adopted these patches.
+
 ## Proposed Subsequent Contributions
 
 | Review unit | Suggested home | Boundary |

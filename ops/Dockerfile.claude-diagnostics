@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Model-free native CLI acceptance; the runtime arrives in a separate init image.
+FROM node:22-bookworm-slim@sha256:83f487e0a63425e5b4d146fb5e5be574bcbe1b7b843d3ebafdd95eaf7767a7e5
+COPY --chmod=0555 agynd-daemon.test /usr/local/bin/agynd-daemon.test
+ENTRYPOINT ["/usr/local/bin/agynd-daemon.test"]

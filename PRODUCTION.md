@@ -28,10 +28,10 @@ agent profile must not change the A2A controller or workflow implementation.
 | Parallelism | Real same-agent tasks and FIFO verified | [Two live tasks](AGYN-PARALLEL.md) ran in separate pods/PVCs/native sessions; an earlier queued follow-up did not block the other task. Follow-up claim occurred after old-pod removal and reused only its own state while the other task kept advancing. Final turns released all instance pods. |
 | Agent portability | Pending | A second real agent profile must pass with unchanged controller/workflows. Same-profile concurrency and fake-driver profile tests do not establish this. |
 | Sandbox and network enforcement | Pod-network, parallel and lifecycle checks verified after local repair; full gate pending | The repeated credential-free preflight passed 92 checks; real concurrent tasks denied cross-pod TCP/UDP, and completion/interruption/cancellation have passing network-profile reruns. See [network evidence](AGYN-NETWORK.md) and [parallel scope](AGYN-PARALLEL.md). Adversarial hardening, cross-task overlay authorization and fail-closed bootstrap remain required. Unconfined is lab-only. |
-| Resource containment | Missing in observed live profile | Real agent and init/sidecar containers had no CPU/memory requests or limits. Per-task workspaces and pod-network checks do not prove containment of resource exhaustion. Add operator-owned bounds and live exhaustion/admission acceptance. |
+| Resource containment | Opt-in implementation and live kernel checks pass; agent profile gate pending | [Typed API, runner enforcement and flavor/MCP mapping](AGYN-RESOURCES.md) pass source tests. Real credential-free Pods demonstrate CPU throttling, bounded OOM, supporting cgroups and neighbor progress with confirmed cleanup. Stock Agyn profiles remain unbounded; combined deployment, real-agent continuation, aggregate admission/accounting and sizing remain required. |
 | Startup reliability | Unexplained failure remains | One live workload became FAILED during setup before fault injection, with no reason exposed by Gateway. The accepted request was quarantined and cleanup confirmed removal. Passing fresh fixtures do not explain that failure; improve diagnosability and investigate it before release. |
 | Operations | Pending; local test deployment restoration verified | Eight subprocess tests cover restoration on success/failure, parallel scenario selection, missing-policy/busy-lab refusal, private patches and preservation of external edits. Production admission/backpressure, graceful draining, readiness, backup/restore, schema migration, retention and disaster recovery still need acceptance. |
-| Upstream contribution | Six focused branches; proposal drafted | Three daemon branches plus independent orchestrator pause-policy `7a6c8ec` and confirmed-removal `230977d`/volume-retention `e0f57d8` branches; opt-in runner ingress chart `e914f23` has Helm and live pod-network checks. Ordinary daemon/orchestrator Go suites and documented focused race checks pass; unrelated upstream race-test failures remain disclosed. No upstream PR submitted yet. |
+| Upstream contribution | Nine focused branches; proposal drafted | Existing daemon/lifecycle/ingress branches plus typed resource API `a760da3`, runner `1e7def5` and orchestrator `d732aa9`. Resource checks include Buf compatibility, ordinary Go suites, full runner and assembler race suites, and live kernel containment. Unrelated upstream race-test failures remain disclosed. No upstream PR submitted yet. |
 
 Native session persistence is required for correct continuation. Bulk session
 analytics, auto-improvement pipelines and prompt/tool customization UI are next
@@ -59,6 +59,7 @@ claim of multi-node HA.
 - [Gated live integration and reproduction](AGYN-REPORTING.md)
 - [Network enforcement failure, repair and acceptance](AGYN-NETWORK.md)
 - [Live parallel tasks and same-task FIFO](AGYN-PARALLEL.md)
+- [Compute resource enforcement and remaining profile acceptance](AGYN-RESOURCES.md)
 - [Contribution guide and patch evidence](CONTRIBUTING-AGYN.md)
 
 - [A2A specification](https://a2a-protocol.org/latest/specification/)

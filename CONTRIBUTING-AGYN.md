@@ -133,6 +133,41 @@ Keep the CNI enforcement incident separate from this chart proposal: adding a
 NetworkPolicy cannot repair a controller that is not enforcing policies. Do not
 describe the local K3s restart as a permanent bootstrap or runtime-code fix.
 
+## Compute Resource Contract
+
+Three new focused branches implement opt-in CPU/memory allocations without
+putting A2A or model-specific behavior in the runner or orchestrator:
+
+- API: [spk-ai/api](https://github.com/spk-ai/api/tree/feat/container-resource-limits),
+  `a760da3`, based on `50ef648`. Add typed `ContainerSpec.resources` with the
+  required `compute-resources` capability as its compatibility guard.
+- Runner: [spk-ai/k8s-runner](https://github.com/spk-ai/k8s-runner/tree/feat/container-resource-limits),
+  `1e7def5`, based on `baadc75`. Require complete main bounds, validate before
+  Kubernetes access, apply explicit operator defaults to all supporting roles,
+  and advertise the capability only when enforcement is configured.
+- Orchestrator: [spk-ai/agents-orchestrator](https://github.com/spk-ai/agents-orchestrator/tree/feat/container-resource-limits),
+  `d732aa9`, based on `ae7d0bf`. Pass selected flavor/MCP bounds only for opted-in
+  agents. Preserve legacy behavior and keep the A2A controller unchanged.
+
+Each branch is named `feat/container-resource-limits` and is pushed. API changes
+must land/publish before downstream default BSR builds work; READMEs include
+local API generation for reviewing the dependent consumers. No upstream PR is
+submitted. Existing repository licenses are retained.
+
+Buf lint/breaking, ordinary Go suites, full runner race tests and assembler race
+tests pass. A real credential-free Kubernetes test verifies cgroups, CPU
+throttling, OOM handling and neighbor progress. The combined Agyn resource-profile
+deployment is **not yet live-tested**. See [exact evidence and remaining
+acceptance](AGYN-RESOURCES.md). These allocations do not establish whole-task
+quotas or sandbox hardening.
+
+`lab/resource-integration` branches preserve the existing runner ingress and
+orchestrator lifecycle/removal patches for subsequent acceptance, not for
+bundling into upstream PRs. Runner `4dd12a8` and orchestrator `5edf8a4` are pushed;
+ordinary combined Go suites and runner Helm checks pass. The combined
+orchestrator race suite passes with the previously documented unrelated test
+excluded. All 62 standalone lab tests remain passing.
+
 ## Proposed Subsequent Contributions
 
 | Review unit | Suggested home | Boundary |

@@ -140,10 +140,30 @@ runner reporting, billing/confirmation separation, retry durability and the
 reopening constraint. No deployed database was changed. These tests do not prove
 Gateway forwarding or Kubernetes deletion.
 
-The API must be published before default BSR builds can consume it; the Runners
-and orchestrator READMEs describe local source generation. Gateway must also be
-regenerated. The coordinated images, deployment-wrapper changes and credential-free
-live failure acceptance are still pending. No upstream PR has been submitted.
+The API must be published before default BSR builds can consume it; the consumer
+READMEs describe local source generation. The coordinated images are now built
+and loaded using lab-only API `3c84a6a` and orchestrator `d77e7d5` integration
+branches. The expanded four-component wrapper passes 39 subprocess cases.
+Actual rollout, migration and live failure acceptance are still pending. No
+upstream PR has been submitted.
+
+### Gateway Wire Acceptance
+
+- Fork: [spk-ai/gateway](https://github.com/spk-ai/gateway).
+- Branch: `test/workload-removal-confirmation`, `6d7d432`, based on deployed
+  release `0.29.1` (`d2b485a`), with test-fake compatibility prerequisite `04bbf7d`.
+- Compare: <https://github.com/agynio/gateway/compare/main...spk-ai:gateway:test/workload-removal-confirmation>.
+- Full `go test -race ./...` passes after regeneration. Actual gRPC and Connect
+  HTTP transports verify the JSON confirmation field, independent billing end,
+  workload identity, pagination and caller metadata. The backend is a fake;
+  this is not deployed authentication, database or Pod-deletion acceptance.
+- Four existing test fakes embed their generated interfaces, matching the repo's
+  current pattern, because new internal API RPCs otherwise prevented compilation.
+  No production Gateway handler, permission or model-specific logic changed.
+
+The branch and identical `lab/removal-integration` are pushed. Existing AGPL
+licensing is retained. Generated API files and local image packaging are not in
+the proposed review unit; no upstream PR has been opened.
 
 ## Runner Ingress Isolation
 

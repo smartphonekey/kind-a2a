@@ -6,8 +6,9 @@ remove any of the gates below.
 
 Latest release blocker: a failed Pod exposed that Runners stamps `removedAt`
 for metering, independently of deletion. The old contract is not sufficient.
-The additive confirmation field passes source/real database checks, but its
-coordinated deployment and live failure proof are pending. See
+The additive confirmation field passes source, real database and Gateway wire
+checks. Coordinated images are built/loaded, but their deployment and live
+failure proof are pending. See
 [the incident and replacement contract](AGYN-REMOVAL.md).
 
 ## Objective
@@ -22,7 +23,7 @@ agent profile must not change the A2A controller or workflow implementation.
 
 | Gate | Status | Required evidence |
 | --- | --- | --- |
-| Existing behavior | Baseline preserved | Build and all 124 top-level tests pass on 2026-09-13 (135 including subtests), including the 10 baseline tests. |
+| Existing behavior | Baseline preserved | Build and all 136 top-level tests pass on 2026-09-13 (147 including subtests), including the 10 baseline tests. |
 | Durable task ownership and execution | Module/process and live restart verified | Transactional submissions, scoped idempotency, FIFO turns, fenced leases and six-process contention pass. Live controller SIGKILL plus pod replacement recovers a pinned execution without redispatch. Remaining failover/storage boundaries need verification. |
 | Authenticated protocol boundary | HTTP/SSE tests verified; deployment pending | Unauthorized and cross-owner send/get/list/cancel/events checks, disconnect/reconnect and subscription credential revocation pass. TLS deployment acceptance remains. |
 | Protocol conformance | Blocking/stream lifetime and real agent continuation verified; full audit pending | [Protocol acceptance](A2A-PROTOCOL.md) includes a real 79.326-second blocking send and two approximately 110-second streams across idle compute release and Pod replacement. Store-driven tests cover races, large snapshots, heartbeat/proxy behavior, bounded slow-reader cleanup, error envelopes and eight-reader fan-out. Error/validation conformance, production ingress and sustained load acceptance remain. |
@@ -36,8 +37,8 @@ agent profile must not change the A2A controller or workflow implementation.
 | Sandbox and network enforcement | Pod-network, parallel and lifecycle checks verified after local repair; full gate pending | The repeated credential-free preflight passed 92 checks; real concurrent tasks denied cross-pod TCP/UDP, and completion/interruption/cancellation have passing network-profile reruns. See [network evidence](AGYN-NETWORK.md) and [parallel scope](AGYN-PARALLEL.md). Adversarial hardening, cross-task overlay authorization and fail-closed bootstrap remain required. Unconfined is lab-only. |
 | Resource containment | Per-container bounds and real-agent lifecycle verified; aggregate gate pending | [Typed API, runner enforcement and flavor/MCP mapping](AGYN-RESOURCES.md) pass source tests and live kernel probes. Completed, parallel/FIFO, interrupted and cancellation tests pass using the bounded profile; nine Agyn Pods have matching specs/main cgroups. Aggregate admission/accounting, agent OOM recovery, production sizing and mandatory production-profile enforcement remain required. Stock deployment was restored after testing. |
 | Startup reliability | Unexplained failure remains | One live workload became FAILED during setup before fault injection, with no reason exposed by Gateway. The accepted request was quarantined and cleanup confirmed removal. Passing fresh fixtures do not explain that failure; improve diagnosability and investigate it before release. |
-| Operations | Pending; local streaming resilience and two-component restoration verified | 27 subprocess cases cover scenario forwarding, restoration, partial deployment, lost patch acknowledgement, rollout failure, external edits, identity changes and busy-lab refusal. Live restoration, capability withdrawal and zero leftover Pods were independently checked again after streaming acceptance. Bounded HTTP backpressure tests pass; production admission/load, graceful draining, readiness, backup/restore, schema migration, retention and disaster recovery still need acceptance. |
-| Upstream contribution | Fourteen focused branches; proposal drafted | New API `0125665` and Runners `890f759` confirmation branches, plus updated independent orchestrator branch `f83ce83`. Buf compatibility, ordinary Go, full Runners race and real PostgreSQL checks pass; orchestrator race checks retain the disclosed unrelated exclusion. Prior daemon/SDK/resource branches retain their separate evidence. No upstream PR submitted yet. |
+| Operations | Four-component wrapper source-tested; live rollout pending | 39 subprocess cases now cover required Runners/Gateway dependencies, ordered rollout/restoration, partial deployment, lost patch acknowledgement, failures, external edits, identity changes and busy-lab refusal. Earlier two-component live restoration remains separate evidence. A read-only audit found all 38 retained PVCs persistent with no TTL and paused/terminated owners. Production admission/load, graceful draining, readiness, backup/restore, migration rollout, retention and disaster recovery still need acceptance. |
+| Upstream contribution | Fifteen focused branches; proposal drafted | API `0125665`, Runners `890f759`, orchestrator `f83ce83` and new Gateway wire-test branch `6d7d432`. Combined API/orchestrator branches are pushed for local acceptance only. Buf compatibility, full Runners/Gateway race, real PostgreSQL and Gateway transport checks pass; orchestrator race checks retain the disclosed unrelated exclusion. Prior daemon/SDK/resource branches retain separate evidence. No upstream PR submitted yet. |
 
 Native session persistence is required for correct continuation. Bulk session
 analytics, auto-improvement pipelines and prompt/tool customization UI are next

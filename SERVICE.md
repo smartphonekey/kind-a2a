@@ -15,8 +15,9 @@ volumes. The worker does not create Kubernetes objects itself.
 The current driver requires the additive `removalConfirmedAt` contract in
 Runners, Gateway and the orchestrator. Stock Agyn and the earlier local
 integration images are incompatible: `removedAt` ends metering and can be set
-while a failed Pod still exists. Source and real database checks pass, but the
-coordinated rollout and live failure acceptance are pending. See
+while a failed Pod still exists. Source, real database and Gateway wire checks
+pass, and the coordinated images are built/loaded, but their rollout and live
+failure acceptance are pending. See
 [the incident and rollout requirements](AGYN-REMOVAL.md). Do not start new tasks
 on the old stack expecting them to settle with this driver.
 

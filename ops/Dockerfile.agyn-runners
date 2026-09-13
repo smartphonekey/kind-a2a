@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Local confirmation acceptance; preserve the deployed Runners 0.10.1 base.
+FROM ghcr.io/agynio/runners:0.10.1@sha256:091e12209f7f43f2efab1862203ec21db8c5e188dd07f33a0700ffe47b8d5563
+COPY --chown=10001:10001 runners /app/runners

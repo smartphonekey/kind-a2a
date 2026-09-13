@@ -1,0 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Local confirmation acceptance; preserve the deployed Gateway 0.29.1 base.
+FROM ghcr.io/agynio/gateway:0.29.1@sha256:348fe33054057cff03d21347eb89ca48dd8ff91029472e20a663f604adc5e35b
+COPY --chown=65532:65532 gateway /app/gateway

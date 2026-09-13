@@ -123,8 +123,9 @@ No Pod-level alpha resource feature is needed.
 ## Bounded Agent Profile
 
 This section records the earlier deployed profile, not a currently validated
-reproduction recipe. The old wrapper manages only two deployments; new Runners
-and Gateway image management and failure tests must be added as described in
+reproduction recipe. The wrapper now also requires and manages Runners/Gateway
+images, with 39 passing subprocess cases; its four-component live rollout has
+not yet been verified. The coordinated images and remaining checks are in
 [the rollout requirements](AGYN-REMOVAL.md).
 
 The operator wrapper now optionally deploys both combined images. It snapshots

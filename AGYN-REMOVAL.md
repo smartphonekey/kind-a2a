@@ -2,10 +2,12 @@
 # Workload Removal Confirmation
 
 Status: a live failure disproved the old timestamp contract. The additive API,
-Runners persistence, orchestrator, A2A driver and installer fixes pass source tests; the
-real PostgreSQL migration and persistence checks also pass. Coordinated image
-rollout and live fault acceptance are still pending. This is not a production
-release or a successful interrupted-turn test.
+Runners persistence, orchestrator, A2A driver and installer fixes pass source
+tests; the real PostgreSQL migration and Gateway wire checks also pass. The
+coordinated images are built and loaded into the local VM, and the expanded
+deployment wrapper is tested. Actual deployment, migration rollout and live
+fault acceptance are still pending. This is not a production release or a
+successful interrupted-turn test.
 
 ## Observed Failure
 
@@ -50,6 +52,7 @@ Billing semantics are preserved. Removal observation gets a separate field:
 | [API](https://github.com/spk-ai/api/tree/feat/workload-removal-confirmation) | `feat/workload-removal-confirmation`, `0125665` | Add optional `Workload.removal_confirmed_at` (28) and `UpdateWorkloadRequest.removal_confirmed_at` (9); document `removed_at` as metering end. |
 | [Runners](https://github.com/spk-ai/runners/tree/feat/workload-removal-confirmation) | `feat/workload-removal-confirmation`, `890f759` | Migration `0017`, scan/serialize the new field, terminal-only explicit updates, retain first confirmation on retries, prevent reopening confirmed workloads. |
 | [Orchestrator](https://github.com/spk-ai/agents-orchestrator/tree/fix/confirmed-workload-removal) | `fix/confirmed-workload-removal`, `f83ce83` | Track failed/stopped agents until confirmed absence; hold replacement and volume TTL; require the exact persisted confirmation ACK before identity cleanup. |
+| [Gateway](https://github.com/spk-ai/gateway/tree/test/workload-removal-confirmation) | `test/workload-removal-confirmation`, `6d7d432` after `04bbf7d` | Verify the generated gRPC-to-JSON path; update four existing test fakes for current API compatibility. No production handler changes. |
 | A2A service | `src/service/agyn-driver.ts` | Ignore billing end for release. Require all workload confirmations, including the pinned workload; an empty list after an acknowledged dispatch cannot establish release. |
 | Reporting installer | `src/service/agyn-reporting-installer.ts` | Do not hide failed/stopped unconfirmed predecessors when selecting the one running workload for setup. |
 
@@ -77,11 +80,22 @@ agent-instance tests do not establish that all sandbox paths use this contract.
   previously disclosed `TestGroupMembershipConsumerLoopRetriesWithoutBlocking`
   excluded; an unfiltered race-suite pass is not claimed. Focused removal/TTL
   race checks pass, including old-server and wrong-workload acknowledgements.
-- Lab: build and all 124 top-level tests pass (135 including subtests). Cases
+- Gateway: full `go test -race ./...` passes. A real gRPC client and Connect HTTP
+  handler preserve explicit confirmation separately from billing for failed and
+  stopped workloads. Identity, pagination and downstream caller metadata also
+  survive the wire round trip. The Runners backend is a fake, not the deployed
+  database, and this test does not exercise the public authentication boundary.
+- Lab: build and all 136 top-level tests pass (147 including subtests). Cases
   distinguish billing end from confirmation, empty and wrong-workload lists,
   mismatched images and incomplete/stale deployment rollouts. Five real installer
   subprocess cases against a fake Gateway verify that only confirmed predecessors
   may be ignored during workload selection; no terminal or model is started.
+- Deployment wrapper: all 39 subprocess cases pass. Runners and Gateway are now
+  required alongside the existing images. Dependencies roll out first and
+  restore last; partial deployment, lost patch ACKs, rollout failures, missing
+  images, external edits, replaced identities and newly busy workloads are
+  covered. No acceptance child starts after setup failure. Image-only targets
+  leave their entire existing environment untouched.
 - A direct credential-free invocation rejected a missing reviewed Runners image
   before Gateway credential lookup or fixture creation. No model call was made.
 
@@ -98,17 +112,62 @@ temporary Claude subscription, attachment and encrypted Agyn secret were deleted
 host authentication files were not changed. The native error's cause remains
 unclassified; do not call it the earlier 401 or count it as interrupted recovery.
 
+## Coordinated Integration Build
+
+The lab-only API branch `lab/removal-resource-integration` at `3c84a6a` combines
+the independent resource and confirmation contracts. The orchestrator branch of
+the same name at `d77e7d5` adds the new confirmation patch to its earlier resource
+integration. Both are pushed; focused contribution branches remain separate.
+Runners stays at `890f759`. Gateway is based on deployed release `0.29.1`
+(`d2b485a`), with only the test/documentation commits above. No upstream PR exists.
+
+All three consumers were regenerated from that exact API checkout. Runners full
+race tests and combined orchestrator race tests pass again, retaining the
+documented orchestrator exclusion. The orchestrator repository happens to track
+two generated LLM files; their regenerated hashes are recorded in the build
+evidence rather than committed as unrelated generated API churn.
+
+These local images are built and loaded, **not deployed**:
+
+| Operator variable | Image |
+| --- | --- |
+| `AGYN_LIVE_RUNNERS_IMAGE` | `a2a-agyn-runners:890f759-api3c84a6a` |
+| `AGYN_LIVE_GATEWAY_IMAGE` | `a2a-agyn-gateway:6d7d432-api3c84a6a` |
+| `AGYN_LIVE_ORCHESTRATOR_IMAGE` | `a2a-agyn-orchestrator:d77e7d5-api3c84a6a` |
+
+The existing bounded runner `a2a-agyn-runner:4dd12a8` and daemon/init
+`a2a-agynd-reporting-init:beb1f23` remain separate components. The new images
+preserve digest-pinned stock runtime bases and their non-root users. Each image's
+packaged binary was copied from a never-started, owned inspection container and
+matched against the build SHA-256; the container was then removed. This verifies
+packaging, not service startup or cluster authorization.
+
+Private build metadata, binary hashes, image IDs and load receipts are in
+`.state/agyn-removal-build-7oANrz/build.json` and `images.json`. Build commands use
+`CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w'`.
+Dockerfiles are `ops/Dockerfile.agyn-runners`, `ops/Dockerfile.agyn-gateway` and
+`ops/Dockerfile.agyn-orchestrator`; their contexts contain only the respective
+compiled binary. Native credentials and transcripts are not image inputs.
+
+A read-only pre-rollout audit matched all 38 existing PVCs to active tracked
+volumes, persistent definitions without TTL, and paused/terminated instances.
+Private identity/retention evidence is in
+`.state/agyn-removal-preflight-NLbe4Y/evidence.json`. This is a point-in-time audit,
+not an admission lock. Recheck it before shared deployment changes and compare
+the recorded PVC UIDs afterward. No retained PVC was changed by this build.
+
 ## Coordinated Rollout Required
 
-1. Review/publish the API contract and regenerate Runners, Gateway and orchestrator
-   code from it. For the bounded profile, combine the independent resource and
-   confirmation API branches in a lab-only integration branch.
+1. Review/publish the API contract before downstream default BSR builds can
+   consume it. Local coordinated generation/build is verified above; publication
+   and maintainer agreement are not claimed.
 2. Drain new A2A admission and audit existing workloads. Apply the additive
    Runners migration without backfilling confirmation from billing/status data.
-   Build and verify Runners/Gateway and combined orchestrator images together.
-3. Extend the operator deployment wrapper to manage the new Runners/Gateway
-   images with the same identity/conflict/rollout safeguards. Its existing
-   two-component restoration tests do not cover this new rollout.
+   The compiled migration has not been applied to the deployed platform database.
+3. Exercise the tested four-component deployment wrapper against the real idle
+   lab. Verify actual rollout and restoration, including the new Runners/Gateway
+   dependencies; subprocess simulations do not establish live recovery. Restoring
+   an older image does not remove the additive migration or its constraints.
 4. Run credential-free failure/deletion and old-server compatibility tests
    through Gateway and actual Pods before any further model acceptance. Observe
    absence independently; verify no replacement or PVC TTL before confirmation.

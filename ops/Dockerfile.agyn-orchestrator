@@ -1,4 +1,4 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Trusted-local lifecycle acceptance image; preserve the deployed runtime base.
-FROM ghcr.io/agynio/agents-orchestrator:0.23.0
+FROM ghcr.io/agynio/agents-orchestrator:0.23.0@sha256:82a3473f7ba660dc8e2743eef50463eb37a40412201797f50c511c33909fc1cf
 COPY --chown=10001:10001 orchestrator /app/orchestrator

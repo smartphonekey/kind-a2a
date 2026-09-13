@@ -9,6 +9,9 @@ assert.equal(process.env.AGYN_LIVE_ACCEPTANCE, "trusted-local");
 const image = process.env.AGYN_LIVE_ORCHESTRATOR_IMAGE;
 const initImage = process.env.AGYN_LIVE_INIT_IMAGE;
 assert(image && initImage, "explicit reviewed orchestrator and daemon integration images are required");
+const runnersImage = process.env.AGYN_LIVE_RUNNERS_IMAGE;
+const gatewayImage = process.env.AGYN_LIVE_GATEWAY_IMAGE;
+assert(runnersImage && gatewayImage, "explicit reviewed Runners and Gateway removal-confirmation images are required");
 const bounded = process.env.AGYN_LIVE_COMPUTE_RESOURCES === "true";
 assert(!process.env.AGYN_LIVE_COMPUTE_RESOURCES || bounded, "AGYN_LIVE_COMPUTE_RESOURCES must be true when set");
 const runnerImage = process.env.AGYN_LIVE_RUNNER_IMAGE;
@@ -29,6 +32,8 @@ const k = (args, input) => execFileSync("kubectl", ["--kubeconfig", kubeconfig, 
 const deployment = name => JSON.parse(k(["get", "deployment", name, "-n", "agyn-platform", "-o", "json"]));
 const container = (value, name) => value.spec.template.spec.containers.find(item => item.name === name);
 const targets = [
+  { name: "runners", image: runnersImage, managed: new Map() },
+  { name: "gateway", image: gatewayImage, managed: new Map() },
   ...(bounded ? [{ name: "k8s-runner", image: runnerImage, managed: new Map([["SUPPORTING_CONTAINER_RESOURCES", supportingResources]]) }] : []),
   { name: "agents-orchestrator", image, managed: new Map([["AGYND_CLI_INIT_IMAGE", initImage], ["STOP_INACTIVE_INSTANCES", "true"], ["STOP_TIMEOUT_SEC", "5"]]) }
 ].map(target => {
@@ -53,7 +58,7 @@ const patch = (target, current, targetImage, replacements) => {
   writeFileSync(patchFile, JSON.stringify([
     { op: "test", path: "/metadata/resourceVersion", value: current.metadata.resourceVersion },
     { op: "replace", path: `/spec/template/spec/containers/${index}/image`, value: targetImage },
-    { op: currentContainer.env ? "replace" : "add", path: `/spec/template/spec/containers/${index}/env`, value: env }
+    ...(target.managed.size ? [{ op: currentContainer.env ? "replace" : "add", path: `/spec/template/spec/containers/${index}/env`, value: env }] : [])
   ]), { mode: 0o600 });
   try { k(["patch", "deployment", target.name, "-n", "agyn-platform", "--type=json", `--patch-file=${patchFile}`]); }
   finally { rmSync(patchFile, { force: true }); }
@@ -70,7 +75,7 @@ try {
     patch(target, current, target.image, [...target.managed].map(([name, value]) => ({ name, value })));
     rollout(target.name);
   }
-  console.log(JSON.stringify({ kind: "live.deployed", image, initImage, runnerImage, bounded, directory }));
+  console.log(JSON.stringify({ kind: "live.deployed", image, initImage, runnerImage, runnersImage, gatewayImage, bounded, directory }));
   for (const scenario of scenarios) {
     const child = spawn(process.execPath, ["dist/live/agyn-reporting.js"], { stdio: "inherit", env: {
       ...process.env, AGYN_LIVE_SCENARIO: scenario === "completed" ? "" : scenario

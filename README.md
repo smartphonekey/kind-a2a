@@ -15,6 +15,10 @@ The earlier custom kind/Agent Sandbox/ACP implementation remains intact as a com
 
 The live Agyn installation uses CLI `0.19.0`, platform chart `0.72.1`, Codex runtime `0.147.0` and model `gpt-5.5`. Repository dependencies use A2A JS SDK `1.1.0`, MCP SDK `1.30.0`, ACP SDK `1.4.0`, Codex ACP `1.11.0`, and the legacy Kubernetes Agent Sandbox `v0.5.2` integration.
 
+The separate durable service now has [live-tested reporting and native-session
+recovery](AGYN-REPORTING.md) using two focused daemon patches. It remains a gated
+trusted-local integration; the legacy adapter and original deployment are preserved.
+
 The new [durable execution service](SERVICE.md) adds authenticated A2A routing,
 transactional queued turns, reporting MCP, bounded outcome checks and a recoverable
 worker. It is a development implementation with explicit [production gates](PRODUCTION.md),

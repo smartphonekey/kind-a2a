@@ -2,11 +2,43 @@
 
 Evidence below spans the preserved `kind-aira-a2a-lab` baseline and the new self-hosted Agyn backend. Each section identifies its environment; fake-agent tests and live-model evidence are deliberately separated.
 
-## Durable Service Foundation (2026-09-13)
+## Live Gated Reporting (2026-09-13)
+
+The new service now passes 38 deterministic/HTTP/subprocess tests and a separate
+real-model Agyn acceptance. This is still a trusted local lab, not production.
+The successful live run used native Codex `0.147.0`, model `gpt-5.5`, and the
+combined daemon patches at `9e24c78`. Neither the A2A controller nor workflow code
+contains the native agent configuration.
+
+| Check | Status | Evidence |
+| --- | --- | --- |
+| Real reporting delivery | PASS, LIVE | Scoped credential and pinned bundle delivered to the exact workload through TerminalGateway after raw-mode readiness. Codex called MCP progress/artifact/outcome tools. |
+| Missing outcome reminder | PASS, LIVE | Codex deliberately omitted its first outcome. Native Stop check `eed82cf5-56cb-48bf-8c86-1bf9556f3390` returned a reminder; the agent then reported `turn_done`. |
+| Same task continuation | PASS, LIVE | Task `701775c9-9739-4bd2-90c8-248ebaa4f1f0` ran two turns on instance `a744f063-95ae-402f-8c65-2a5d60c13a0a`, thread `0afcc7bd-a5be-4065-84c8-39c1d59bf72c`. |
+| Actual pod replacement | PASS, LIVE | Pod UIDs changed from `dd2a5e78-d995-4ec1-88ad-fae9d339060f` to `34c70cab-180f-4775-97d0-819c311a7e49`; PVC stayed `pv-a744f063-95a-ecbd362c-f87`. |
+| Native session persistence | PASS, LIVE | Both pods mapped to Codex session `01a09ac0-a07d-72d3-acae-8e318bc6b004` under `CODEX_HOME=/workspace/.codex`; HOME remained ephemeral. Operator inspection confirmed the matching native rollout and persisted proof file. |
+| Compute release | PASS, LIVE | Both turns returned `INPUT_REQUIRED` after removal evidence. Independent kubectl inspection found zero workload pods after cleanup. The original daemon image was restored. |
+| Runtime failure controls | PASS, GO/WIRE TESTS | Required-init failure stops later scripts; invalid mode and cancellation fail closed. Terminal wrong-identity, missing-ACK, nonzero-exit and disconnect checks reject delivery. Deliberately failed initialization still needs dedicated live fault injection. |
+| Interrupted turn | PENDING | This live run replaced pods only after completed turns. It does not establish safe retry of potentially completed side effects. |
+
+The successful machine-readable evidence is retained privately at
+`.state/agyn-reporting-live-kcBFHI/evidence.json`. Test cleanup cancels the A2A
+fixture and pauses its instance; state/PVCs are retained for inspection.
+
+Earlier attempts caught and corrected three provider-contract assumptions:
+32-character instance labels, GetThreads being limited to the caller's own
+identity, and inbox-driven pod startup. They also exposed that stock Agyn ignores
+init-script exit failures and that the workspace image has no Node. One ungated
+attempt started Codex before reporting was configured and was stopped. It is not
+counted as a successful gate test. Required-init is now a separate contribution
+patch, and the live test refuses to run without an explicitly selected integration
+image. The base daemon/Node additions are documented in [AGYN-REPORTING.md](AGYN-REPORTING.md).
+
+## Durable Service Foundation (2026-09-13, Earlier Milestone)
 
 The new `src/service/main.ts` entry point is a development service, not a completed
 production migration. The existing Agyn deployment and legacy controller remain
-unchanged. `npm test` builds first and passes all 35 tests, including the original
+unchanged at commit `5b8fee9`. At that milestone `npm test` passed 35 tests, including the original
 10 tests. Dependencies are pinned to A2A SDK `1.1.0` and MCP SDK `1.30.0`.
 
 | Check | Status | Evidence |
@@ -17,11 +49,11 @@ unchanged. `npm test` builds first and passes all 35 tests, including the origin
 | Reporting MCP | PASS, MCP HTTP | Official MCP client/server calls, execution-only credentials, ACK after store commit, exact retries, conflict/late report rejection and scoped token rotation. |
 | Stop check | PASS, SUBPROCESS | Real hook subprocess calls HTTP checker; at most two reminders even with the same native turn ID; missing credentials/outage return stop, not success. Durable checks survive store reopen. |
 | Worker recovery | PASS, SIMULATED PROVIDER | Lost dispatch ACK never resends; outcome-before-crash recovers to release; release failures retry; queued follow-up waits for removal evidence; outcome committed during a failed observation wins. |
-| Agyn driver | PASS, SIMULATED GATEWAY | Deterministic instance lookup, no create on unresolved recovery, reporting setup before send, pause/resume and explicit workload removal evidence. |
+| Agyn driver | SUPERSEDED BY LIVE CORRECTIONS | Simulations covered reconciliation and removal, but incorrectly assumed reporting could be installed before an inbox message woke the pod. The gated live integration above corrects this ordering. |
 | Service process | PASS, SUBPROCESS | Entry point binds real HTTP, rejects anonymous requests and exits cleanly on SIGTERM. No live work was dispatched by this test. |
 | Focused daemon patch | PASS, GO TESTS | Pushed `spk-ai/agynd-cli:fix/codex-home-persistence`, commit `c933329`; full ordinary tests and build pass, targeted Codex persistence race tests pass. The broader daemon race suite finds an unrelated unchanged shell-test cleanup race. |
-| Live Agyn MCP/hook delivery | PENDING | Operator installer contract exists, but it has not been installed or verified in a real Agyn runtime. |
-| Native session after pod replacement | PENDING | Daemon unit test replaces ephemeral HOME while retaining state. This is not a live native Codex session recovery test. |
+| Live Agyn MCP/hook delivery | SUBSEQUENTLY VERIFIED | See the gated live acceptance above. |
+| Native session after pod replacement | SUBSEQUENTLY VERIFIED | See the changed-pod/same-native-session evidence above. |
 | Interrupted Agyn daemon turn | PENDING | Controller simulations do not prove safe daemon inbox redelivery or side-effect retry after pod replacement. |
 | Hardened deployment and second live agent | PENDING | Network/sandbox enforcement, hard cancellation, operational recovery and a second live agent still require acceptance. |
 

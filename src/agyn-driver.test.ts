@@ -8,7 +8,7 @@ import { AgynClient } from "./agyn-client.js";
 import { AgynRuntimeDriver } from "./service/agyn-driver.js";
 import { DurableTaskStore } from "./service/task-store.js";
 
-test("Agyn driver: identity reconciliation, setup before send, and removal evidence beyond pause/status", async t => {
+test("Agyn driver: identity reconciliation, inbox wake before gated setup, and removal evidence beyond pause/status", async t => {
   const requests: string[] = [];
   let instance: Record<string, unknown> | undefined;
   let thread: Record<string, unknown> | undefined;
@@ -20,7 +20,10 @@ test("Agyn driver: identity reconciliation, setup before send, and removal evide
       let output: unknown;
       if (method === "ListInstances") output = { instances: instance ? [instance] : [] };
       else if (method === "CreateInstance") output = { instance: instance = { meta: { id: "instance" }, agentId: input.agentId, label: input.label, state: "AGENT_INSTANCE_STATE_ACTIVE" } };
-      else if (method === "GetThreads") output = { threads: thread ? [thread] : [] };
+      else if (method === "GetThreads") {
+        assert.equal(input.participantId, "human");
+        output = { threads: [...(thread ? [thread] : []), { id: "unrelated-thread", participants: [{ id: "human" }, { id: "other-instance" }] }] };
+      }
       else if (method === "CreateThread") output = { thread: thread = { id: "thread", participants: input.participants.map((p: { participantId: string }) => ({ id: p.participantId })) } };
       else if (method === "GetInstance") output = { instance };
       else if (method === "PauseInstance") output = { instance: instance = { ...instance, state: "AGENT_INSTANCE_STATE_PAUSED" } };
@@ -43,14 +46,17 @@ test("Agyn driver: identity reconciliation, setup before send, and removal evide
   await assert.rejects(driver.provision(claim.execution, true, signal), /acknowledgement/);
   assert.equal(requests.includes("CreateInstance"), false);
   const binding = await driver.provision(claim.execution, false, signal);
+  assert.equal(instance!.label, submitted.task.id.replaceAll("-", ""));
+  assert.match(String(instance!.label), /^[a-z0-9_-]{1,32}$/);
   store.bind(claim.lease, binding);
   assert.deepEqual(await driver.provision(claim.execution, true, signal), binding);
   assert.equal(requests.filter(method => method === "CreateInstance").length, 1);
   assert.equal(requests.filter(method => method === "CreateThread").length, 1);
   await driver.prepare(store.execution(submitted.execution.id)!, signal);
+  assert(!requests.includes("SetupReporting"));
   const dispatch = store.beginDispatch(claim.lease);
   assert.equal(await driver.dispatch(dispatch, signal), "request");
-  assert(requests.indexOf("SetupReporting") < requests.indexOf("SendMessage"));
+  assert(requests.indexOf("SendMessage") < requests.indexOf("SetupReporting"));
   assert.deepEqual(await driver.release(dispatch, signal), { stopped: false });
   removed = true;
   assert.deepEqual(await driver.release(dispatch, signal), { stopped: true });

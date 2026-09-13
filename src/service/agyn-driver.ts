@@ -17,7 +17,7 @@ export class AgynRuntimeDriver implements RuntimeDriver {
 
   async provision(execution: Execution, recovering: boolean, signal: AbortSignal): Promise<Runtime> {
     const agentId = this.profile(execution.profileId).agentId;
-    const label = `a2a-${execution.taskId}`;
+    const label = instanceLabel(execution.taskId);
     const matches = (await this.client.instances(agentId, signal)).filter(instance => instance.label === label);
     if (matches.length > 1) throw new Error("ambiguous provisioned instances");
     if (!matches.length && recovering) throw new Error("provision acknowledgement missing; manual reconciliation required");
@@ -38,8 +38,6 @@ export class AgynRuntimeDriver implements RuntimeDriver {
     if (instance.agentId !== this.profile(execution.profileId).agentId) throw new Error("pinned agent class does not match the runtime");
     if (instance.state === "AGENT_INSTANCE_STATE_PAUSED") await this.client.resumeInstance(runtime.instanceId, signal);
     else if (instance.state !== "AGENT_INSTANCE_STATE_ACTIVE") throw new Error("runtime cannot resume");
-    // Operator-provided setup installs execution-scoped reporting outside prompts and artifacts.
-    await this.setup(execution, signal);
   }
 
   async dispatch(execution: Execution, signal: AbortSignal): Promise<string> {
@@ -47,6 +45,9 @@ export class AgynRuntimeDriver implements RuntimeDriver {
     const prompt = execution.message.parts.map(part => part.content?.value).join("\n");
     const request = await this.client.sendMessage(runtime.threadId, prompt, signal);
     if (!request.id || request.threadId !== runtime.threadId) throw new Error("invalid dispatch acknowledgement");
+    // Agyn starts a pod only for an inbox item. A trusted init gate must prevent
+    // agent execution until setup installs reporting in that exact workload.
+    await this.setup(execution, signal);
     return request.id;
   }
 
@@ -62,7 +63,7 @@ export class AgynRuntimeDriver implements RuntimeDriver {
 
   async release(execution: Execution, signal: AbortSignal): Promise<{ stopped: boolean }> {
     const instances = execution.runtime ? [await this.client.getInstance(execution.runtime.instanceId, signal)]
-      : (await this.client.instances(this.profile(execution.profileId).agentId, signal)).filter(instance => instance.label === `a2a-${execution.taskId}`);
+      : (await this.client.instances(this.profile(execution.profileId).agentId, signal)).filter(instance => instance.label === instanceLabel(execution.taskId));
     // A lost creation acknowledgement with no visible instance is not proof that creation never happened.
     if (!instances.length) return { stopped: false };
     let stopped = true;
@@ -88,4 +89,10 @@ export class AgynRuntimeDriver implements RuntimeDriver {
     if (!profile) throw new Error("pinned runtime profile is unavailable");
     return profile;
   }
+}
+
+function instanceLabel(taskId: string): string {
+  // Agyn handle suffixes are at most 32 characters. Preserve all UUID bits.
+  if (!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(taskId)) throw new Error("invalid task UUID");
+  return taskId.replaceAll("-", "");
 }

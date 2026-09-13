@@ -28,13 +28,31 @@ env -u CODEX_HOME go test -race ./internal/daemon \
 These checks passed locally. Full `go test -race ./internal/daemon` additionally
 found a race in the unchanged `shells.go` title refresher and `shells_test.go`
 cleanup globals. That broader suite is not passing; do not describe it as such.
-The persistence test simulates replacement of ephemeral HOME. Actual pod and
-native-Codex-session continuation is a separate acceptance test, still pending.
+The persistence unit test simulates replacement of ephemeral HOME. A separate
+live Agyn test now also verifies changed pod UIDs with the same native session
+and PVC; see [the integration evidence](AGYN-REPORTING.md).
 
 Suggested PR description: explain the hardcoded path problem, the backward
 compatibility rule, per-instance storage requirement, and the tests above. Do not
 bundle A2A protocol handling, transcript analytics, runtime-image upgrades or
 shell test fixes into this PR.
+
+### Required Init Scripts
+
+A second independent daemon patch addresses a behavior discovered during live
+integration: nonzero init exits are logged but otherwise ignored. It adds the
+operator opt-in `AGYN_INIT_SCRIPTS_REQUIRED=true`, preserves the default behavior,
+and treats context cancellation as a real setup failure in either mode.
+
+- Branch: `feat/required-init-scripts`, commit `591543b`.
+- Compare: <https://github.com/agynio/agynd-cli/compare/main...spk-ai:agynd-cli:feat/required-init-scripts>
+- `env -u CODEX_HOME go test ./...` and focused
+  `go test -race ./internal/daemon -run 'InitScript' -count=1` passed.
+- The branch is pushed; no upstream PR has been submitted.
+
+This patch contains no A2A, MCP or terminal-delivery logic. The local integration
+branch combines it with persistence only to test the runnable system. The lab's
+Node/init-image packaging is not part of either proposed daemon PR.
 
 ## Proposed Subsequent Contributions
 

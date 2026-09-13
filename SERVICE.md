@@ -19,7 +19,7 @@ The service requires `A2A_SERVICE_CONFIG_FILE`, an operator-owned JSON file:
   "environmentProfile": "trusted-local",
   "dbPath": "/absolute/private/service/tasks.sqlite",
   "credentialsFile": "/absolute/private/service/credentials.json",
-  "reportingSetupExecutable": "/absolute/operator/install-execution-reporting",
+  "reportingSetupExecutable": "/absolute/checkout/dist/service/agyn-reporting-installer.js",
   "host": "127.0.0.1",
   "port": 8083,
   "publicUrl": "http://127.0.0.1:8083",
@@ -82,10 +82,15 @@ bounded artifact-update frames. `GetTask` provides the stored history/artifacts.
 
 ## Reporting Setup Contract
 
-Live installation is not yet provided. The entry point deliberately requires an
-operator installer rather than silently dispatching work without reporting.
-Before dispatch, it invokes `reportingSetupExecutable` directly, without a shell,
-passing one JSON document on stdin:
+The Agyn installer is now implemented and live-tested with the gated local
+environment in [AGYN-REPORTING.md](AGYN-REPORTING.md). The daemon must include the
+required-init patch and the environment must opt in. Stock Agyn logs failed init
+scripts and continues, so an init script alone is NOT a startup safety gate.
+
+Agyn only starts an agent pod after an inbox message arrives. The service records
+dispatch intent, sends the message once, then invokes `reportingSetupExecutable`
+directly, without a shell, passing one JSON document on stdin. The trusted init
+gate holds the daemon before Codex starts until reporting is configured:
 
 ```json
 {
@@ -97,7 +102,7 @@ passing one JSON document on stdin:
 }
 ```
 
-The installer must configure the exact runtime's MCP endpoint and stop check,
+The installer configures the exact runtime's MCP relay and stop check,
 without putting the token into prompts, transcripts, command arguments or logs.
 It must be idempotent, finish within 120 seconds, and return only:
 
@@ -105,22 +110,33 @@ It must be idempotent, finish within 120 seconds, and return only:
 {"executionId":"execution-id","instanceId":"agyn-instance-id","reportingConfigured":true}
 ```
 
-An installer acknowledgement is not acceptance evidence by itself. Verify real
-MCP discovery, calls and hook execution in the target workload. Agyn-native
-delivery using trusted workload identity is an open architecture question; a
-generic installer subprocess is a local integration boundary, not a proposed
-Agyn public API.
+It waits for the instance's one live workload, then uses Agyn's authenticated
+TerminalGateway with an immutable argv command and a short-lived WebSocket
+ticket. The receiver disables terminal echo and acknowledges the instance,
+workload and pinned runtime digest before accepting any credential bytes. The
+token is written to a private, ephemeral file, not the task PVC. The gate checks
+the authenticated execution status and installs the managed MCP/Stop config
+before releasing startup. The relay uses the official MCP SDK over stdio and
+Streamable HTTP; no new A2A or MCP wire format is introduced.
+
+The installer ACK requires exact execution/instance identity plus a successful
+remote exit. An ambiguous send/setup is quarantined, never automatically resent.
+Live MCP calls, a native Stop reminder, pod removal and same-session continuation
+passed, independently of the installer ACK. Native workload-identity delivery
+remains an architecture question; this terminal-based installer is an explicit
+trusted-local boundary, not a proposed Agyn public API.
 
 The remote stateless Streamable HTTP MCP endpoint is `/reporting/mcp`. Its bearer
 credential is bound to exactly one execution and instance. It cannot call A2A
 methods or report on other executions. Tools are `report_progress`,
 `report_artifact`, `report_outcome` and `get_execution_status`.
 
-The Codex hook executable is `node dist/reporting/stop-hook.js`. It reads native
+The standalone Codex hook executable is `node dist/reporting/stop-hook.js`. It reads native
 Stop input from stdin and `REPORTING_CONFIG_FILE`, a `0600` JSON file containing
 `url` and `token`. HTTPS is required unless `allowInsecureLocal: true` is explicitly
 set for a trusted lab. Register it through a trusted runtime-managed hook layer;
-an untrusted repository must not be able to replace this configuration. It
+an untrusted repository must not be able to replace this configuration. The lab's
+root agent can still modify runtime files, so this is not yet a hardened boundary. It
 reminds at most twice, then requests a stop and controller reconciliation.
 
 ## Recovery And Operations
@@ -147,6 +163,8 @@ reminds at most twice, then requests a stop and controller reconciliation.
   shared filesystem. This is not multi-node HA. Backup/restore, schema migration,
   deletion/retention and disaster recovery remain unverified.
 
-An agent daemon can retry or redeliver work independently of this service. Until
-its interrupted-turn execution journal is tested, controller fencing must not be
-described as exactly-once execution or safe automatic side-effect recovery.
+An agent daemon can retry or redeliver work independently of this service. The
+ephemeral startup gate prevents an unprepared replacement from starting Codex,
+but interrupted-turn fault injection and an execution journal remain required.
+Controller fencing and completed-turn recovery must not be described as
+exactly-once execution or safe automatic side-effect recovery.

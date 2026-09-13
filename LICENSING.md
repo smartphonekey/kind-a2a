@@ -10,4 +10,6 @@ The contribution in the `agynd-cli` fork remains under that repository's license
 
 The service and reporting documentation added with this implementation is also
 AGPL-3.0-only: `SERVICE.md`, `PRODUCTION.md`, `CONTRIBUTING-AGYN.md`, and
-`docs/agyn-a2a-proposal.md`.
+`docs/agyn-a2a-proposal.md`, and `AGYN-REPORTING.md`. New integration scripts and
+the local init-image Dockerfile carry the same SPDX header. Third-party code in
+the generated runtime bundle retains its dependency licenses.

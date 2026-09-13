@@ -4,7 +4,7 @@
   "version": "0.4.0",
   "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node scripts/build-reporting.mjs",
     "start:controller": "node dist/controller.js",
     "start:agyn": "./scripts/start-agyn.sh",
     "start:service": "node dist/service/main.js",
@@ -24,11 +24,15 @@
     "@kubernetes/client-node": "1.3.0",
     "@modelcontextprotocol/sdk": "1.30.0",
     "express": "5.1.0",
+    "smol-toml": "1.8.0",
+    "ws": "8.21.3",
     "zod": "3.25.76"
   },
   "devDependencies": {
     "@types/express": "5.0.1",
     "@types/node": "22.15.3",
+    "@types/ws": "8.18.1",
+    "esbuild": "0.28.2",
     "typescript": "5.8.3"
   }
 }

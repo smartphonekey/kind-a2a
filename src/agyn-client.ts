@@ -60,7 +60,9 @@ export class AgynClient {
   }
 
   async instanceThreads(instanceId: string, signal?: AbortSignal): Promise<AgynThread[]> {
-    return this.pages<AgynThread>("ThreadsGateway", "GetThreads", { participantId: instanceId }, "threads", signal);
+    // GetThreads only permits querying the caller's own participant identity.
+    const threads = await this.pages<AgynThread>("ThreadsGateway", "GetThreads", { participantId: this.identityId }, "threads", signal);
+    return threads.filter(thread => thread.participants.some(participant => participant.id === instanceId));
   }
 
   async createInstanceThread(instanceId: string, signal?: AbortSignal): Promise<AgynThread> {
@@ -71,6 +73,12 @@ export class AgynClient {
 
   async workloads(instanceId: string, signal?: AbortSignal): Promise<AgynWorkload[]> {
     return this.pages<AgynWorkload>("RunnersGateway", "ListWorkloadsByAgentInstance", { agentInstanceId: instanceId }, "workloads", signal);
+  }
+
+  async terminalSession(workloadId: string, argv: string[], signal?: AbortSignal): Promise<{ ticket: string; websocketUrl: string }> {
+    return this.call("TerminalGateway", "CreateTerminalSession", {
+      workloadId, containerName: "main", kind: "SESSION_KIND_EXEC", command: { argv: { argv } }
+    }, signal);
   }
 
   private async pages<T>(service: string, method: string, body: Record<string, unknown>, field: string, signal?: AbortSignal): Promise<T[]> {

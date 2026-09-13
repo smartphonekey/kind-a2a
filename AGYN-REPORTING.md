@@ -54,6 +54,8 @@ behavior is opt-in in the contribution patch, retaining existing defaults.
 3. The required init script creates a private, ephemeral gate and waits. Re-entry
    in the same container fails; it cannot silently replay the inbox.
 4. The installer finds the bound workload and connects through TerminalGateway.
+   Its receiver waits at most 30 seconds for an absent init gate; RUNNING alone
+   does not establish gate readiness. Unsafe or mismatched gates fail immediately.
    No Kubernetes client or cluster-admin credential is used for delivery.
 5. After a verified raw-mode readiness frame, it streams the digest-pinned
    runtime and execution credential on stdin. No token is put in argv or chat.
@@ -67,6 +69,10 @@ behavior is opt-in in the contribution patch, retaining existing defaults.
    deletion was accepted, or even that the runner became unreachable. The patch
    checks runner inspection before recording removal and retains unremoved
    failures so a replacement cannot skip their cleanup.
+   An acknowledged non-canceled outcome lets native Stop finish normally while
+   compute is releasing; it must not write a false cancellation notice into the
+   resumable conversation. Actual cancellation and unacknowledged release still
+   stop, with notices scoped to the execution.
 8. The daemon journals intent before invoking any SDK. An ambiguous pending record
    blocks automatic retries. Only this workload's allowed message can execute;
    explicitly retired predecessors are acknowledged without running the agent.

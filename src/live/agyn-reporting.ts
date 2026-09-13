@@ -18,6 +18,7 @@ import { runParallelAcceptance } from "./agyn-parallel.js";
 import { assertCgroupComputeBounds, assertPodComputeBounds, parseComputeBounds, type ComputeBounds } from "./resource-proof.js";
 import { observeA2aStream, assertStreamMatchesDurable, type StreamProbe } from "./a2a-stream-proof.js";
 import { serviceCard } from "../service/card.js";
+import { claudeNativeProbe, liveAgentProfileSchema, nativeIdentities, persistentAgentEnv } from "./agent-profile.js";
 
 if (process.env.AGYN_LIVE_ACCEPTANCE !== "trusted-local") throw new Error("Set AGYN_LIVE_ACCEPTANCE=trusted-local to run real-model tests");
 const interrupted = process.env.AGYN_LIVE_SCENARIO === "interrupted";
@@ -38,7 +39,7 @@ const supportingBounds = bounded ? parseComputeBounds(JSON.parse(process.env.AGY
 const inspectorImage = process.env.AGYN_LIVE_INSPECTOR_IMAGE;
 if (cancellation) assert(inspectorImage && /@sha256:[a-f0-9]{64}$/.test(inspectorImage), "cancellation requires a digest-pinned Node inspector image");
 const expectedImage = process.env.AGYN_LIVE_INIT_IMAGE;
-if (!expectedImage) throw new Error("AGYN_LIVE_INIT_IMAGE must identify the reviewed required-init/CODEX_HOME integration image");
+if (!expectedImage) throw new Error("AGYN_LIVE_INIT_IMAGE must identify the reviewed required-init/session-persistence integration image");
 const kubeconfig = resolve(process.env.AGYN_KUBECONFIG ?? ".state/agyn-kubeconfig");
 const networkTemplate = process.env.AGYN_LIVE_RUNNER_CHART ? execFileSync("helm", ["template", "a2a-network-proof",
   resolve(process.env.AGYN_LIVE_RUNNER_CHART), "--set", "workloadIngressNetworkPolicy.enabled=true",
@@ -67,6 +68,14 @@ const bundle = readFileSync(new URL("../reporting/runtime.mjs", import.meta.url)
 const gate = readFileSync(new URL("../../scripts/agyn-execution-gate.cjs", import.meta.url), "utf8");
 const templateId = process.env.AGYN_LIVE_TEMPLATE_ENVIRONMENT ?? "618e9cec-45a5-4b9d-8c28-91d40f053b65";
 const { environment: template } = await call("AgentsGateway", "GetEnvironment", { id: templateId });
+const templateAttachments = await call("LLMGateway", "ListSubscriptionAttachments", { organizationId: who.organization, environmentId: templateId });
+const agentProfile = liveAgentProfileSchema.parse(process.env.AGYN_LIVE_AGENT_PROFILE_FILE
+  ? JSON.parse(readFileSync(resolve(process.env.AGYN_LIVE_AGENT_PROFILE_FILE), "utf8"))
+  : { version: 1, sdk: "codex", model: "gpt-5.5", runtimeImageId: template.agentRuntimeImageId,
+    runtimeImageTag: template.agentRuntimeImageTag, subscriptionId: templateAttachments.subscriptionAttachments?.[0]?.subscriptionId });
+const { subscription: selectedSubscription } = await call("LLMGateway", "GetSubscription", { id: agentProfile.subscriptionId });
+assert.equal(selectedSubscription.vendor, agentProfile.sdk === "claude" ? "VENDOR_ANTHROPIC" : "VENDOR_OPENAI", "subscription vendor does not match the selected agent");
+const profileId = `${agentProfile.sdk}-gated-live-v1`;
 if (bounded) {
   assert(networkTemplate, "resource acceptance requires explicit network policy");
   const runnerDeployment = JSON.parse(execFileSync("kubectl", ["--kubeconfig", kubeconfig, "get", "deployment", "k8s-runner", "-n", "agyn-platform", "-o", "json"], { encoding: "utf8", timeout: 10_000 }));
@@ -96,35 +105,32 @@ if (bounded) {
 const { environment } = await call("AgentsGateway", "CreateEnvironment", {
   organizationId: who.organization, name: `a2a-reporting-${suffix}`, runnerId: template.runnerId, flavor: template.flavor,
   workspaceImageId: template.workspaceImageId, workspaceImageTag: template.workspaceImageTag,
-  agentRuntimeImageId: template.agentRuntimeImageId, agentRuntimeImageTag: template.agentRuntimeImageTag,
-  llmMode: "LLM_MODE_NATIVE", llmAllowedModels: ["gpt-5.5"], persistentShells: false, availability: "ENVIRONMENT_AVAILABILITY_PRIVATE"
+  agentRuntimeImageId: agentProfile.runtimeImageId, agentRuntimeImageTag: agentProfile.runtimeImageTag,
+  llmMode: "LLM_MODE_NATIVE", llmAllowedModels: [agentProfile.model], persistentShells: false, availability: "ENVIRONMENT_AVAILABILITY_PRIVATE"
 });
 const environmentId = environment.meta.id;
 await call("AgentsGateway", "CreateVolume", { environmentId, persistent: true, name: "task-workspace", mountPath: "/workspace", size: "1Gi" });
-for (const [name, value] of Object.entries({ CODEX_HOME: "/workspace/.codex", AGYN_INIT_SCRIPTS_REQUIRED: "true",
+for (const [name, value] of Object.entries({ ...persistentAgentEnv(agentProfile.sdk), AGYN_INIT_SCRIPTS_REQUIRED: "true",
   AGYN_INBOX_JOURNAL_DIR: "/workspace/.agyn/inbox-journal", AGYN_INBOX_CONTROL_FILE: "/run/agyn-execution/inbox-control.json",
   A2A_REPORTING_RUNTIME_SHA256: createHash("sha256").update(bundle).digest("hex") })) {
   await call("AgentsGateway", "CreateEnv", { environmentId, name, value });
 }
-await call("AgentsGateway", "CreateInitScript", { environmentId, description: "Trusted-local execution reporting gate; fail closed before Codex starts",
+await call("AgentsGateway", "CreateInitScript", { environmentId, description: "Trusted-local execution reporting gate; fail closed before the agent starts",
   script: `/agyn/bin/node <<'AGYN_EXECUTION_GATE'\n${gate}\nAGYN_EXECUTION_GATE\n` });
 const attachments = await call("LLMGateway", "ListSubscriptionAttachments", { organizationId: who.organization, environmentId });
 // Resolve only the existing subscription reference; never read or copy its credential.
-const templateAttachments = await call("LLMGateway", "ListSubscriptionAttachments", { organizationId: who.organization, environmentId: templateId });
-const subscription = templateAttachments.subscriptionAttachments?.[0];
-assert(subscription?.subscriptionId, "template has no subscription");
 assert.equal(attachments.subscriptionAttachments?.length ?? 0, 0);
-await call("LLMGateway", "CreateSubscriptionAttachment", { environmentId, subscriptionId: subscription.subscriptionId });
+await call("LLMGateway", "CreateSubscriptionAttachment", { environmentId, subscriptionId: agentProfile.subscriptionId });
 const { agent } = await call("AgentsGateway", "CreateAgent", { organizationId: who.organization, environmentId,
   ...(bounded ? { capabilities: ["compute-resources"] } : {}),
-  name: `A2A Reporting Acceptance ${suffix}`, nickname: `a2a-reporting-${suffix}`, modelName: "gpt-5.5",
+  name: `A2A Reporting Acceptance ${suffix}`, nickname: `a2a-reporting-${suffix}`, modelName: agentProfile.model,
   idleTimeout: "10s", instanceIdleTtl: "24h", availability: "AGENT_AVAILABILITY_PRIVATE", finalMessage: "AGENT_FINAL_MESSAGE_DISCARD",
   configuration: JSON.stringify({ system_prompt: "Work only on the current task in /workspace. Report progress and artifacts with the execution_reporting MCP. Follow the task's acceptance-test instructions about when to report an outcome. In a stop-hook test, deliberately omit the first outcome, then obey the stop hook's reminder and call report_outcome. Use turn_done to retain the task for follow-up. After the outcome acknowledgement, perform no further work." })
 });
 const agentId = agent.meta.id;
 if (bounded) assert(agent.capabilities?.includes("compute-resources"), "fixture agent lost the required capability");
 await call("AgentsGateway", "SetEnvironmentRole", { environmentId, identityId: agentId, role: "ENVIRONMENT_ROLE_USER" });
-console.log(JSON.stringify({ kind: "live.fixture", environmentId, agentId }));
+console.log(JSON.stringify({ kind: "live.fixture", environmentId, agentId, agentProfile }));
 
 mkdirSync(resolve(".state"), { recursive: true, mode: 0o700 });
 const directory = mkdtempSync(resolve(".state/agyn-reporting-live-"));
@@ -141,7 +147,7 @@ const reportingUrl = `http://${process.env.AGYN_LIVE_HOST_IP ?? "192.168.5.2"}:$
 writeFileSync(configFile, JSON.stringify({ environmentProfile: "trusted-local", dbPath: join(directory, "tasks.sqlite"), credentialsFile,
   reportingSetupExecutable: new URL("../service/agyn-reporting-installer.js", import.meta.url).pathname, publicUrl: base,
   reportingUrl, host: "0.0.0.0", port: address.port,
-  defaultProfile: "codex-gated-live-v1", profiles: [{ id: "codex-gated-live-v1", agentId }], concurrency: 2, turnTimeoutMs: parallel ? 300_000 : 180_000 }), { mode: 0o600 });
+  defaultProfile: profileId, profiles: [{ id: profileId, agentId }], concurrency: 2, turnTimeoutMs: parallel ? 300_000 : 180_000 }), { mode: 0o600 });
 const startService = () => {
   const child = spawn(process.execPath, [new URL("../service/main.js", import.meta.url).pathname], { env: {
   PATH: process.env.PATH, HOME: process.env.HOME, NODE_EXTRA_CA_CERTS: process.env.NODE_EXTRA_CA_CERTS,
@@ -198,7 +204,7 @@ const inspectInstance = (instanceId: string): any[] => {
           const records=p=>fs.readdirSync(p).filter(n=>n.endsWith(".json")).map(n=>JSON.parse(fs.readFileSync(p+"/"+n,"utf8")));
           const control=fs.existsSync("/workspace/cancel-control.json")?JSON.parse(fs.readFileSync("/workspace/cancel-control.json","utf8")):null;
           let alive=false;if(control)try{process.kill(control.pid,0);alive=true;}catch{}
-          console.log(JSON.stringify({mapping:records("/workspace/.codex/agyn/thread-mapping"),
+          console.log(JSON.stringify({...${agentProfile.sdk === "claude" ? `(${claudeNativeProbe.toString()})()` : '{mapping:records("/workspace/.codex/agyn/thread-mapping")}'},
             cgroup:${bounded ? '{cpuMax:fs.readFileSync("/sys/fs/cgroup/cpu.max","utf8").trim(),memoryMax:fs.readFileSync("/sys/fs/cgroup/memory.max","utf8").trim()}' : "null"},
             journal:records("/workspace/.agyn/inbox-journal/"+process.env.AGENT_INSTANCE_ID),
             marker:fs.readFileSync("/workspace/reporting-proof.txt","utf8"),
@@ -206,6 +212,9 @@ const inspectInstance = (instanceId: string): any[] => {
             configured:fs.existsSync("/run/agyn-execution/configured.json")}));`],
         { encoding: "utf8", timeout: 5000, stdio: ["ignore", "pipe", "pipe"] }));
     } catch { continue; /* A starting or removed pod is not yet inspectable. */ }
+    state.native = nativeIdentities(agentProfile.sdk, state.mapping);
+    assert(state.native.every((identity: any) => identity.instanceId === instanceId), "native mapping belongs to another instance");
+    if (agentProfile.sdk === "claude") assert.equal(state.mapping[0].agent_id, agentId);
     if (bounded) {
       assertCgroupComputeBounds(state.cgroup, mainBounds!);
       resourceEvidence.pods[pod.metadata.uid] = { instanceId, name: pod.metadata.name, observedAt: new Date().toISOString(), bounds, cgroup: state.cgroup };
@@ -404,8 +413,7 @@ const runSingleTask = async () => {
     assert(snapshots[1]?.length && snapshots[2]?.length, "native session evidence was not captured");
     assert.notEqual(snapshots[1][0].uid, snapshots[2][0].uid, "follow-up must run in a recreated pod");
     assert.deepEqual(snapshots[1][0].pvc, snapshots[2][0].pvc, "task PVC changed");
-    const identity = (records: any[]) => records.map(record => ({ instanceId: record.instance_id, sessionId: record.codex_thread_id, createdAt: record.created_at_unix_ms }));
-    assert.deepEqual(identity(snapshots[1][0].mapping), identity(snapshots[2][0].mapping), "native session mapping changed");
+    assert.deepEqual(snapshots[1][0].native, snapshots[2][0].native, "native session identity changed");
     assert.equal(snapshots[2][0].marker, interrupted ? `${suffix}\n` : suffix, "follow-up repeated a side effect or changed the file");
     if (interrupted) assert.equal(snapshots[2][0].journal.find((record: any) => record.message_id === snapshots[1][0].journal[0].message_id)?.state, "ack_only", "old inbox request was not retired explicitly");
     if (streaming) {
@@ -475,7 +483,7 @@ try {
       if (networkFixtures && workloadsReleased) { await networkFixtures.close(); networkEvidence.cleanedUp = true; }
       else if (networkFixtures) networkEvidence.retained = "Workload cleanup was not confirmed; keep isolation policies until operator reconciliation";
     } finally {
-      writeFileSync(join(directory, "evidence.json"), JSON.stringify({ environmentId, agentId, tasks, scenario, snapshots, evidence, network: networkEvidence, resources: resourceEvidence, protocol: protocolEvidence }, null, 2), { mode: 0o600 });
+      writeFileSync(join(directory, "evidence.json"), JSON.stringify({ environmentId, agentId, agentProfile, tasks, scenario, snapshots, evidence, network: networkEvidence, resources: resourceEvidence, protocol: protocolEvidence }, null, 2), { mode: 0o600 });
     }
   }
 }

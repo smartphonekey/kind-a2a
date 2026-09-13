@@ -67,7 +67,15 @@ test("stop check: bounded reminders, cancellation precedence and native hook out
   const done = { ...status, outcome: { eventId: "done", kind: "outcome" as const, outcome: "turn_done" as const, message: "Done" } };
   assert.equal(evaluateStop(done, 0).action, "allow");
   assert.equal(evaluateStop({ ...done, canceled: true }, 0).action, "stop");
-  assert.equal(evaluateStop({ ...done, phase: "settled" }, 0).action, "stop");
+  for (const phase of ["running", "releasing", "settled"]) {
+    assert.deepEqual(codexStopOutput(evaluateStop({ ...done, phase }, 2)), {}, "acknowledged release is not cancellation");
+    assert.equal(evaluateStop({ ...done, phase, canceled: true }, 0).action, "stop");
+  }
+  for (const phase of ["queued", "uncertain", "unknown"]) assert.equal(evaluateStop({ ...done, phase }, 0).action, "stop");
+  assert.equal(evaluateStop({ ...status, phase: "releasing" }, 0).action, "stop");
+  for (const candidate of [status, { ...status, canceled: true }, { ...status, phase: "releasing" }]) {
+    assert(evaluateStop(candidate, 0).reason.includes(status.executionId), "a stop notice must name its execution");
+  }
   assert.deepEqual(codexStopOutput(evaluateStop(done, 0)), {});
 });
 

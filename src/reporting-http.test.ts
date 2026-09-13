@@ -55,6 +55,13 @@ test("reporting HTTP: official MCP client, execution-only credentials, rotation 
   const replacement = store.issueReportingCredential(one.task.execution.id, 60_000);
   assert.equal((await fetch(`${base}/reporting/status`, { headers: { authorization: `Bearer ${token}` } })).status, 401);
   assert.equal((await fetch(`${base}/reporting/status`, { headers: { authorization: `Bearer ${replacement}` } })).status, 200);
+  store.releasing(one.claimed.lease);
+  const stop = await fetch(`${base}/reporting/stop-check`, { method: "POST",
+    headers: { authorization: `Bearer ${replacement}`, "content-type": "application/json" }, body: JSON.stringify({ checkId: "after-outcome" }) });
+  assert.equal(stop.status, 200);
+  const decision = await stop.json() as { decision: { action: string }; codex: unknown };
+  assert.equal(decision.decision.action, "allow", "normal release poisoned the next native turn with a cancellation notice");
+  assert.deepEqual(decision.codex, {});
 });
 
 test("stop checks: durable bounded reminders, retry identity, cancellation precedence and private expiring credentials", t => {

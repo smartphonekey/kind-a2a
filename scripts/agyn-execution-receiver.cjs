@@ -7,9 +7,21 @@ const { setTimeout: delay } = require("node:timers/promises");
 const directory = "/run/agyn-execution";
 
 (async () => {
-  const stat = fs.lstatSync(directory);
-  if (!stat.isDirectory() || stat.mode & 0o077) throw new Error("private gate required");
-  const gate = JSON.parse(fs.readFileSync(`${directory}/gate.json`, "utf8"));
+  // Workload RUNNING can precede daemon initialization. Only absence is
+  // retryable; an unsafe, malformed or mismatched gate must still fail closed.
+  const gateDeadline = Date.now() + 30_000;
+  let gate;
+  while (!gate) {
+    try {
+      const stat = fs.lstatSync(directory);
+      if (!stat.isDirectory() || stat.mode & 0o077) throw new Error("private gate required");
+      gate = JSON.parse(fs.readFileSync(`${directory}/gate.json`, "utf8"));
+      if (!gate || typeof gate !== "object" || Array.isArray(gate)) throw new Error("invalid gate");
+    } catch (error) {
+      if (error.code !== "ENOENT" || Date.now() >= gateDeadline) throw error;
+      await delay(100);
+    }
+  }
   if (gate.instanceId !== process.env.AGENT_INSTANCE_ID || gate.workloadId !== process.env.WORKLOAD_ID) throw new Error("gate identity mismatch");
   if (fs.existsSync(`${directory}/received`)) throw new Error("gate already bound");
   if (!process.stdin.isTTY) throw new Error("terminal transport required");

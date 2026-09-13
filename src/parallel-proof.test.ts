@@ -81,7 +81,7 @@ test("parallel barrier timeout cannot masquerade as completion", async t => {
 
 const snapshot = (name: string): ParallelSnapshot => ({ taskId: `task-${name}`, executionId: `exec-${name}`,
   instanceId: `instance-${name}`, threadId: `thread-${name}`, profileId: "same-agent-profile", uid: `pod-${name}`,
-  pvc: [`pvc-${name}`], marker: `marker-${name}`, mapping: [{ instance_id: `instance-${name}`, codex_thread_id: `session-${name}` }] });
+  pvc: [`pvc-${name}`], marker: `marker-${name}`, native: [{ instanceId: `instance-${name}`, sessionId: `session-${name}` }] });
 
 test("parallel identity proof rejects shared runtime, PVC or native session", () => {
   const a = snapshot("a"); assertSeparateTasks(a, snapshot("b"));
@@ -89,7 +89,7 @@ test("parallel identity proof rejects shared runtime, PVC or native session", ()
     const b = snapshot("b"); b[key] = a[key]; assert.throws(() => assertSeparateTasks(a, b));
   }
   const pvc = snapshot("b"); pvc.pvc = a.pvc; assert.throws(() => assertSeparateTasks(a, pvc));
-  const session = snapshot("b"); session.mapping[0].codex_thread_id = a.mapping[0].codex_thread_id;
+  const session = snapshot("b"); session.native[0].sessionId = a.native[0].sessionId;
   assert.throws(() => assertSeparateTasks(a, session));
   const profile = snapshot("b"); profile.profileId = "different-agent"; assert.throws(() => assertSeparateTasks(a, profile));
 });

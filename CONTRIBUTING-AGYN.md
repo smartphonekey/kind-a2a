@@ -192,6 +192,25 @@ be retried.
   been submitted. Daemon session mapping and A2A portability are separate work,
   not part of this small SDK patch.
 
+## Claude Daemon Contributions
+
+Two additional independent daemon branches are pushed, both based on upstream
+`495920a`:
+
+- `feat/claude-session-persistence` (`f29925c`): opt-in durable session binding,
+  exact native transcript resume, ownership locking, fail-closed state checks
+  and `CLAUDE_CONFIG_DIR` support. It temporarily pins the SDK branch above.
+- `fix/claude-error-results` (`1b1dd62`): treat nil/error SDK results as terminal
+  failures before publishing or acknowledging the inbox. No SDK fork or A2A
+  dependency is needed to review this fix.
+
+Ordinary Go suites and focused race tests pass. The combined local branch
+`lab/claude-reporting-integration` (`beb1f23`) is for acceptance, not a bundled
+upstream PR. [Portability evidence](AGYN-PORTABILITY.md) records the real
+authentication and stop-notice failures found during Agyn testing, separately
+from the passed native process and completed A2A/Pod recovery tests. These forks retain their existing licenses;
+the standalone reporting/service changes retain AGPL-3.0-only.
+
 ## Proposed Subsequent Contributions
 
 | Review unit | Suggested home | Boundary |

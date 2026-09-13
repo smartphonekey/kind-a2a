@@ -171,10 +171,7 @@ export async function runParallelAcceptance(context: Context): Promise<void> {
     assert.notEqual(followup.uid, a.uid);
     for (const key of ["instanceId", "threadId", "profileId", "marker"] as const) assert.equal(followup[key], a[key]);
     assert.deepEqual(followup.pvc, a.pvc);
-    const nativeIdentity = (snapshot: any) => snapshot.mapping.map((record: any) => ({
-      instanceId: record.instance_id, sessionId: record.codex_thread_id, createdAt: record.created_at_unix_ms
-    }));
-    assert.deepEqual(nativeIdentity(followup), nativeIdentity(a));
+    assert.deepEqual(followup.native, a.native);
     assert.equal(holding(followup, a2).actions, `1:${markers.a}\n2:${markers.a}\n`);
     assert.equal(holding(followup, a2).followup, markers.a);
     const unchangedB = holding(b, b1);

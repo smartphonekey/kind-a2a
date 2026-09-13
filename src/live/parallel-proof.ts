@@ -72,7 +72,7 @@ export function parallelProgram(options: BarrierOptions): string {
 
 export type ParallelSnapshot = {
   taskId: string; executionId: string; instanceId: string; threadId: string; profileId: string;
-  uid: string; pvc: string[]; marker: string; mapping: { instance_id: string; codex_thread_id: string }[];
+  uid: string; pvc: string[]; marker: string; native: { instanceId: string; sessionId: string }[];
 };
 
 export function assertSeparateTasks(a: ParallelSnapshot, b: ParallelSnapshot): void {
@@ -83,11 +83,11 @@ export function assertSeparateTasks(a: ParallelSnapshot, b: ParallelSnapshot): v
   assert.equal(a.pvc.length, 1); assert.equal(b.pvc.length, 1);
   assert.notEqual(a.pvc[0], b.pvc[0], "tasks mounted the same PVC");
   for (const snapshot of [a, b]) {
-    assert.equal(snapshot.mapping.length, 1);
-    assert.equal(snapshot.mapping[0].instance_id, snapshot.instanceId);
-    assert(snapshot.mapping[0].codex_thread_id);
+    assert.equal(snapshot.native.length, 1);
+    assert.equal(snapshot.native[0].instanceId, snapshot.instanceId);
+    assert(snapshot.native[0].sessionId);
   }
-  assert.notEqual(a.mapping[0].codex_thread_id, b.mapping[0].codex_thread_id, "tasks reused a native session");
+  assert.notEqual(a.native[0].sessionId, b.native[0].sessionId, "tasks reused a native session");
 }
 
 export function assertQueuedOnly(events: any[], executionId: string): void {

@@ -89,8 +89,12 @@ and may be further limited to fit the initial frame. Small snapshots include all
 artifacts; larger ones deliver artifacts in separate bounded updates marked with
 `metadata.snapshotSequence`. Subsequent durable status/artifact updates carry
 their own increasing `metadata.eventSequence`. Snapshot replay is not a new event.
+The initial task also exposes its atomic `metadata.snapshotSequence` cursor.
+Idle streams send keepalive comments every 15 seconds. A reader that cannot drain
+a write within 10 seconds is disconnected and releases its admission slot.
+Event-source failures use sanitized SDK error envelopes, not task outcomes.
 `GetTask` provides stored history/artifacts. See [protocol acceptance and remaining
-work](A2A-PROTOCOL.md), including proxy idle timeouts and streaming error handling.
+work](A2A-PROTOCOL.md), including production ingress and load-test boundaries.
 
 ## Reporting Setup Contract
 

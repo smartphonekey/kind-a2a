@@ -9,22 +9,30 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { KubeConfig, KubernetesObjectApi } from "@kubernetes/client-node";
+import { SendMessageRequest, StreamResponse, SubscribeToTaskRequest, Task, TaskState } from "@a2a-js/sdk";
+import { ClientFactory, JsonRpcTransportFactory } from "@a2a-js/sdk/client";
 import { AgynClient } from "../agyn-client.js";
 import { assertInstanceAbsent, inspectRetainedCancellationPvc, instancePods } from "./kubernetes-proof.js";
 import { agentNetworkPolicies, assertPolicyUnchanged, managedLabel, NetworkFixtures } from "./network-proof.js";
 import { runParallelAcceptance } from "./agyn-parallel.js";
 import { assertCgroupComputeBounds, assertPodComputeBounds, parseComputeBounds, type ComputeBounds } from "./resource-proof.js";
+import { observeA2aStream, assertStreamMatchesDurable, type StreamProbe } from "./a2a-stream-proof.js";
+import { serviceCard } from "../service/card.js";
 
 if (process.env.AGYN_LIVE_ACCEPTANCE !== "trusted-local") throw new Error("Set AGYN_LIVE_ACCEPTANCE=trusted-local to run real-model tests");
 const interrupted = process.env.AGYN_LIVE_SCENARIO === "interrupted";
 const cancellation = process.env.AGYN_LIVE_SCENARIO === "cancellation";
 const parallel = process.env.AGYN_LIVE_SCENARIO === "parallel";
-if (process.env.AGYN_LIVE_SCENARIO && !interrupted && !cancellation && !parallel) throw new Error("Unknown live scenario");
+const streaming = process.env.AGYN_LIVE_SCENARIO === "streaming";
+if (process.env.AGYN_LIVE_SCENARIO && !interrupted && !cancellation && !parallel && !streaming) throw new Error("Unknown live scenario");
 if (parallel) assert(process.env.AGYN_LIVE_RUNNER_CHART, "parallel acceptance requires explicit workload network policies");
-const scenario = interrupted ? "interrupted" : cancellation ? "cancellation" : parallel ? "parallel" : "completed";
+const scenario = interrupted ? "interrupted" : cancellation ? "cancellation" : parallel ? "parallel" : streaming ? "streaming" : "completed";
 const bounded = process.env.AGYN_LIVE_COMPUTE_RESOURCES === "true";
 assert(!process.env.AGYN_LIVE_COMPUTE_RESOURCES || bounded, "invalid compute resource opt-in");
 const resourceEvidence: any = { enabled: bounded, pods: {} };
+const protocolEvidence: Record<string, unknown> = { enabled: streaming };
+const streamProbes: StreamProbe[] = [];
+const streamAbort = new AbortController();
 let mainBounds: ComputeBounds | undefined;
 const supportingBounds = bounded ? parseComputeBounds(JSON.parse(process.env.AGYN_LIVE_SUPPORTING_RESOURCES ?? "null")) : undefined;
 const inspectorImage = process.env.AGYN_LIVE_INSPECTOR_IMAGE;
@@ -274,11 +282,32 @@ const cancelRunningTurn = async (taskId: string) => {
   }
 };
 const runSingleTask = async () => {
-  const first = await rpc("SendMessage", { message: { messageId: randomUUID(), role: "ROLE_USER", parts: [{ text:
+  const firstInput = { message: { messageId: randomUUID(), role: "ROLE_USER", parts: [{ text:
     cancellation ? `Cancellation acceptance test. Report progress, then use exec_command to run /agyn/bin/node with this JavaScript and wait for it to finish. Do not detach the process, report an outcome, or run other commands while it is running. JavaScript: const fs=require("node:fs");fs.writeFileSync("/workspace/cancel-signals.txt","");process.on("SIGTERM",()=>fs.appendFileSync("/workspace/cancel-signals.txt","SIGTERM\\n"));fs.writeFileSync("/workspace/reporting-proof.txt",${JSON.stringify(suffix)});fs.writeFileSync("/workspace/cancel-heartbeat.txt",String(Date.now()));fs.writeFileSync("/workspace/cancel-control.json",JSON.stringify({pid:process.pid,nonce:${JSON.stringify(suffix)}}));setInterval(()=>fs.writeFileSync("/workspace/cancel-heartbeat.txt",String(Date.now())),250);setTimeout(()=>{fs.writeFileSync("/workspace/cancel-late.txt","unexpected completion");process.exit(0)},120000);`
       : interrupted ? `Interruption acceptance test. Append the line ${suffix} to /workspace/reporting-proof.txt using >>, unconditionally and exactly once. This append is deliberately not idempotent. Report progress and publish the file's exact contents as a text artifact. Then run sleep 120. Do not report an outcome until that sleep finishes. Do not repeat the append on a stop reminder.`
-      : `Create /workspace/reporting-proof.txt containing exactly ${suffix}. Report a progress event and publish that value as a text artifact, then run sleep 3 to leave a native-session inspection window. For this stop-hook acceptance test only, give your first final answer without reporting an outcome. If the stop hook reminds you, follow its instruction and report turn_done. Do not rewrite the file on reminders.` }] }, configuration: { returnImmediately: true } });
-  const taskId = first.task.id; tasks.push(taskId);
+      : `Create /workspace/reporting-proof.txt containing exactly ${suffix}. Report a progress event and publish that value as a text artifact, then run sleep ${streaming ? 35 : 3} to leave a native-session inspection window. Do not report additional progress during that sleep. For this stop-hook acceptance test only, give your first final answer without reporting an outcome. If the stop hook reminds you, follow its instruction and report turn_done. Do not rewrite the file on reminders.` }] }, configuration: { returnImmediately: true } };
+  const client = streaming ? await new ClientFactory({ transports: [new JsonRpcTransportFactory({ fetchImpl: async (url, init) => {
+    const authenticated = new Headers(init?.headers); authenticated.set("authorization", headers.authorization);
+    return fetch(url, { ...init, headers: authenticated });
+  } })] }).createFromAgentCard(serviceCard(base)) : undefined;
+  const options = { signal: AbortSignal.any([streamAbort.signal, AbortSignal.timeout(600_000)]) };
+  let taskId: string;
+  let blocking: Promise<Task> | undefined;
+  if (client) {
+    const probe = await observeA2aStream(client.sendMessageStream(SendMessageRequest.fromJSON(firstInput), options));
+    streamProbes.push(probe); taskId = probe.task.id;
+    tasks.push(taskId);
+    streamProbes.push(await observeA2aStream(client.resubscribeTask(SubscribeToTaskRequest.fromJSON({ id: taskId }), options)));
+    const startedAt = new Date().toISOString();
+    blocking = client.sendMessage(SendMessageRequest.fromJSON({ ...firstInput, configuration: { returnImmediately: false } }), options).then(result => {
+      assert("id" in result && result.id === taskId);
+      protocolEvidence.blocking = { startedAt, returnedAt: new Date().toISOString(), task: Task.toJSON(result) };
+      return result;
+    });
+    void blocking.catch(() => {});
+  } else {
+    const first = await rpc("SendMessage", firstInput); taskId = first.task.id; tasks.push(taskId);
+  }
   console.log(JSON.stringify({ kind: "live.task", taskId, directory }));
   const waitTurn = async (turn: number) => {
     let last = "";
@@ -297,7 +326,7 @@ const runSingleTask = async () => {
         assertInstanceAbsent(kubeconfig, binding.instanceId);
         const task = await rpc("GetTask", { id: taskId });
         evidence.push({ turn, task, events, snapshots: snapshots[turn] ?? [] });
-        assert.equal(task.status.state, "TASK_STATE_INPUT_REQUIRED", "turn must finish resumably after releasing compute");
+        assert.equal(task.status.state, streaming && turn === 2 ? "TASK_STATE_COMPLETED" : "TASK_STATE_INPUT_REQUIRED", "unexpected state after releasing compute");
         assert(!task.metadata?.recoveryRequired, "turn was quarantined");
         assert(events.filter(event => event.kind === "agent.outcome" && event.payload.outcome === "turn_done").length >= turn - (interrupted ? 1 : 0), "missing real MCP outcome");
         assert(events.filter(event => event.kind === "agent.artifact" && event.payload.text.trim() === suffix).length >= turn, "missing persistent file artifact");
@@ -360,8 +389,17 @@ const runSingleTask = async () => {
       assert.equal(response.status, 200, "explicit reconciliation failed");
       console.log(JSON.stringify({ kind: "live.interruption-reconciled", taskId, executionId }));
     } else await waitTurn(1);
+    if (blocking) {
+      const result = await blocking;
+      assert.equal(result.status?.state, TaskState.TASK_STATE_INPUT_REQUIRED);
+      for (const probe of streamProbes) probe.assertOpen();
+      const before = Date.now(); await delay(2000);
+      for (const probe of streamProbes) probe.assertOpen();
+      protocolEvidence.idleSubscribedMs = Date.now() - before;
+    }
     await rpc("SendMessage", { message: { taskId, messageId: randomUUID(), role: "ROLE_USER", parts: [{ text:
-      "Read /workspace/reporting-proof.txt. Publish its exact existing contents as an artifact. Do not create or rewrite it. Run sleep 3 to leave an inspection window, then report turn_done." }] }, configuration: { returnImmediately: true } });
+      "Read /workspace/reporting-proof.txt. Publish its exact existing contents as an artifact. Do not create or rewrite it. Run sleep 3 to leave an inspection window, then report turn_done." }],
+      ...(streaming ? { metadata: { endTask: true } } : {}) }, configuration: { returnImmediately: true } });
     await waitTurn(2);
     assert(snapshots[1]?.length && snapshots[2]?.length, "native session evidence was not captured");
     assert.notEqual(snapshots[1][0].uid, snapshots[2][0].uid, "follow-up must run in a recreated pod");
@@ -370,6 +408,19 @@ const runSingleTask = async () => {
     assert.deepEqual(identity(snapshots[1][0].mapping), identity(snapshots[2][0].mapping), "native session mapping changed");
     assert.equal(snapshots[2][0].marker, interrupted ? `${suffix}\n` : suffix, "follow-up repeated a side effect or changed the file");
     if (interrupted) assert.equal(snapshots[2][0].journal.find((record: any) => record.message_id === snapshots[1][0].journal[0].message_id)?.state, "ack_only", "old inbox request was not retired explicitly");
+    if (streaming) {
+      const page = await fetch(`${base}/tasks/${taskId}/events?limit=1000`, { headers }).then(r => r.json()) as any;
+      for (const probe of streamProbes) {
+        await probe.finished;
+        assertStreamMatchesDurable(probe, page.events, TaskState.TASK_STATE_COMPLETED);
+        assert(Date.parse(probe.endedAt()!) - Date.parse(probe.observations[0].observedAt) > 30_000, "stream was not exercised beyond the old cutoff");
+        assert(probe.observations.some(item => item.event.payload?.$case === "statusUpdate" && item.event.payload.value.status?.state === TaskState.TASK_STATE_INPUT_REQUIRED));
+      }
+      const receipt = protocolEvidence.blocking as { startedAt: string; returnedAt: string };
+      assert(Date.parse(receipt.returnedAt) - Date.parse(receipt.startedAt) > 30_000, "blocking send did not cross the old cutoff");
+      assert.equal(page.events.filter((event: any) => event.kind === "execution.queued").length, 2, "blocking duplicate created an execution");
+      protocolEvidence.passed = true;
+    }
     console.log(JSON.stringify({ kind: "live.passed", taskId, turns: 2, scenario }));
   }
 };
@@ -412,6 +463,11 @@ try {
     workloadsReleased = true;
     console.log(JSON.stringify({ kind: "live.cleanup", directory, instances: instances.map(i => i.meta.id) }));
   } finally {
+    streamAbort.abort();
+    for (const probe of streamProbes) await probe.finished.catch(() => {});
+    if (streaming) protocolEvidence.streams = streamProbes.map(probe => ({ endedAt: probe.endedAt(), observations: probe.observations.map(item => ({
+      observedAt: item.observedAt, event: StreamResponse.toJSON(item.event)
+    })) }));
     child.kill("SIGTERM");
     const timer = setTimeout(() => child.kill("SIGKILL"), 5000);
     await exited; clearTimeout(timer);
@@ -419,7 +475,7 @@ try {
       if (networkFixtures && workloadsReleased) { await networkFixtures.close(); networkEvidence.cleanedUp = true; }
       else if (networkFixtures) networkEvidence.retained = "Workload cleanup was not confirmed; keep isolation policies until operator reconciliation";
     } finally {
-      writeFileSync(join(directory, "evidence.json"), JSON.stringify({ environmentId, agentId, tasks, scenario, snapshots, evidence, network: networkEvidence, resources: resourceEvidence }, null, 2), { mode: 0o600 });
+      writeFileSync(join(directory, "evidence.json"), JSON.stringify({ environmentId, agentId, tasks, scenario, snapshots, evidence, network: networkEvidence, resources: resourceEvidence, protocol: protocolEvidence }, null, 2), { mode: 0o600 });
     }
   }
 }

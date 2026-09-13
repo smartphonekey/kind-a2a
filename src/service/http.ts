@@ -1,17 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-only
-import { once } from "node:events";
 import express, { type Request, type Response } from "express";
 import { z } from "zod";
-import { AgentCard, formatSSEEvent } from "@a2a-js/sdk";
+import { AgentCard, formatSSEEvent, formatSSEErrorEvent } from "@a2a-js/sdk";
 import { JsonRpcTransportHandler, ServerCallContext, validateVersion } from "@a2a-js/sdk/server";
 import { DurableA2AHandler, PRINCIPAL, SIGNAL, CHECK_AUTH } from "./a2a.js";
 import { type Authorize, type Principal } from "./auth.js";
 import { DurableTaskStore, TaskStoreError } from "./task-store.js";
 import { reportingRouter } from "../reporting/http.js";
+import { SseWriter, type SseWriteOptions } from "./sse-writer.js";
 
 export type HttpOptions = {
   store: DurableTaskStore; card: AgentCard; profileId: string; authorize: Authorize;
   signal: AbortSignal; pollMs?: number; maxRequestsPerOwner?: number;
+  sse?: SseWriteOptions;
   ready?: () => boolean;
 };
 const reconciliation = z.object({ resolution: z.enum(["continue", "fail"]), reason: z.string().trim().min(1).max(4096) }).strict();
@@ -65,6 +66,7 @@ export function createServiceApp(options: HttpOptions) {
     request.once("aborted", abort);
     if (request.aborted || response.destroyed) abort();
     const signal = AbortSignal.any([disconnected.signal, options.signal]);
+    let writer: SseWriter | undefined;
     const context = new ServerCallContext({
       user: { isAuthenticated: true, userName: principal.subject }, tenant: principal.tenant,
       requestedVersion: request.header("A2A-Version") ?? "0.3",
@@ -90,19 +92,26 @@ export function createServiceApp(options: HttpOptions) {
       }
       // Keep the SDK's parser/serializer; own only HTTP streaming lifetime and backpressure.
       for await (const event of result) {
-        if (signal.aborted) break;
+        signal.throwIfAborted();
         if (!response.headersSent) {
+          writer = new SseWriter(response, signal, abort, options.sse);
           response.setHeader("content-type", "text/event-stream");
           response.setHeader("x-accel-buffering", "no");
           response.flushHeaders();
         }
-        if (!response.write(formatSSEEvent(event))) {
-          await once(response, "drain", { signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]) });
-        }
+        await writer!.write(formatSSEEvent(event));
       }
       response.end();
     } catch (error) {
-      if (response.headersSent || response.destroyed) { response.end(); return; }
+      if (response.destroyed) return;
+      if (response.headersSent) {
+        if (!signal.aborted) {
+          const mapped = JsonRpcTransportHandler.mapToJSONRPCError(error);
+          const safe = mapped.code === -32603 ? { code: -32603, message: "Internal service error" } : mapped;
+          await writer?.write(formatSSEErrorEvent({ jsonrpc: "2.0", id: rpcId(request), error: safe })).catch(() => response.destroy());
+        }
+        response.end(); return;
+      }
       if (signal.aborted) {
         if (authFailure === 401) response.setHeader("www-authenticate", "Bearer");
         response.sendStatus(authFailure ?? 503); return;
@@ -111,6 +120,7 @@ export function createServiceApp(options: HttpOptions) {
       if (mapped.code === -32603) mapped.message = "Internal service error";
       response.json({ jsonrpc: "2.0", id: rpcId(request), error: mapped });
     } finally {
+      await writer?.close();
       response.off("close", abort);
       request.off("aborted", abort);
     }

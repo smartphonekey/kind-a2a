@@ -22,7 +22,7 @@ if (bounded) {
   assert(process.env.AGYN_LIVE_RUNNER_CHART, "resource acceptance requires the reviewed network policy chart");
 } else assert(!runnerImage && !supportingResources, "resource settings require AGYN_LIVE_COMPUTE_RESOURCES=true");
 const scenarios = process.argv.slice(2);
-assert(scenarios.length && scenarios.every(value => ["completed", "interrupted", "cancellation", "parallel"].includes(value)), "supply one or more known acceptance scenarios");
+assert(scenarios.length && scenarios.every(value => ["completed", "interrupted", "cancellation", "parallel", "streaming"].includes(value)), "supply one or more known acceptance scenarios");
 if (scenarios.includes("parallel")) assert(process.env.AGYN_LIVE_RUNNER_CHART, "parallel acceptance requires the reviewed network policy chart");
 const kubeconfig = resolve(process.env.AGYN_KUBECONFIG ?? ".state/agyn-kubeconfig");
 const k = (args, input) => execFileSync("kubectl", ["--kubeconfig", kubeconfig, ...args], { input, encoding: "utf8", timeout: 90_000 });

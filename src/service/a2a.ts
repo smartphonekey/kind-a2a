@@ -116,7 +116,7 @@ export class DurableA2AHandler implements A2ARequestHandler {
     const snapshot = mapped(() => this.store.snapshot(scope, taskId));
     let cursor = snapshot.sequence;
     if (subscription && terminal.has(snapshot.task.status!.state)) throw new UnsupportedOperationError({ message: "Task is already terminal" });
-    const initial = streamSnapshot(snapshot.task, historyLength);
+    const initial = streamSnapshot({ ...snapshot.task, metadata: { ...snapshot.task.metadata, snapshotSequence: cursor } }, historyLength);
     yield { payload: { $case: "task", value: initial.task } };
     for (const artifact of initial.remainingArtifacts) {
       await this.checkAuth(context);

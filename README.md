@@ -55,6 +55,9 @@ deletion. Admission/deletion races and SIGKILL at three lifecycle boundaries
 pass for agent and sandbox owners. Agents metadata and authorization writes are
 still stubs; A2A end-to-end acceptance, production garbage collection and
 coordinated rollout remain open. These fixes are not permanently deployed.
+The [read-only upgrade audit](AGYN-CHECKED-VOLUMES.md#read-only-upgrade-audit)
+now records the installed legacy-data and client state without granting rollout,
+adoption or deletion authority. Explicit legacy reconciliation remains necessary.
 
 The new [durable execution service](SERVICE.md) adds authenticated A2A routing,
 transactional queued turns, reporting MCP, bounded outcome checks and a recoverable

@@ -281,6 +281,13 @@ stubs. No model, native workload start or A2A driver runs in this fixture.
 Coordinated A2A acceptance, legacy-record audit, all-writer rollout, backend
 authorization/incarnation binding and infrastructure fencing remain open.
 
+The standalone A2A repository also contains an AGPL-3.0-only, read-only
+[upgrade audit](AGYN-CHECKED-VOLUMES.md#read-only-upgrade-audit), with a pure
+analysis module, private-report CLI and 64 tests. It inventories the real lab
+without rewriting legacy records or treating observed absence as deletion
+authority. It remains operator-side integration code, not another Agyn fork
+branch or an adoption API proposal. The full service suite now passes 308 tests.
+
 ## Runner Ingress Isolation
 
 A separate chart-only contribution adds opt-in workload ingress denial without

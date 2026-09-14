@@ -282,9 +282,84 @@ Services or quotas, zero fixture namespaces, and no remaining fixture database
 containers. Stock services remain deployed. This advances combined component
 acceptance, not production authorization, storage failover or A2A rollout.
 
+## Read-Only Upgrade Audit
+
+The operator-only [audit command](scripts/agyn-checked-volume-audit.mjs) now
+collects the installed registry in one repeatable-read, read-only PostgreSQL
+transaction, with statement/lock deadlines and rollback. Its SQL projects only
+lifecycle/ownership fields, not credentials, runtime container settings or
+failure messages. It reads PVC/Pod/client inventories before and after that
+snapshot and verifies the selected namespace UID, PostgreSQL Pod UID and
+database container incarnation. Changed or incomplete observations are refused
+or flagged, not treated as absence.
+
+The [pure audit module](src/live/checked-volume-audit.ts) checks legacy records,
+physical keys/names/UIDs and persistent owner labels, duplicate inventory,
+cross-record ownership, unconfirmed workload reservations, bindings/intents,
+and required migration/trigger metadata. It records the four installed client
+deployments without treating image names as proof of compatibility. Sandbox-user
+ownership requires the actual Agents service, not just matching PVC labels.
+
+The command requires the repository's pinned Node runtime and a completed build.
+Create a private output directory without changing the permissions of an
+existing shared `.state` directory:
+
+```bash
+export AGYN_AUDIT_OUTPUT_DIR="$(mktemp -d "$PWD/.state/agyn-checked-upgrade-XXXXXX")"
+
+AGYN_LIVE_ACCEPTANCE=trusted-local \
+AGYN_KUBECONFIG="$ABSOLUTE_KUBECONFIG" \
+AGYN_AUDIT_POSTGRES_POD=platform-postgres-0 \
+AGYN_AUDIT_POSTGRES_UID="$OBSERVED_POSTGRES_POD_UID" \
+AGYN_AUDIT_POSTGRES_USER=agyn \
+AGYN_AUDIT_RUNNER_ID="$REVIEWED_RUNNER_ID" \
+AGYN_AUDIT_NAMESPACE_UID="$OBSERVED_WORKLOAD_NAMESPACE_UID" \
+node scripts/agyn-checked-volume-audit.mjs
+```
+
+Each run writes a new `capture-*/audit.json` in a mode-0700 directory with a
+mode-0600 report. Configuration is checked before external reads; public,
+symlinked or changed output directories are refused. Exit `2` means a completed
+audit with findings; exit `1` means configuration/capture/report failure; exit
+`0` means no findings in the implemented checks. **None authorizes rollout,
+adoption or deletion.** Reports always keep those three permissions false.
+
+On 2026-09-14, captures at 12:16:56 and 12:18:25 UTC in
+`.state/agyn-checked-upgrade-sDbrVw/` returned the same 64 findings and identical
+captured lifecycle fields. Both Kubernetes observation windows were stable:
+
+- Migrations `0001`-`0017` are installed. `0018` and `0019` are absent.
+- There are 61 unchecked volume records: 60 active records match 60 physical
+  PVC names and persistent owner labels; one failed, unbound record has no
+  physical match. That record is retained, not rewritten as deleted or empty.
+- All 125 historical workloads have explicit removal confirmations. There are
+  no task Pods and no observed owner conflicts or unconfirmed predecessors.
+- Installed clients remain stock: orchestrator `0.23.0`, Runners `0.10.1`, runner
+  `0.12.0`, Gateway `0.29.1`. Their readiness does not establish checked-API
+  compatibility or prove that all possible writers have been drained.
+
+The first CLI run correctly refused the existing mode-0775 `.state` directory;
+the command now requires an explicitly private owned output directory rather
+than changing shared permissions. The full service build and all **308 tests**
+including subtests pass, with 64 new audit tests covering negative data cases,
+read-only collection, partial/changed inventories, container replacement,
+private output, exit codes and exclusion of sensitive subprocess output.
+The 12:19:03 UTC external check confirms all 68 existing PVC identities/specs/
+phases/labels and all 41 deployment UIDs/generations/images/readiness unchanged
+since the prior acceptance, with zero task Pods/Services/quotas.
+
+This is an observation tool, not a migration implementation or an atomic snapshot
+across PostgreSQL and Kubernetes. It does not verify PVC contents/specifications
+for adoption, live Agents ownership, backend authentication, in-flight/late
+operations, node fencing, all SQL/API writers, or backup/restore. Matching legacy
+PVCs still need explicit adoption under a drained, compatible stack; the failed
+unbound record needs separate reconciliation. No schema, registry record, PVC,
+deployment or authorization policy was changed by this audit.
+
 ## Remaining Work
 
-- Audit legacy records and all writers, including already-issued old deletions.
+- Use the read-only legacy inventory above to implement explicit adoption and
+  reconciliation; complete the all-writer audit, including already-issued old deletions.
   Pin compatible API/client dependencies and migrations `0017`-`0019`, drain and
   roll out the coordinated stack, then run real registry/runner/controller/A2A
   acceptance. The combined process fixture now covers admission/deletion and

@@ -29,6 +29,9 @@ are not compatible, and production hardening/rollout remain open.
 [Live network checks](AGYN-NETWORK.md) found and locally repaired missing CNI
 enforcement despite installed policies. Pod-network isolation has separate
 evidence; the real runtime is not yet a hardened sandbox.
+An independent [native runner transport fix](AGYN-RUNNER-TRANSPORT.md) now
+restricts plaintext TCP to readiness when Ziti is enabled. Source, loopback RPC
+and subprocess tests pass; live policy and deployment acceptance remain open.
 
 [Real parallel-task acceptance](AGYN-PARALLEL.md) verifies separate workspaces and
 native sessions on the same agent, queued follow-ups after pod removal, and

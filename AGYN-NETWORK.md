@@ -6,6 +6,11 @@ acceptance. [Separate live parallel acceptance](AGYN-PARALLEL.md) now verifies
 concurrent cross-pod denial and same-task continuation. The A2A service itself
 does not receive Kubernetes credentials.
 
+The separate [native runner transport fix](AGYN-RUNNER-TRANSPORT.md) closes a
+plaintext control API alongside the Ziti listener at the application layer.
+Its loopback/process tests pass; it is not deployed and does not replace this
+CNI evidence or establish actual overlay-policy enforcement.
+
 ## Enforcement Failure Found
 
 On 2026-09-13 the installed `agent-workload-egress` policy selected the probe pods,

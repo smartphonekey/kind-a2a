@@ -334,6 +334,29 @@ Keep the CNI enforcement incident separate from this chart proposal: adding a
 NetworkPolicy cannot repair a controller that is not enforcing policies. Do not
 describe the local K3s restart as a permanent bootstrap or runtime-code fix.
 
+## Runner Control Transport
+
+- Fork/branch: [`spk-ai/k8s-runner`, `fix/ziti-control-listener`](https://github.com/spk-ai/k8s-runner/tree/fix/ziti-control-listener),
+  production change `c5c467e`, fixture guard `d0ef963`, based on upstream `baadc75`.
+- Scope: separate the plaintext health listener from the full API when Ziti is
+  enabled. Only exact unary readiness remains available on TCP. Registered
+  control methods and streams reject unauthenticated access, including before
+  enrollment. No new API, prompt, workflow or credential format.
+- Evidence: 152 independent race tests, build and vet pass; ten repeated
+  transport/startup runs pass 400 test entries. Lab-only combination `28d77ea`
+  with checked runner `3c461c5` and API `ec2bfed` passes 386 race tests, including
+  plaintext checked-removal rejection. Native Kubernetes fixtures were not run.
+- [Acceptance and exact limits](AGYN-RUNNER-TRANSPORT.md) distinguish source,
+  loopback RPC and subprocess evidence from actual overlay-policy/deployment
+  acceptance. The startup fixture uses a fake Kubernetes client and Gateway.
+
+The focused and integration branches are pushed, with the existing license
+retained; no upstream PR has been opened. Submit the focused branch separately
+from the checked-volume proposals. Clients using TCP against a Ziti-enabled
+runner need a migration; disabling Ziti is not a security fix. Standalone
+plaintext mode, live policy audit, backend incarnation and production rollout
+remain explicit boundaries.
+
 ## Compute Resource Contract
 
 Three new focused branches implement opt-in CPU/memory allocations without

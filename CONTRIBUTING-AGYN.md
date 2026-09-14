@@ -171,6 +171,39 @@ The branch and identical `lab/removal-integration` are pushed. Existing AGPL
 licensing is retained. Generated API files and local image packaging are not in
 the proposed review unit; no upstream PR has been opened.
 
+## Volume Inventory And Retention
+
+Two independent, runtime-neutral fixes address destructive reconciliation
+decisions. [Full source/native evidence and remaining gates](AGYN-VOLUME-SAFETY.md)
+include red regressions on unchanged upstream code and a combined-stack rerun.
+
+- Orchestrator: [fix/retain-untracked-volumes](https://github.com/spk-ai/agents-orchestrator/tree/fix/retain-untracked-volumes),
+  core `79580bb`, native fixture/docs `72e1b22`, based on `ae7d0bf`. Retain disks
+  absent from the filtered/stale registry snapshot; reject malformed and
+  duplicate runner inventories before changing records. The optional Kubernetes
+  fixture is a separate commit from the production fix and unit tests.
+- Runner: [fix/complete-volume-inventory](https://github.com/spk-ai/k8s-runner/tree/fix/complete-volume-inventory),
+  `40b35ce`, based on `baadc75`. Missing/empty/padded/duplicate keys on managed
+  PVCs return `FailedPrecondition`, without a partial successful inventory.
+- Combined lab branches `lab/volume-retention-integration` (`f65a9f6`) and
+  `lab/volume-inventory-integration` (`d03831f`) preserve earlier lifecycle,
+  resource and named-PVC fixes for acceptance, not for bundled upstream PRs.
+
+All branches are pushed; no upstream PR has been submitted. Neither fix changes
+A2A, models, API schemas, database migrations or runtime images. Existing
+repository licenses remain intact. Unknown disks are now retained rather than
+automatically deleted: discuss this explicit architecture-policy change and
+ownership-aware garbage collection with maintainers. Production deletion
+preconditions, node fencing and rollout remain separate requirements.
+
+Independent orchestrator build and 326 ordinary tests pass; 325 race tests pass
+with the known group-consumer test explicitly excluded. Independent runner build
+and all 124 race tests pass. Combined builds, 363 scoped orchestrator race tests,
+303 runner race tests, and the separate native retention fixture pass. Existing
+opt-in live tests gated off in those suites are not counted as rerun. The native
+fixture uses real runner RPCs and Kubernetes with fake registry/Agents clients;
+no deployed database or A2A lifecycle acceptance is implied.
+
 ## Runner Ingress Isolation
 
 A separate chart-only contribution adds opt-in workload ingress denial without

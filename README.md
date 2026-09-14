@@ -36,9 +36,16 @@ cross-pod TCP/UDP denial. The opt-in [bounded profile](AGYN-RESOURCES.md) now al
 passes those scenarios with explicit per-container CPU/memory bounds; aggregate
 task admission and [native quota recovery](AGYN-RESOURCES.md#a2a-quota-recovery)
 now have separate acceptance. A focused [startup-secret fix](AGYN-RESOURCES.md#native-first-provision-failures)
-also passes real first-provision quota tests, but is not yet in the coordinated
-A2A images. Mandatory production profiles, sizing and sandbox hardening remain
+also passes real first-provision quota tests and combined A2A recovery with
+named-PVC ownership validation. Stock services were restored afterward.
+Mandatory production profiles, sizing and sandbox hardening remain
 required.
+
+[Volume retention and inventory fixes](AGYN-VOLUME-SAFETY.md) now prevent
+orphan deletion inferred from stale/scoped registry snapshots and reject incomplete
+runner inventories. Independent and combined native checks pass, with all
+existing task PVCs preserved. These fixes are not permanently deployed;
+incarnation-bound deletion and production garbage collection remain open.
 
 The new [durable execution service](SERVICE.md) adds authenticated A2A routing,
 transactional queued turns, reporting MCP, bounded outcome checks and a recoverable

@@ -28,10 +28,17 @@ integration images are incompatible: `removedAt` ends metering and can be set
 while a failed Pod still exists. Source, real database, Gateway wire and a
 coordinated local failed-Pod test pass, as do all five native Codex lifecycle
 regressions on the coordinated stack. The stock deployments were restored;
-the database migration alone does not make them compatible. Claude lifecycle
-and production deployment are still pending. See
+the database migration alone does not make them compatible. All five Claude
+lifecycle scenarios have passing fixtures across separate runs, but earlier
+native authentication failures and production deployment remain unresolved. See
 [the incident and rollout requirements](AGYN-REMOVAL.md). Do not start new tasks
 on the old stack expecting them to settle with this driver.
+
+The separate [volume retention/inventory fixes](AGYN-VOLUME-SAFETY.md) now pass
+source and native Kubernetes checks, including the combined patch stack. They
+are not deployed to the stock services. Name-based deletion, authoritative
+garbage collection and infrastructure fencing still need work; retained disks
+must not be treated as disposable just because one registry scan omits them.
 
 The service requires `A2A_SERVICE_CONFIG_FILE`, an operator-owned JSON file:
 

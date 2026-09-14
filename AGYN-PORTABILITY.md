@@ -224,6 +224,13 @@ operator policy: [Claude documents a subscription setup token](https://code.clau
 while [Agyn subscriptions reference managed secrets](https://github.com/agynio/architecture/blob/main/architecture/agyn-cli.md#subscription-commands).
 The fixture refresh prerequisite is not proof of a production rotation policy.
 
+On 2026-09-14 the operator refreshed the host login. A metadata-only check at
+04:46 UTC confirmed `loggedIn=true`, `authMethod=claude.ai`, subscription type
+`max`, and access-token expiry at `12:43:54Z`. No token value was printed or
+written to evidence. Agyn still had no Claude subscription binding at this
+checkpoint. Temporary managed-secret/subscription provisioning and the fresh
+Claude lifecycle sweep are pending; successful login alone is not acceptance.
+
 ## Remaining Integration
 
 Run the remaining streaming, parallel isolation, cancellation and interrupted-turn

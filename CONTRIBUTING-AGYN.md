@@ -353,6 +353,38 @@ Physical-PVC reuse, sandbox open-record validation, fencing and
 authentication remain separate review units; do not turn this targeted fix
 into a new A2A-specific storage API.
 
+## Named PVC Ownership
+
+A twenty-first focused branch checks the Kubernetes claim itself before reuse:
+
+- Fork: [spk-ai/k8s-runner](https://github.com/spk-ai/k8s-runner).
+- Branch: `fix/pvc-owner-reuse`, commit `7d3238a`, based on `baadc75`.
+- Compare: <https://github.com/agynio/k8s-runner/compare/main...spk-ai:k8s-runner:fix/pvc-owner-reuse>.
+- Every named volume requires an explicit, nonempty `labels.volume_key`.
+  Existing claims must match stable ownership/management labels and storage
+  requirements. Matching names alone no longer authorize reuse. Same-owner
+  claims survive changing workload/thread labels without mutation.
+- Validation also covers admission responses and the fresh read after a
+  competing create returns `AlreadyExists`. Quota, permission and uncertain
+  errors are returned without adoption, relabeling or deletion.
+- Published BSR generation, build and the full race suite pass: 187 passing
+  test entries, 97 top-level. The opt-in native test is skipped by default and
+  separately passes all six cases using the chart's service-account permissions.
+  Eight real simultaneous stale reads produce four matching-owner successes and
+  four foreign-owner rejections, retaining one claim identity.
+- All 51 original workspaces and four deployment specs/UIDs were unchanged;
+  both the initially failed fixture and passing fixture namespaces are absent.
+  [The acceptance report](AGYN-RESOURCES.md#named-pvc-ownership) preserves the
+  initial fixture failure and cleanup evidence.
+
+The branch is pushed, retains the repository's AGPL license and has no upstream
+PR. It changes no API, A2A controller or workflow. Unkeyed custom callers require
+an explicit migration; this intentional validation change needs maintainer
+review. Startup Secret cleanup remains a separate dependency for credentialed
+deployments. The combined deployment/A2A regression is pending, and stock Agyn
+is unchanged. This is not RPC authentication, single-writer fencing, safe
+name-only volume deletion or protection from privileged claim replacement.
+
 ## Claude SDK Session Selection
 
 A separate SDK-only contribution adds `Options.SessionID` and `Options.Resume`

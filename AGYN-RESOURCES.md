@@ -18,6 +18,9 @@ also passes after fixing the runner's missing Secret-read permission. Stock
 images and permissions were restored afterward. Whole-task accounting,
 production quota rollout, sizing and adversarial hardening remain
 release gates; an execution count is not a CPU/RAM or physical-container budget.
+Independent [closed-record](#closed-volume-ownership) and
+[named-PVC](#named-pvc-ownership) ownership checks now have separate passing
+acceptance. The latter has native Kubernetes evidence, not a deployed A2A rerun.
 
 The resource measurements remain valid, but these historical lifecycle images
 do not implement the new [removal-confirmation contract](AGYN-REMOVAL.md).
@@ -611,12 +614,84 @@ reuse an earlier budget.
 This fixes the closed-row create path, not authentication, SQL administrator
 writes, physical-PVC ownership or fencing against old workloads. Open-record
 reuse callers must still validate identity; the sandbox orchestrator's current
-`ensureOpenVolumeRecord` checks only status. Runner `ensurePVC` still accepts a
-matching claim name without checking ownership. Those paths need independent
-review. All Runners writers must be upgraded before relying on the new check;
+`ensureOpenVolumeRecord` checks only status. Stock runner `ensurePVC` accepts a
+matching claim name without checking ownership; the independent fix below is
+not yet deployed. All Runners writers must be upgraded before relying on the new check;
 an old binary can still execute the previous unconstrained update.
 The stock services are restored, so this local acceptance is not a permanent
 rollout of the fix. It also does not rerun interrupted-turn side-effect recovery.
+
+## Named PVC Ownership
+
+The independent k8s-runner branch
+[`fix/pvc-owner-reuse`](https://github.com/spk-ai/k8s-runner/tree/fix/pvc-owner-reuse)
+at `7d3238a`, based on upstream `baadc75`, requires an explicit, nonempty
+`VolumeSpec.labels.volume_key` for every named volume. The Agyn orchestrator
+already supplies this durable record key. Unkeyed custom clients must migrate;
+legacy claims are not automatically relabeled or replaced with empty workspaces.
+
+Reuse matches the existing runner/orchestrator management labels, volume key
+and any agent-instance, agent-class, sandbox and sandbox-owner labels. Per-volume
+labels cannot override workload identity. Per-start workload/thread IDs are
+excluded so legitimate continuation retains the same claim without mutation.
+Terminating/lost claims, garbage-collection owner references, incompatible
+filesystem/access modes, insufficient requested capacity and explicit storage
+class mismatches are rejected. Larger claims and the original cluster-selected
+default class are preserved without resizing.
+
+The check applies to an existing claim, a successful creation response, and a
+fresh read after a competing create returns `AlreadyExists`. No other API error
+authorizes adoption. A native quota denial exposed the need to test this
+explicitly: even if a matching claim appears concurrently, a forbidden create
+returns `PermissionDenied`, with no extra read or Pod creation.
+
+### Source and native acceptance
+
+- The original code failed 41 regression test entries, including parent tests,
+  by accepting conflicting claims and bypassing request validation, or by not
+  handling the create race. The initial matrix is retained separately; this is
+  not a count of 41 distinct defects.
+- Published BSR generation, `go build ./...` and `go test -race ./... -count=1`
+  pass: 187 passing entries, 97 top-level tests. The native test is opt-in and
+  skipped by that ordinary suite; its separate execution below has no skips.
+- At 04:44 UTC on 2026-09-14, the native test passed in 13.85 seconds. It uses
+  the chart's actual RBAC rules through an impersonated fixture service account,
+  a unique namespace, an absent storage class and a zero-Pod quota. It creates
+  no agent, container, credential, backing PV or existing workspace content.
+- Same-owner reuse reaches the intended Pod-quota rejection. Cross-task,
+  missing-key, omitted-owner and agent-class changes fail before that stage.
+  Eight real API `GET/404` responses are held before competing creates: one PVC
+  identity wins, four requests for that owner succeed and four foreign owners
+  fail. No response or Kubernetes status is synthesized by this test.
+- Namespace `runner-pvc-16e42dcc-62c`, UID
+  `e3eaaa77-4812-400b-bacf-740e0f4f7790`, was removed with UID/resource-version
+  preconditions and observed absent. The competing claim's UID was
+  `95309ef1-42de-47ac-b2d1-30d7cfb51ac7`. All 51 prior PVC UIDs/specs/labels/phases
+  and the four deployment UIDs/specs/generations were unchanged.
+
+The first native run did not pass: eight concurrent creates exhausted the
+fixture's eight-claim quota before name-conflict handling. Its cleanup then
+refused controller-injected CA ConfigMaps. The fixture now reserves headroom
+for all attempts while keeping Pod admission at zero. Cleanup validates known
+Kubernetes/Istio CAs and trust-manager bundle content, metadata and controller
+UID; unknown objects or extra data still stop deletion. The original fixture
+was separately reconciled with exact namespace/PVC UIDs, certificate-only
+content checks and no bound storage before conditional namespace deletion.
+Its failure logs have not been replaced by the passing result.
+
+Private evidence: `.state/agyn-pvc-owner-nwrbM7/` contains `before-fix.jsonl`,
+the original `native.jsonl` and `native-reconciliation.json`;
+`.state/agyn-pvc-owner-vimidP/` contains `unit.jsonl`, the passing `native.jsonl`,
+source hashes in `native-run.json`, and matching `native-before.json` /
+`native-after.json`. The source hashes were rechecked before commit.
+
+This branch is pushed but not combined with the startup-cleanup/resource stack
+or deployed through A2A yet. Stock k8s-runner remains unchanged. Caller
+authentication, sandbox open-record checks, UID/ownership-safe volume deletion,
+late-create reconciliation and old-writer fencing remain separate requirements.
+The claim check cannot stop a privileged writer from replacing storage after
+validation; `ReadWriteOnce` is not a single-writer lock. See
+[Kubernetes access modes](https://kubernetes.io/docs/concepts/storage/persistent-volumes/#access-modes).
 
 ## Bounded Agent Profile
 

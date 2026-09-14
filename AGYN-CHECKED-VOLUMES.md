@@ -356,11 +356,84 @@ PVCs still need explicit adoption under a drained, compatible stack; the failed
 unbound record needs separate reconciliation. No schema, registry record, PVC,
 deployment or authorization policy was changed by this audit.
 
+## Legacy Adoption Guards
+
+Dependent Runners branch [`feat/legacy-volume-adoption`](https://github.com/spk-ai/runners/tree/feat/legacy-volume-adoption),
+commit `748d283`, builds on `f05b479` and adds migration
+`0020_legacy_volume_adoption.sql`. It reuses `UpdateVolumeChecked(bind)` rather
+than adding a second adoption API. This is an adoption precondition, not a
+complete migration coordinator or an authorization mechanism.
+
+The regression tests first reproduced three unsafe paths: adopting while a
+matching workload was still unconfirmed, binding without a recorded physical
+name, and implicitly converting failed legacy history through ordinary checked
+reopen. Registry validation also accepted immutable targets the native runner
+would reject, including transient workload/thread labels and invalid names.
+
+The implementation now:
+
+- Requires an active/provisioning legacy record with the same recorded physical
+  name. Failed/deleted/unbound history is retained for explicit reconciliation.
+  Ordinary checked reopen cannot opt a legacy record in.
+- Serializes adoption with workload admission through the existing owner guard.
+  Any unconfirmed predecessor blocks adoption, including billing-ended failures.
+  A checked binding retry and subsequent compatible workload remain allowed.
+- Preserves logical identity, size and metering history. The additive SQL
+  trigger also guards direct adoption/reopen statements without rewriting any
+  historical record during installation.
+- Validates the current Kubernetes binding profile before making it immutable:
+  native name/label syntax, bounded opaque UID, the eight persistent label keys,
+  required managers, optional manager value and positive stored size. It rejects
+  transient labels instead of silently changing the supplied identity.
+
+Verification on 2026-09-14 is retained in
+`.state/agyn-legacy-adoption-AFDUSG/`:
+
+- `registry-race-final.jsonl`: all **419 tests** including subtests pass under
+  the race detector with both disposable PostgreSQL gates enabled. Build, vet
+  and module verification also pass. No test exclusion was added.
+- Thirty-two blocked adoption/workload interleavings cover both owner kinds,
+  all four PostgreSQL isolation settings, both orderings and winner rollback.
+  Tests observe blocker PIDs, independent owner progress and committed state.
+  The upgrade fixture starts at `0019`, installs/repeats `0020` without changing
+  volume/workload/guard history, then verifies rejected raw-SQL writes.
+- `combined-native.jsonl`: the existing combined process fixture passes for
+  agent and sandbox owners using the new registry/migration, API `ec2bfed`,
+  orchestrator `5449301` and native runner `3c461c5`. This reruns checked binding,
+  admission/deletion races and application-process crash recovery against actual
+  PostgreSQL and Kubernetes. It is a compatibility regression, not live legacy
+  adoption or a new full orchestrator suite. Agents metadata/authorization
+  writes remain stubs; no A2A driver, native Pod start or model runs.
+- `service-full.tap`: all **313 service tests** pass, including **69 audit
+  tests**. The audit now reports missing `0020`, missing/disabled adoption guards
+  and inconsistent migration dependencies. It still grants no lifecycle authority.
+- The 12:54:08 UTC read-only capture `capture-o698Wx/audit.json` finds the same
+  61 legacy records, 60 retained task PVCs and 125 confirmed workloads. Its
+  **65 findings** include the newly required, still absent `0020` migration;
+  `0018`/`0019` are also absent. The additional finding is not new data damage.
+- `native-before.json` / `native-after.json` confirm all **68 PVC identities,
+  specs and phases**, all **52 deployment identities/generations/images/replica
+  counts/readiness** across namespaces, and the namespace inventory unchanged.
+  There are zero task Pods/Services/quotas. Disposable fixture namespaces and
+  all three PostgreSQL containers are absent; preexisting storage is untouched.
+
+The registry fixture binary SHA-256 is
+`c27b037325fb3926e8a15273703015b092ef81c079c6ae366ca3b08d80305cef`;
+the reused native fixture hash is
+`e40d0f10f8ff4f88ba7e60456335795f0054f316dc697975db83d1ec80481f8e`.
+
+No installed database migration, legacy record or deployment changed. The
+failed unbound installed record is still retained. These guards do not prove
+all writers are drained, authenticate the selected backend/caller, check actual
+sandbox human ownership, audit previous checked bindings, or fence already-issued
+deletes, delayed creates and partitioned nodes. Explicit adoption/reconciliation
+under a compatible drained stack, followed by full A2A acceptance, remains open.
+
 ## Remaining Work
 
 - Use the read-only legacy inventory above to implement explicit adoption and
   reconciliation; complete the all-writer audit, including already-issued old deletions.
-  Pin compatible API/client dependencies and migrations `0017`-`0019`, drain and
+  Pin compatible API/client dependencies and migrations `0017`-`0020`, drain and
   roll out the coordinated stack, then run real registry/runner/controller/A2A
   acceptance. The combined process fixture now covers admission/deletion and
   application-process replacement, but its stubbed Agents metadata, unused

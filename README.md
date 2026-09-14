@@ -58,6 +58,10 @@ coordinated rollout remain open. These fixes are not permanently deployed.
 The [read-only upgrade audit](AGYN-CHECKED-VOLUMES.md#read-only-upgrade-audit)
 now records the installed legacy-data and client state without granting rollout,
 adoption or deletion authority. Explicit legacy reconciliation remains necessary.
+Dependent [legacy-adoption guards](AGYN-CHECKED-VOLUMES.md#legacy-adoption-guards)
+now reject unconfirmed predecessors and implicit legacy reopen, with registry
+race, upgrade and combined native regression tests passing. Migration `0020`
+and the checked stack are not installed; this is not a rollout permit.
 
 The new [durable execution service](SERVICE.md) adds authenticated A2A routing,
 transactional queued turns, reporting MCP, bounded outcome checks and a recoverable

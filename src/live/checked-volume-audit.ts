@@ -64,13 +64,15 @@ export function auditCheckedVolumes(capture: CheckedVolumeCapture) {
   const add = (code: string, detail: Omit<Finding, "code"> = {}) => findings.push({ code, ...detail });
   const hasChecked = db.migrations.includes("0018_checked_volume_lifecycle.sql");
   const hasAdmission = db.migrations.includes("0019_volume_workload_admission.sql");
+  const hasAdoption = db.migrations.includes("0020_legacy_volume_adoption.sql");
   if (!db.migrations.includes("0017_workload_removal_confirmation.sql")) add("missing-workload-confirmation-migration");
   if (!hasChecked) add("missing-checked-volume-migration");
   if (!hasAdmission) add("missing-admission-migration");
-  if (hasAdmission && !hasChecked) add("inconsistent-migration-history");
+  if (!hasAdoption) add("missing-legacy-adoption-migration");
+  if (hasAdmission && !hasChecked || hasAdoption && !hasAdmission) add("inconsistent-migration-history");
   for (const [table, name, required] of [
     ["volumes", "volumes_checked_lifecycle", hasChecked], ["volumes", "volumes_workload_admission", hasAdmission],
-    ["workloads", "workloads_volume_admission", hasAdmission]
+    ["workloads", "workloads_volume_admission", hasAdmission], ["volumes", "volumes_legacy_adoption", hasAdoption]
   ] as const) {
     if (required && !db.triggers.some(t => t.table === table && t.name === name && ["O", "A"].includes(t.enabled))) add("missing-or-disabled-database-guard");
   }

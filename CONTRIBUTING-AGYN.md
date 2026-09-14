@@ -283,10 +283,33 @@ authorization/incarnation binding and infrastructure fencing remain open.
 
 The standalone A2A repository also contains an AGPL-3.0-only, read-only
 [upgrade audit](AGYN-CHECKED-VOLUMES.md#read-only-upgrade-audit), with a pure
-analysis module, private-report CLI and 64 tests. It inventories the real lab
+analysis module, private-report CLI and 69 tests. It inventories the real lab
 without rewriting legacy records or treating observed absence as deletion
 authority. It remains operator-side integration code, not another Agyn fork
-branch or an adoption API proposal. The full service suite now passes 308 tests.
+branch or an adoption API proposal. The full service suite now passes 313 tests.
+
+## Legacy Volume Adoption
+
+- Fork/branch: [`spk-ai/runners`, `feat/legacy-volume-adoption`](https://github.com/spk-ai/runners/tree/feat/legacy-volume-adoption),
+  commit `748d283`, based on the owner-admission guard `f05b479`.
+- Scope: strengthen existing checked bind, require a recorded legacy name and
+  zero unconfirmed predecessors, prevent implicit legacy reopen, preserve
+  metering history and add migration `0020`. No new RPC, generated API changes
+  or A2A controller/workflow changes.
+- Current Kubernetes-profile validation uses the native runner's pinned
+  `k8s.io/apimachinery` validators instead of reimplementing name/label parsing.
+  Backend-neutral identity validation would need a separate agreed contract.
+- Evidence: all 419 registry race tests with both real PostgreSQL fixtures,
+  build, vet and module verification pass. The combined checked-process/native
+  fixture also passes with this registry and real migrations. See
+  [the adoption guard acceptance](AGYN-CHECKED-VOLUMES.md#legacy-adoption-guards).
+
+The branch is pushed with the repository's existing license retained; no
+upstream PR has been opened. Keep the incremental diff separate from its
+prerequisites and rebase after those contracts are accepted. This does not
+implement operator adoption approval, writer draining, backend authentication,
+late-create/node fencing or an installed rollout. Failed/unbound legacy records
+remain retained for explicit reconciliation.
 
 ## Runner Ingress Isolation
 

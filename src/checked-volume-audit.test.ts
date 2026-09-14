@@ -17,13 +17,14 @@ function fixture(checked = false): CheckedVolumeCapture {
   const bound = { instanceId: "pvc-one", instanceUid: id(10), volumeKey: id(1), identityLabels: structuredClone(labels) };
   const owner = { ownerKind: "agent_instance", ownerId: id(2), runnerId: id(3), organizationId: id(4), agentId: id(5), threadId: id(6) };
   return { scope, inventoryStable: true, registry: { database: "runners", readOnly: "on", isolation: "repeatable read", at,
-    migrations: ["0017_workload_removal_confirmation.sql", ...(checked ? ["0018_checked_volume_lifecycle.sql", "0019_volume_workload_admission.sql"] : [])],
+    migrations: ["0017_workload_removal_confirmation.sql", ...(checked ? ["0018_checked_volume_lifecycle.sql", "0019_volume_workload_admission.sql", "0020_legacy_volume_adoption.sql"] : [])],
     counts: { volumes: 1, workloads: 1, runners: 1 }, runners: [{ id: id(3), organizationId: null, status: "enrolled" }],
     volumes: [{ ...owner, id: id(1), definitionId: id(7), instanceId: "pvc-one", sizeGb: "1", status: "active", removedAt: null,
       checkedLifecycle: checked ? true : null, revision: checked ? 2 : null, bound: checked ? bound : null, intent: null }],
     workloads: [{ ...owner, id: id(8), instanceId: "old-pod", status: "stopped", removedAt: at, removalConfirmedAt: at }],
     triggers: checked ? [{ table: "volumes", name: "volumes_checked_lifecycle", enabled: "O" },
-      { table: "volumes", name: "volumes_workload_admission", enabled: "O" }, { table: "workloads", name: "workloads_volume_admission", enabled: "O" }] : [] },
+      { table: "volumes", name: "volumes_workload_admission", enabled: "O" }, { table: "workloads", name: "workloads_volume_admission", enabled: "O" },
+      { table: "volumes", name: "volumes_legacy_adoption", enabled: "O" }] : [] },
     claims: [{ name: "pvc-one", uid: id(10), resourceVersion: "10", labels, deleting: false, owners: 0 }], pods: [],
     deployments: ["agents-orchestrator", "gateway", "k8s-runner", "runners"].map((name, n) => ({ name, uid: id(30+n), generation: 1,
       images: [{ name, image: `reviewed-${name}@sha256:${"a".repeat(64)}` }], ready: true })) };
@@ -36,7 +37,7 @@ test("volume upgrade audit reports legacy observations without granting lifecycl
   assert.deepEqual(f, before);
   assert.deepEqual(result.volumes[0].physical, [{ name: "pvc-one", uid: id(10) }]);
   assert.equal(result.summary.legacyVolumes, 1); assert.equal(result.summary.unconfirmedWorkloads, 0);
-  assert.deepEqual(codes(f), ["missing-checked-volume-migration", "missing-admission-migration", "legacy-volume-requires-explicit-adoption"]);
+  assert.deepEqual(codes(f), ["missing-checked-volume-migration", "missing-admission-migration", "missing-legacy-adoption-migration", "legacy-volume-requires-explicit-adoption"]);
   for (const flag of [result.permitsAdoption, result.permitsDeletion, result.permitsRollout]) assert.equal(flag, false);
 });
 
@@ -71,6 +72,11 @@ const findings: [string, (f: CheckedVolumeCapture) => void, string][] = [
   ["live native Pod", f => { f.pods = [{ name: "busy", uid: id(80), resourceVersion: "1", deleting: false }]; }, "native-workloads-present"],
   ["incomplete client rollout", f => { f.deployments[0].ready = false; }, "client-rollout-incomplete"],
   ["disabled database guard", f => { db(f).triggers[0].enabled = "D"; }, "missing-or-disabled-database-guard"],
+  ["missing adoption migration", f => { db(f).migrations.pop(); }, "missing-legacy-adoption-migration"],
+  ["adoption without admission", f => { db(f).migrations = db(f).migrations.filter((v: string) => !v.startsWith("0019")); }, "inconsistent-migration-history"],
+  ["missing adoption guard", f => { db(f).triggers.pop(); }, "missing-or-disabled-database-guard"],
+  ["disabled adoption guard", f => { db(f).triggers[3].enabled = "D"; }, "missing-or-disabled-database-guard"],
+  ["replica-only adoption guard", f => { db(f).triggers[3].enabled = "R"; }, "missing-or-disabled-database-guard"],
   ["missing checked metadata", f => { db(f).volumes[0].revision = null; }, "inconsistent-checked-metadata"],
   ["replacement physical UID", f => { f.claims[0].uid = id(99); }, "bound-incarnation-mismatch-retain"],
   ["missing active binding", f => { db(f).volumes[0].bound = null; }, "missing-required-binding"],

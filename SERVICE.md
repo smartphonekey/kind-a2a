@@ -47,6 +47,13 @@ Combined end-to-end deletion, authoritative garbage
 collection and infrastructure fencing still need work; retained disks
 must not be treated as disposable just because one registry scan omits them.
 
+The dependent [legacy-adoption guard](AGYN-CHECKED-VOLUMES.md#legacy-adoption-guards)
+also requires migration `0020`. It prevents adoption with unconfirmed workloads
+or an unknown recorded name and refuses implicit legacy reopen. Registry race,
+upgrade and combined native regressions pass, but this is not an adoption
+coordinator, a writer drain or a permanent rollout. Existing failed/unbound
+legacy records still require explicit reconciliation and must remain retained.
+
 The service requires `A2A_SERVICE_CONFIG_FILE`, an operator-owned JSON file:
 
 ```json

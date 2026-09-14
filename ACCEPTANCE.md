@@ -2,6 +2,31 @@
 
 Evidence below spans the preserved `kind-aira-a2a-lab` baseline and the new self-hosted Agyn backend. Each section identifies its environment; fake-agent tests and live-model evidence are deliberately separated.
 
+## A2A Quota Recovery (2026-09-14)
+
+Build and all **205 tests** pass (186 top-level), including six new quota-proof
+tests and nine wrapper cases. Real Codex acceptance at `56fb179` also passed:
+complete a turn under native namespace quota, deny its follow-up before Pod
+creation, quarantine the retained inbox request, explicitly reconcile, and resume
+the same task/PVC/native session in a new Pod. The rejected request's append
+never ran; its inbox journal entry became `ack_only`. Quota availability alone
+did not authorize retry during the five-second observation window.
+
+Both native turns had verified main cgroups, seven bounded container specs and
+matching native quota usage. The credential-free preflight first passed 92
+network checks. The quota and fixture policies were removed, all four stock
+deployments restored and ready, all 48 prior PVCs unchanged and the new task PVC
+retained (49 total). Independent PostgreSQL reads confirmed all three workload
+confirmations survived restoration; Gateway verified the paused instance and
+active persistent/no-TTL workspace definition.
+
+[Exact evidence and reproduction](AGYN-RESOURCES.md#a2a-quota-recovery) distinguish
+this healthy-runner, existing-workspace case from first-provision PVC/secret
+rejection, infrastructure fencing, full second-agent acceptance and mandatory
+production profiles. The A2A controller/worker/driver were unchanged; these are
+operator acceptance additions, not an automatic retry mechanism or a permanent
+production deployment.
+
 ## Native Namespace Quota (2026-09-14)
 
 A separate credential-free real runner/Kubernetes test passed in **35.82s**.

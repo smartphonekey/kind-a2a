@@ -34,7 +34,9 @@ evidence; the real runtime is not yet a hardened sandbox.
 native sessions on the same agent, queued follow-ups after pod removal, and
 cross-pod TCP/UDP denial. The opt-in [bounded profile](AGYN-RESOURCES.md) now also
 passes those scenarios with explicit per-container CPU/memory bounds; aggregate
-admission and sandbox hardening remain required.
+task admission and [native quota recovery](AGYN-RESOURCES.md#a2a-quota-recovery)
+now have separate acceptance. Mandatory production profiles, sizing and sandbox
+hardening remain required.
 
 The new [durable execution service](SERVICE.md) adds authenticated A2A routing,
 transactional queued turns, reporting MCP, bounded outcome checks and a recoverable

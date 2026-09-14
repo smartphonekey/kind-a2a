@@ -257,9 +257,14 @@ for a credential-free Kubernetes test, not an upstream review unit. Test source
 accounting, completed-Pod counting, six competing starts and verified cleanup.
 The ordinary combined runner race suite also passes with live fixtures disabled.
 [Evidence and reproduction](AGYN-RESOURCES.md#native-namespace-quota-acceptance)
-distinguish this from deployed A2A quota recovery and mandatory production
-profiles, which remain open. Keep the lab image, integration test and evidence
-out of the focused chart proposal.
+distinguish this from the separate [native A2A quota-recovery scenario](AGYN-RESOURCES.md#a2a-quota-recovery),
+which now passes on the coordinated local stack at standalone commit `56fb179`.
+That scenario retains the existing task/PVC/session and explicitly retires a
+rejected inbox request without changing the controller, worker, driver or any
+Agyn binary. Six proof tests and nine wrapper cases bring the lab suite to 205
+tests. Those operator fixtures remain AGPL-3.0-only; keep them, the local image
+and acceptance evidence out of the focused chart proposal. First-provision
+rejection, production quota bootstrap and mandatory profiles remain open.
 
 ## Claude SDK Session Selection
 
@@ -374,6 +379,6 @@ The [durable admission limit](SERVICE.md#shared-execution-admission), its operat
 CLI and runtime checks belong to the focused A2A service. They use SQLite's
 existing transaction/constraint machinery and add no agent-specific logic or
 Agyn API changes. The separate native quota contribution above now has controlled
-runner/Kubernetes acceptance; neither check implies deployed A2A quota recovery
-or whole-cluster protection. These new service files retain AGPL-3.0-only; no
-upstream branch or PR is changed by the service admission work.
+runner/Kubernetes and existing-task A2A recovery acceptance, not a production
+rollout or protection across every namespace. These new service files retain
+AGPL-3.0-only; no upstream branch or PR is changed by the service admission work.

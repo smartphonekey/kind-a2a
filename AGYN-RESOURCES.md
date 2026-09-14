@@ -9,9 +9,11 @@ deployments. This is not a permanent production upgrade. The service's
 [shared task-count admission](SERVICE.md#shared-execution-admission) also passes
 local multi-process and delayed-release tests on 2026-09-14. A separate real
 runner/Kubernetes quota test now passes, including supporting-container usage,
-concurrent admission and release. Whole-task accounting, deployed A2A quota
-recovery, production sizing and adversarial hardening remain release gates;
-an execution count is not a CPU/RAM or physical-container budget.
+concurrent admission and release. The coordinated local A2A quota-recovery
+scenario also passes with an existing task workspace and native Codex session.
+Whole-task accounting, initial-provision rejection, production quota rollout,
+sizing and adversarial hardening remain release gates; an execution count is
+not a CPU/RAM or physical-container budget.
 
 The resource measurements remain valid, but these historical lifecycle images
 do not implement the new [removal-confirmation contract](AGYN-REMOVAL.md).
@@ -207,15 +209,100 @@ production resource arithmetic was added. See the native
 [quota contract](https://v1-33.docs.kubernetes.io/docs/concepts/policy/resource-quotas/)
 and [sidecar accounting](https://v1-33.docs.kubernetes.io/docs/concepts/workloads/pods/sidecar-containers/#resource-sharing-within-containers).
 
-The deployed stock Agyn runner remains unchanged and has no installed workload
-quota. Coordinated A2A acceptance must still prove durable state retention and
-explicit recovery after a rejected start. The current runner creates supporting
-resources before Pod creation; this PVC-free test does not prove their lifecycle
-under rejection. The chart does not fix orchestrator whole-task cost reporting,
+The stock Agyn runner has no permanently installed workload quota. This
+PVC-free test does not prove A2A recovery; the separate native scenario below
+now covers a rejected follow-up with an existing workspace. The current runner
+creates supporting resources before Pod creation; rejection on first provision
+still needs acceptance. The chart does not fix orchestrator whole-task cost reporting,
 add typed quota errors/retries, enforce producer bootstrap or mandatory profiles,
 or establish agent OOM recovery, tenant fairness, storage/PID/IO bounds or node
 partition fencing. UID 1000 in this fixture is not a hardened production agent
 security profile. These gates remain open.
+
+## A2A Quota Recovery
+
+On 2026-09-14, source `56fb17940e9234a4c7ab25b643b0452d021cc038` passed a real
+native Codex/A2A test on the coordinated removal-confirmation stack. The complete
+wrapper run, including deployment/restoration, took **139.508 seconds** from
+01:36:11.236Z to 01:38:30.744Z. Credential-free network preflight `ab2818aa` first
+passed all 92 checks and confirmed cleanup. Build and all **205 local tests**
+pass (186 top-level), including six quota-proof tests and nine new wrapper cases.
+
+The new operator-only scenario uses the existing A2A controller, worker and Agyn
+driver unchanged. It installs the real reviewed chart's quota in the otherwise
+idle workload namespace, completes one native turn, temporarily changes only
+`count/pods` to zero, and submits a follow-up. It then restores the original
+budget, requires explicit owner reconciliation and sends a new continuation.
+The rejected request is never resent. Only the existing ChatGPT subscription
+reference is used; no host provider credentials are copied or paid API fallback
+enabled. The bounded resource/network profile remains explicitly `trusted-local`.
+
+| Check | Observed evidence |
+| --- | --- |
+| Both native turns under quota | Each used one Pod, `550m` CPU/`2112Mi` requested memory, and `2500m` CPU/`2304Mi` memory limits. Both main cgroups and all seven container specs matched the selected allocations. |
+| Rejected follow-up | The real runner returned native quota `PermissionDenied`; Gateway retained `WORKLOAD_FAILURE_REASON_START_FAILED` and the exact quota name/Pod-count failure. No Pod or native execution was admitted for that request. |
+| Durable acceptance and release | One inbox receipt persisted at 01:37:19.806Z. Explicit workload absence confirmation was 01:37:20.018935Z; A2A `runtime.stopped` was 01:37:21.019Z. Quarantine retained the request and required reconciliation; it did not publish an agent outcome. |
+| Capacity restoration alone | During five one-second checks after restoring quota, the instance stayed paused, no Pod appeared and the task event count was unchanged. Another unreconciled follow-up was still rejected. |
+| Explicit recovery | Owner reconciliation was recorded at 01:37:26.538Z. The new continuation retained the exact native session and PVC across a new Pod UID; the rejected inbox request became `ack_only`. |
+| Side-effect guard | The file still contained exactly `mu0ko5xv`; the rejected request's unconditional `quota-replayed-...` append never appeared. This is not a claim of exactly-once arbitrary external effects. |
+| Cleanup and restoration | All compute quota usage returned to zero. The owned quota and network policies were removed with identity checks and observed absence; all four stock deployments were restored and ready. |
+
+Task `df06a3c8-68c0-4b5a-91bd-1b595fd4e93a` retained Agyn instance
+`9c408427-d6d9-4d1c-93f0-f4c63573587c`, Codex session
+`01a09d8f-6c95-7170-b02d-5cd65ce458c2` and PVC `pv-9c408427-d6d-bd59f7cc-231`
+(UID `0ca81475-d78e-4945-a189-343784e45df0`). Native Pod UIDs changed from
+`aa630bd3-8616-4503-bd85-fce890f00ff1` to `11d0f887-6392-41b4-8e82-e3a870525a6c`.
+Rejected execution `8b535214-7f0c-4eb8-a436-6f9dfafc0421` retained inbox request
+`136b6d94-33cc-4b68-a076-017f001d1ae3` and failed workload
+`8e3e9d9d-14b5-451b-819f-f9e2e721c4ce`. Native workloads were
+`152110bc-eba1-44bf-b21b-414c5fd353d4` and `c64247ec-0f73-4c70-a86a-7fa4dba0c292`.
+
+Independent post-restoration audits verified all **48** prior PVC UIDs/specs/
+phases unchanged, **49** total retained PVCs, zero workload Pods/Services/quotas,
+and the original network policy unchanged. The new instance is paused; its
+volume is still active with a persistent `/workspace` definition and no TTL.
+All three removal confirmations and the quota failure reason survived stock
+restoration in PostgreSQL. The existing additive migration was not changed.
+
+Reproduce only in the explicitly selected idle trusted local lab, after building
+the service and running the network preflight. Use the combined quota chart,
+not the earlier resource-only checkout:
+
+```sh
+env PATH=/home/alex/.nvm/versions/node/v24.21.0/bin:$PATH \
+  NODE_EXTRA_CA_CERTS=/home/alex/.agyn/local/certs/agyn-local-ca.pem \
+  AGYN_LIVE_ACCEPTANCE=trusted-local \
+  AGYN_KUBECONFIG=/home/alex/work/aira-a2a-lab/.state/agyn-kubeconfig \
+  AGYN_LIVE_RUNNERS_IMAGE=a2a-agyn-runners:890f759-api3c84a6a \
+  AGYN_LIVE_GATEWAY_IMAGE=a2a-agyn-gateway:6d7d432-api3c84a6a \
+  AGYN_LIVE_ORCHESTRATOR_IMAGE=a2a-agyn-orchestrator:d77e7d5-api3c84a6a \
+  AGYN_LIVE_INIT_IMAGE=docker.io/library/a2a-agynd-reporting-init@sha256:97dee776b0866e3324da20d3ac511239928dd73971af45e6748b9f9b98f18b70 \
+  AGYN_LIVE_RUNNER_IMAGE=a2a-agyn-runner:4dd12a8 \
+  AGYN_LIVE_COMPUTE_RESOURCES=true \
+  AGYN_LIVE_SUPPORTING_RESOURCES='{"requestsCpu":"50m","requestsMemory":"64Mi","limitsCpu":"500m","limitsMemory":"256Mi"}' \
+  AGYN_LIVE_QUOTA_HARD='{"requests.cpu":"1500m","requests.memory":"5Gi","limits.cpu":"6","limits.memory":"5Gi","count/pods":"2"}' \
+  AGYN_LIVE_HOST_IP=192.168.5.2 \
+  AGYN_LIVE_RUNNER_CHART=/home/alex/work/agyn-contrib/k8s-runner-quota-integration/charts/k8s-runner \
+  node scripts/agyn-live-lifecycle.mjs quota-recovery
+```
+
+The budget is fixture sizing, not a production recommendation. The wrapper
+requires an explicit absolute kubeconfig, bounded/network profile and complete
+budget; it refuses pre-existing quotas and retains the integration deployments
+if quota cleanup is unconfirmed. Quota changes use resource-version checks;
+deletion requires UID/version preconditions. Lost acknowledgements, conflicts,
+foreign/replaced resources and unrelated edits have focused tests. The failure
+message assertion belongs only to this controlled test; it is not a production
+error classifier or retry policy.
+
+Private evidence: `.state/agyn-reporting-live-lknJvL/{evidence,quota}.json`,
+`.state/agyn-network-live-c7EnYW/evidence.json`, and
+`.state/agyn-quota-acceptance-FAe3DV/{before,run,post-audit,database-audit,gateway-audit}.json`.
+The deployment recovery snapshot is `.state/agyn-lifecycle-deploy-EMmfZ1/before.json`.
+No private evidence is committed. This proves healthy-runner recovery of an
+existing task, not first-provision PVC/secret rejection, quota-controller outage,
+node partition fencing, full Claude lifecycle or mandatory production-profile
+enforcement. Those and the other production gates remain open.
 
 ## Bounded Agent Profile
 

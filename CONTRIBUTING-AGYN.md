@@ -352,6 +352,23 @@ unfiltered orchestrator race/vet failures remain disclosed. Workload-start
 pinning, authentication, fencing and rollout are not established by these tests.
 Acceptance-only API `ad5405b` and runner `2968787` are not bundled upstream PRs.
 
+## Prepared Workloads
+
+The two additional dependent [prepared-workload proposals](AGYN-PREPARED-WORKLOADS.md)
+are on `feat/prepared-workloads` in the API and native-runner forks. API `53e0817`
+adds separate prepare/activate/bound-removal RPCs; runner `d92930c` implements
+gated creation, UID/RV-checked activation, per-Pod claim holds and Pod-owned
+temporary Secrets. Live fixture `2ee4b73` and independent absence check `4023808`
+are separate follow-up commits. All 468
+ordinary native race entries, 1,060 repeated prepared entries, build and vet
+pass; real Kubernetes execution/resume and replacement-race checks pass too.
+
+These branches are based on acceptance combinations, not standalone upstream
+bases. Registry workload-binding persistence, both controller migrations and
+full A2A rollout remain pending. Keep their original licenses and review the
+contract with maintainers before declaring it an Agyn API. Do not bundle them
+into the independent transport proposal below. No upstream PR was opened.
+
 ## Runner Control Transport
 
 - Fork/branch: [`spk-ai/k8s-runner`, `fix/ziti-control-listener`](https://github.com/spk-ai/k8s-runner/tree/fix/ziti-control-listener),

@@ -72,6 +72,12 @@ rejects old-runner fallback; real controller/registry/Kubernetes acceptance
 preserves the original workspace on wrong-runner routing. Workload-start
 backend pinning, authentication/fencing and coordinated rollout remain open.
 
+The next [prepared-workload proposal](AGYN-PREPARED-WORKLOADS.md) adds gated Pod
+creation and exact-identity activation with claim deletion protection. Native
+race tests and real Kubernetes execution/resume and replacement-race tests pass.
+Immutable workload-binding storage and controller migration are still required;
+the installed A2A path does not use these new RPCs yet.
+
 The new [durable execution service](SERVICE.md) adds authenticated A2A routing,
 transactional queued turns, reporting MCP, bounded outcome checks and a recoverable
 worker. It is a development implementation with explicit [production gates](PRODUCTION.md),

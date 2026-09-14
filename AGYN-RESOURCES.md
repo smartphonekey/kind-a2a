@@ -12,9 +12,11 @@ runner/Kubernetes quota test now passes, including supporting-container usage,
 concurrent admission and release. The coordinated local A2A quota-recovery
 scenario also passes with an existing task workspace and native Codex session.
 A separate runner fix now passes native first-provision rejection and startup
-secret cleanup, including preservation of a partially created PVC. It is not yet
-in the coordinated A2A images. Whole-task accounting, first-provision A2A
-recovery, production quota rollout, sizing and adversarial hardening remain
+secret cleanup, including preservation of a partially created PVC. A deployed
+[first-PVC rejection and explicit A2A recovery](#a2a-first-provision-recovery)
+also passes after fixing the runner's missing Secret-read permission. Stock
+images and permissions were restored afterward. Whole-task accounting,
+production quota rollout, sizing and adversarial hardening remain
 release gates; an execution count is not a CPU/RAM or physical-container budget.
 
 The resource measurements remain valid, but these historical lifecycle images
@@ -400,13 +402,106 @@ Secret/PVC writes. The independent branch and its existing license are intact.
 This run did not deploy an image or enable the opt-in Kubernetes tests; the live
 matrix above is evidence for the focused revision only.
 
-The deployed runner and coordinated A2A image recipe do **not** yet contain this
-fix. First-provision A2A recovery, crash-orphan reconciliation, late-create
-fencing and post-success Stop/Remove cleanup still need implementation or
-acceptance. Existing named-PVC lookup also still accepts a name without
-verifying the stable `volume_key`; enforcing that identity needs a separate
-compatibility review and tests. None of these remaining gates is closed by this
-credential-free provisioning test.
+The first coordinated deployment below exposed a prerequisite that this initial
+administrator-backed matrix did not exercise: the deployed runner could
+create/delete Secrets but could not read them to confirm ownership and removal.
+The focused branch now includes the chart permission and tests the native matrix
+through a namespace-bound service account using the chart rules. Stock images
+are still restored after acceptance; this is not a permanent production upgrade.
+
+## A2A First-Provision Recovery
+
+On 2026-09-14, `provisioning-recovery` passed through the real A2A service,
+coordinated Agyn stack, Kubernetes quota controller and native Codex runtime.
+The deployment/test/restoration invocation took **152.745s**, 03:17:28.017Z to
+03:20:00.762Z. Service source was `1a8b523`; the runner binary was `74faf0e` with
+API `3c84a6a`, image `a2a-agyn-runner:74faf0e-api3c84a6a` (OCI index
+`sha256:68319e75290b425af1b1a12c2d9239765afe446dbaabed6441b0d9ffb0d28583`).
+No A2A controller, workflow, driver or agent runtime change was needed.
+
+The first deployment failed correctly because temporary credential cleanup was
+unconfirmed. Runner logs proved `get secrets` was forbidden for
+`system:serviceaccount:agyn-platform:k8s-runner`. Three provisioning attempts
+left three pull secrets; no Pod or PVC was admitted. The task was quarantined,
+not reconciled or replayed. After stock restoration and confirmed fixture pause,
+the operator removed only those three secrets using recorded UIDs, resource
+versions, workload ownership and exact startup-attempt annotations. All 49
+existing workspaces and 16 older secrets remained unchanged. This failed run is
+retained as evidence, not presented as a recovery pass.
+
+Focused runner fix [`9002f31`](https://github.com/spk-ai/k8s-runner/commit/9002f31)
+adds only `get` to its existing Secret create/delete rule. Image-only upgrade is
+insufficient; custom RBAC overrides must also be updated. A regression test first
+failed against the old rule. Both focused and combined (`6ab2e20`) full race
+suites pass. The revised native matrix passed all seven cases in **19.97s**
+using the chart's Role and an impersonated service account; Secret listing was
+explicitly denied. Its owned namespace `runner-startup-e089a7a0-c3d` was removed.
+
+For the successful A2A rerun, an operator-owned Role/RoleBinding temporarily
+granted only Secret `get` in `agyn-workloads`. Secret listing and reads in
+`agyn-platform` remained denied; the existing ClusterRole was never changed.
+Both temporary RBAC objects were conditionally deleted and permission restoration
+was verified at 03:20:01.513Z. The wrapper now refuses this scenario before any
+deployment change if the runner account lacks the required read permission.
+Secret inventory requests negotiate metadata-only API responses, reject payload
+fallback and sanitize errors.
+
+The quota started with one additional PVC slot above the 49-claim baseline,
+then denied that slot while retaining the normal Pod/CPU/memory budget. Exact
+native PVC quota rejection produced one retained inbox receipt, no admitted Pod
+or new PVC, no leaked secrets, and an explicitly confirmed failed workload.
+Restoring the slot did not wake the instance or alter task events during a
+five-second observation. Follow-ups were rejected both before and after capacity
+returned until the owner explicitly reconciled the execution.
+
+The same task then completed two real turns with MCP progress/artifact/outcome
+delivery, including a native Stop reminder. The failed volume record reopened
+as active with unchanged identity/ownership. The two Pod UIDs differ; both turns
+use the same PVC UID/spec and native session. The rejected inbox item is
+`ack_only` in both inspections and its separate append-marker file never exists.
+Compute usage returned to zero while PVC usage remained 50.
+
+| Identity | Recorded value |
+| --- | --- |
+| A2A task | `2489754c-677d-4434-8130-6832a0968092` |
+| Agyn instance | `a7a7db46-5d60-4d67-9830-01444709b7f5` |
+| Agyn thread | `63802827-227f-4cae-af4b-1ad9d8ebb736` |
+| Native Codex session | `01a09dec-71bc-7f12-adb5-6b9e8d96ebb0` |
+| Volume record | `1b371790-1870-538e-ba7a-d174bd81b1cf` |
+| PVC | `pv-a7a7db46-5d6-9be896ae-728` |
+| PVC UID | `6e937c54-8392-4d08-a983-e9d1bba62787` |
+
+Post-restoration audits verified all 49 prior PVC UIDs/specs/phases, all 16 older
+Secret identities, the original network policy, and four stock deployment
+UIDs/settings/readiness. There are no workload Pods, Services or quotas. All
+three workload-removal confirmations and the same active volume record survive
+stock restoration in PostgreSQL. Gateway confirms the instance is paused and
+its `/workspace` definition is persistent with no TTL.
+
+Reproduction uses the earlier four-component command with this runner image,
+the reviewed Secret-read permission installed first, the single scenario
+`provisioning-recovery`, and an explicit `persistentvolumeclaims` quota total
+exactly one above the current retained-claim count. The recorded budget was 50;
+after this run there are 50 claims, so a new run would require 51. Do not delete
+retained workspaces to reuse an old fixture budget. Mixed scenarios, an incorrect
+PVC count, missing read permission or pre-existing quotas fail preflight.
+
+Build and all **221 service tests** pass (202 top-level). Credential-free network
+preflight `6a3db6ee` passed 92 checks and cleaned up. Private evidence:
+`.state/agyn-reporting-live-bktx4G/{evidence,quota}.json`,
+`.state/agyn-provisioning-recovery-Vh3DIV/{run,before,post-audit,rbac,database-audit,gateway-audit}.json`,
+`.state/agyn-startup-rbac-g3QeKX/run.json` and `go-test.jsonl`,
+and `.state/agyn-network-live-9vxmTJ/evidence.json`.
+The failed fixture is `.state/agyn-reporting-live-qs9jez/`, with independent audit
+and explicit cleanup in `.state/agyn-provisioning-acceptance-bd1dJV/`.
+
+This closes the controlled first-PVC rejection/recovery check, not the full
+production lifecycle gate. Crash-orphan reconciliation, late-create/node fencing,
+post-success Stop/Remove cleanup, named-PVC identity enforcement and ownership
+validation when reopening closed volume records remain separate work. A first
+allocation has no prior native session to restore; the two successful turns
+establish subsequent session continuity. Completed-turn and interrupted-turn
+recovery evidence elsewhere must not be conflated with this provisioning case.
 
 ## Bounded Agent Profile
 

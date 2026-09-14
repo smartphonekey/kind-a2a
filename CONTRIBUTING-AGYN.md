@@ -263,18 +263,20 @@ That scenario retains the existing task/PVC/session and explicitly retires a
 rejected inbox request without changing the controller, worker, driver or any
 Agyn binary. Six proof tests and nine wrapper cases bring the lab suite to 205
 tests. Those operator fixtures remain AGPL-3.0-only; keep them, the local image
-and acceptance evidence out of the focused chart proposal. First-provision A2A
-recovery, production quota bootstrap and mandatory profiles remain open; the
-independent runner startup fix below has its own native acceptance.
+and acceptance evidence out of the focused chart proposal. This existing-task
+fixture does not prove first-provision recovery; the separate startup fix and
+later first-PVC A2A acceptance below cover that controlled case. Production quota
+bootstrap and mandatory profiles remain separate gates.
 
 ## Startup Secret Cleanup
 
 A nineteenth focused branch fixes resource handling discovered while tracing
-first-provision failures. It has no dependency on the resource/quota chart,
+first-provision failures. It has no dependency on the resource/quota additions,
 additive removal API, A2A controller, workflow or agent runtime:
 
 - Fork: [spk-ai/k8s-runner](https://github.com/spk-ai/k8s-runner).
-- Branch: `fix/startup-secret-cleanup`, commit `fcd7cf6`, based on `baadc75`.
+- Branch: `fix/startup-secret-cleanup`, commit `9002f31` (`fcd7cf6` plus required
+  Secret-read RBAC and authorization coverage), based on `baadc75`.
 - Compare: <https://github.com/agynio/k8s-runner/compare/main...spk-ai:k8s-runner:fix/startup-secret-cleanup>.
 - Attempt-scoped cleanup covers PVC and partial-Secret failures, preserves
   durable claims, and retains credentials after uncertain Pod creation.
@@ -282,12 +284,16 @@ additive removal API, A2A controller, workflow or agent runtime:
   absence and remains bounded after caller cancellation. It never adopts a
   conflicting Secret or removes a finalizer. Unconfirmed cleanup is diagnostic,
   not authorization to retry a workload.
-- Published `buf generate`, `go build ./...` and the full race suite pass
+- At `fcd7cf6`, published `buf generate`, `go build ./...` and the full race suite pass
   (146 tests including subtests; 101 top-level). The 12 new unit tests cover 34
   cases including subtests, separate from seven real native quota scenarios.
-- The opt-in credential-free test passed in 32.77s, including partial-PVC
+- The initial opt-in credential-free test passed in 32.77s, including partial-PVC
   retention/reuse and confirmed cleanup. No Pod/agent ran and all 49 existing
   task PVCs and four stock deployments remained unchanged.
+- Deployed acceptance then found the missing `get secrets` permission. The
+  chart now adds only named reads, without list/watch. Full race suites pass;
+  the native seven-case matrix passes in 19.97s through an impersonated service
+  account with the chart's Role, instead of administrator-backed runner calls.
 
 [Exact evidence and reproduction](AGYN-RESOURCES.md#native-first-provision-failures)
 are recorded separately from A2A recovery. The test uses the existing Kubernetes
@@ -298,12 +304,17 @@ and coordinated A2A deployment in separate review units. The fork retains its
 existing AGPL license; the branch is pushed and no upstream PR has been opened.
 
 The separate [`lab/startup-integration`](https://github.com/spk-ai/k8s-runner/tree/lab/startup-integration)
-branch at `74faf0e` combines this fix with `lab/quota-integration` (`e6e83e7`).
+branch at `6ab2e20` combines this fix with `lab/quota-integration` (`e6e83e7`).
 Generation against the combined API source `3c84a6a`, `go build ./...` and the
 full `go test -race ./...` suite pass. Compute-resource validation still occurs
 before any startup Secret or PVC write. Only the README needed manual conflict
-resolution; the focused contribution remains unchanged. This is source-level
-integration evidence, not a deployed A2A first-provision recovery result.
+resolution; the focused contribution remains independently reviewable. The
+[deployed first-PVC recovery](AGYN-RESOURCES.md#a2a-first-provision-recovery)
+also passes with the combined binary and an explicit namespace-scoped read grant:
+same task/instance/volume, rejected-request retirement, two native turns across
+Pod replacement, zero idle compute and preserved storage. The failed image-only
+run, targeted cleanup and stock/RBAC restoration are recorded separately. The
+operator fixtures are AGPL-3.0-only and stay out of the focused runner proposal.
 
 ## Claude SDK Session Selection
 

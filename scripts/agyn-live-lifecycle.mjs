@@ -63,9 +63,16 @@ const assertClaimSlot = () => {
   if (provisioningRecovery) assert.equal(JSON.parse(k(["get", "persistentvolumeclaims", "-n", "agyn-workloads", "-o", "json"])).items.length,
     Number(quotaBudget.persistentvolumeclaims) - 1, "PVC budget must leave exactly one new workspace slot");
 };
+const assertStartupRead = () => {
+  if (!provisioningRecovery) return;
+  const account = targets.find(target => target.name === "k8s-runner").original.spec.template.spec.serviceAccountName ?? "default";
+  assert.equal(k(["auth", "can-i", "get", "secrets", "-n", "agyn-workloads", `--as=system:serviceaccount:agyn-platform:${account}`]).trim(),
+    "yes", "deploy the reviewed startup Secret read permission before changing images");
+};
 assertIdle("refusing a global image change while workloads exist");
 if (quotaRecovery) assertNoQuotas();
 assertClaimSlot();
+assertStartupRead();
 mkdirSync(resolve(".state"), { recursive: true, mode: 0o700 });
 const directory = mkdtempSync(resolve(".state/agyn-lifecycle-deploy-"));
 writeFileSync(join(directory, "before.json"), JSON.stringify({ deployments: targets.map(target => ({ name: target.name,
@@ -94,6 +101,7 @@ try {
     assertIdle("workloads appeared during deployment setup; refusing further changes");
     if (quotaRecovery) assertNoQuotas();
     assertClaimSlot();
+    assertStartupRead();
     const current = deployment(target.name);
     assert(sameManaged(target, container(current, target.name), target.previous), `${target.name} managed settings changed during setup`);
     target.attempted = true;

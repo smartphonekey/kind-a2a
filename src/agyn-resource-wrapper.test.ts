@@ -18,7 +18,7 @@ for (const mode of ["success", "child-failure", "runner-patch-failure", "runner-
   "lost-runners-patch-ack", "lost-gateway-patch-ack", "managed-runners-edit", "managed-gateway-edit", "replaced-gateway",
   "missing-runners-image", "missing-gateway-image", "setup-busy", "startup-failure", "startup-no-model",
   "quota-recovery", "quota-no-budget", "quota-partial-budget", "quota-invalid-quantity", "quota-unbounded", "quota-no-kubeconfig", "quota-existing", "quota-retained", "quota-child-failure",
-  "provisioning-recovery", "provisioning-no-count", "provisioning-invalid-count", "provisioning-wrong-count", "provisioning-existing", "provisioning-retained", "provisioning-child-failure", "provisioning-mixed"]) {
+  "provisioning-recovery", "provisioning-no-count", "provisioning-invalid-count", "provisioning-wrong-count", "provisioning-existing", "provisioning-retained", "provisioning-child-failure", "provisioning-mixed", "provisioning-no-secret-get"]) {
   test(`resource deployment wrapper: ${mode}`, t => {
     const directory = mkdtempSync(join(tmpdir(), "a2a-resource-wrapper-"));
     t.after(() => rmSync(directory, { recursive: true, force: true }));
@@ -38,7 +38,10 @@ assert.equal(args[0],'--kubeconfig');assert.equal(args[1],'/fixture/config');
 const file=process.env.FAKE_DEPLOYMENT,mode=process.env.FAKE_MODE,state=JSON.parse(fs.readFileSync(file,'utf8'));
 const save=()=>fs.writeFileSync(file,JSON.stringify(state));
 const fail=()=>{state.failed=true;save();process.exit(2)};
-if(args.includes('get')) {
+if(args.includes('auth')) {
+  assert(args.includes('get')&&args.includes('secrets')&&args.includes('--as=system:serviceaccount:agyn-platform:default'));
+  console.log(mode==='provisioning-no-secret-get'?'no':'yes');
+} else if(args.includes('get')) {
   console.log(JSON.stringify(args.includes('deployment')?state.deployments[args[args.indexOf('deployment')+1]]:args.includes('resourcequotas')?
     {items:mode.endsWith('-existing')||state.quotaRetained?[{metadata:{name:'retained-quota'}}]:[]}:
     args.includes('persistentvolumeclaims')?{items:[{metadata:{name:'older-a'}},{metadata:{name:'older-b'}}]}:{items:state.busy?[{metadata:{name:'unreleased'}}]:[]}));
@@ -111,7 +114,7 @@ fs.writeFileSync(file,JSON.stringify(s));process.exit(['child-failure','quota-ch
     if (["missing-runners-image", "missing-gateway-image"].includes(mode)) assert.match(result.stderr, /Runners and Gateway removal-confirmation images are required/);
     if (mode === "startup-no-model") { assert.match(result.stderr, /explicit platform model metadata UUID/); assert.deepEqual(current.operations, []); }
     if (["quota-no-budget", "quota-partial-budget", "quota-invalid-quantity", "quota-unbounded", "quota-no-kubeconfig", "quota-existing",
-      "provisioning-no-count", "provisioning-invalid-count", "provisioning-wrong-count", "provisioning-existing", "provisioning-mixed"].includes(mode)) {
+      "provisioning-no-count", "provisioning-invalid-count", "provisioning-wrong-count", "provisioning-existing", "provisioning-mixed", "provisioning-no-secret-get"].includes(mode)) {
       assert.deepEqual(current.operations, [], "quota preflight changed deployments"); assert(!current.childRan);
     }
     if (mode.includes("patch-failure") || mode.includes("rollout-failure") || mode.startsWith("lost-") || mode.startsWith("missing-") ||

@@ -251,7 +251,8 @@ production rollout; it requires the coordinated contract and all-writer audit.
 
 The next dependent review unit migrates orchestrator and sandbox volume writers:
 
-- Fork/branch: `spk-ai/agents-orchestrator`, `feat/checked-volume-lifecycle`, commit `eebf4cf`.
+- Fork/branch: `spk-ai/agents-orchestrator`, `feat/checked-volume-lifecycle`,
+  production change `eebf4cf`, process-acceptance follow-up `5449301`.
 - Explicit base: combined orchestrator `f65a9f6`; required API `ec2bfed`, native
   runner `3c461c5` and Runners owner-admission guard `f05b479`.
 - [Review the incremental diff](https://github.com/spk-ai/agents-orchestrator/compare/f65a9f6...eebf4cf).
@@ -264,11 +265,21 @@ The next dependent review unit migrates orchestrator and sandbox volume writers:
   passes with real runner/Kubernetes agent and sandbox cleanup. Exactly the
   known group-consumer race test is excluded. The unchanged self-assignment also
   prevents an unfiltered vet pass. See [the precise acceptance scope](AGYN-CHECKED-VOLUMES.md#controller-migration).
+- Follow-up evidence: the selected race suite now passes 491 tests with both
+  native fixtures enabled. The new fixture uses real PostgreSQL/migrations,
+  registry RPCs, controller subprocesses and native Kubernetes deletion. It
+  forces both admission/deletion orderings and SIGKILL after begin, native
+  deletion and registry confirmation for both owner kinds. Independent SQL
+  reads verify committed state; same-name replacement rejects old-UID replay.
+  [Exact boundaries and reproduction](AGYN-CHECKED-VOLUMES.md#combined-process-acceptance)
+  retain the same unrelated full-race/vet limitations.
 
 The branch is pushed, with the existing license unchanged and no upstream PR.
-The native fixture's registry/Agents clients are fakes. Coordinated real database,
-controller, runner and A2A acceptance, legacy-record audit, all-writer rollout,
-backend authorization/incarnation binding and infrastructure fencing remain open.
+The earlier native fixture uses a fake registry; the new combined fixture uses
+the actual registry, while Agents metadata and authorization writes remain
+stubs. No model, native workload start or A2A driver runs in this fixture.
+Coordinated A2A acceptance, legacy-record audit, all-writer rollout, backend
+authorization/incarnation binding and infrastructure fencing remain open.
 
 ## Runner Ingress Isolation
 

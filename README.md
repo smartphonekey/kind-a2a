@@ -49,10 +49,12 @@ now passes API, registry and native runner acceptance, including real Kubernetes
 stale-delete rejection. A dependent registry admission guard also passes real
 PostgreSQL concurrency and migration tests, preventing follow-up admission from
 racing checked deletion. The dependent [orchestrator/sandbox caller migration](AGYN-CHECKED-VOLUMES.md#controller-migration)
-now passes ordinary tests and a selected race suite with real runner/Kubernetes
-agent and sandbox cleanup. Its registry is a fake; combined end-to-end acceptance,
-production garbage collection and coordinated rollout remain open. These fixes
-are not permanently deployed.
+now also passes [combined process acceptance](AGYN-CHECKED-VOLUMES.md#combined-process-acceptance)
+with real PostgreSQL, registry RPCs, controller processes and native Kubernetes
+deletion. Admission/deletion races and SIGKILL at three lifecycle boundaries
+pass for agent and sandbox owners. Agents metadata and authorization writes are
+still stubs; A2A end-to-end acceptance, production garbage collection and
+coordinated rollout remain open. These fixes are not permanently deployed.
 
 The new [durable execution service](SERVICE.md) adds authenticated A2A routing,
 transactional queued turns, reporting MCP, bounded outcome checks and a recoverable

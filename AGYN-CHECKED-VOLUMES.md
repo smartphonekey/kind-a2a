@@ -3,10 +3,13 @@
 # Checked Volume Removal
 
 Status: proposed API, registry implementation, native runner checks and the
-dependent orchestrator/sandbox migration pass their documented component
-acceptance. The branches are pushed. No platform deployment changed, and the
-combined registry/controller/runner/A2A rollout is still unverified. This is not
-production-ready end-to-end deletion.
+dependent orchestrator/sandbox migration pass component acceptance. The
+[combined process fixture](#combined-process-acceptance) now also passes with
+real PostgreSQL, registry RPCs, controller processes and native Kubernetes
+deletion. The branches are pushed. Agents metadata and authorization writes
+remain stubs in that fixture; no platform deployment changed, and coordinated
+rollout with A2A acceptance is still unverified. This is not production-ready
+end-to-end deletion.
 
 A subsequent [workload-admission guard](#workload-admission) now passes real
 PostgreSQL contention and upgrade tests on a dependent Runners branch. The
@@ -221,17 +224,72 @@ and labels unchanged, every platform deployment's UID/generation/images/readines
 unchanged, zero task Pods/Services/quotas and zero remaining fixture namespaces.
 The stock deployments are still in place. No new A2A lifecycle sweep ran.
 
+## Combined Process Acceptance
+
+Follow-up [`5449301`](https://github.com/spk-ai/agents-orchestrator/commit/5449301)
+on the same `feat/checked-volume-lifecycle` branch adds an opt-in real-registry
+fixture without changing production logic or dependencies. It builds Runners
+`f05b479` with actual migrations `0017`-`0019`, runs the native runner `3c461c5`,
+and invokes the checked controller in separate OS processes. Both fixture
+binaries and the parent/controller executable use Go's race detector.
+[Reproduction and safety requirements](https://github.com/spk-ai/agents-orchestrator/blob/5449301/testdata/runners-volume-fixture/README.md)
+are included with the contribution.
+
+Private evidence: `.state/agyn-checked-stack-9QcvU1/`, 2026-09-14:
+
+| Scope | Result |
+| --- | --- |
+| Full ordinary suite | Build and all 488 tests including subtests pass; live tests and the controller subprocess entry point are gated off (`controller-final-ordinary.jsonl`). |
+| Selected race suite | 491 tests, 249 top-level, pass with both native fixtures enabled (`controller-final-selected-race-native.jsonl`). Exactly `TestGroupMembershipConsumerLoopRetriesWithoutBlocking` is excluded; the standalone child entry point skips because the live test invokes it in subprocesses. |
+| Unfiltered checks | The full race run with live gates off has 487 passes and fails only the unchanged group-consumer test and its package. Full vet still fails on `start_decision.go:186` self-assignment; `go vet -assign=false ./...` passes. These are not unfiltered green results. |
+| Combined process fixture | Agent and sandbox cases pass in 19.04s and 23.83s, 42.86s total. Independent `psql` connections compare persisted ownership, revisions, bindings and intents with actual registry responses. |
+| Native retention regression | The earlier fake-registry/real-runner fixture also passes, in 23.42s. Its narrower scope remains separate. |
+
+Each combined owner case verifies both race orderings. A controller pauses
+after its idle scan, new work is admitted, and stale begin-removal is refused
+without native deletion. Another owner admits independently. A billing-ended
+failed workload still blocks a successor until explicit confirmation. In the
+reverse ordering, committed begin-removal prevents admission.
+
+The test SIGKILLs and joins both controller and registry at three boundaries:
+after begin commit, after native deletion but before the controller consumes its
+reply, and after registry confirmation but before owner finalization. Fresh
+processes preserve the original intent and its physical UID. `PENDING` does not
+finalize the registry; observed native absence precedes confirmation. Recovery
+after confirmed deletion does not repeat native deletion or confirmation, and
+the sandbox finalization counter advances only afterward. Explicit reopen then
+binds a new PVC UID at the same name, rejects old-target replay, and reuses the
+open generation without taking compensation ownership.
+
+The first fixture attempt failed because registry read enrichment lacked an
+Agents metadata stub. It cleaned up both namespaces and databases. That fixture
+defect was corrected without weakening production registry checks; it was not
+a production deletion regression. `stack-first.jsonl` preserves the failure,
+with subsequent passing and extended-crash runs stored separately.
+
+Agents metadata and authorization tuple writes are explicit stubs. The native
+client uses a fixture-ID-checked loopback route, not the production overlay.
+Workloads are unused admission reservations with synthetic historical retirement
+times: no `StartWorkload`, model, A2A driver or real Agents finalization runs.
+Only empty 1 MiB claims are used, with Pod quota zero and no backing storage.
+PostgreSQL has a private loopback port, bounded resources and tmpfs storage;
+only application processes are crashed, not PostgreSQL or a Kubernetes node.
+
+The final 11:50:27 UTC audit confirms all 68 pre-existing PVC identities/specs/
+phases/labels unchanged, including all 60 task claims; all 41 platform deployment
+UIDs/generations/images/readiness are unchanged. There are zero task Pods,
+Services or quotas, zero fixture namespaces, and no remaining fixture database
+containers. Stock services remain deployed. This advances combined component
+acceptance, not production authorization, storage failover or A2A rollout.
+
 ## Remaining Work
 
-- Run the migrated controller with the real guarded registry and native runner,
-  including concurrent admission/deletion and controller process replacement,
-  then repeat the A2A lifecycle acceptance. The component fixtures above are
-  not a substitute for this combined proof.
 - Audit legacy records and all writers, including already-issued old deletions.
   Pin compatible API/client dependencies and migrations `0017`-`0019`, drain and
   roll out the coordinated stack, then run real registry/runner/controller/A2A
-  acceptance. The database
-  and native fixtures here are separate, not that end-to-end proof.
+  acceptance. The combined process fixture now covers admission/deletion and
+  application-process replacement, but its stubbed Agents metadata, unused
+  workload reservations and empty claims are not that full lifecycle proof.
 - Bind backend routing to the correct runner/namespace incarnation. Labels and
   UID matching are not caller authentication or proof that a caller dialed the
   correct backend when an object is absent. Retain the broader authorization,

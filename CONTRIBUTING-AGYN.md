@@ -225,6 +225,28 @@ Orchestrator/sandbox callers and deployment are still pending. Review the API
 contract and dependency/rollout plan with maintainers before proposing activation;
 do not deploy a runner that rejects legacy deletion while its callers still use it.
 
+## Checked Owner Admission
+
+A further registry-only review unit prevents follow-up admission from racing
+checked volume removal:
+
+- Fork/branch: `spk-ai/runners`, `feat/volume-workload-admission`, commit `f05b479`.
+- Explicit base: combined `0492121`, requiring workload confirmation migration
+  `0017` and checked volumes `0018`. The new migration is `0019`.
+- [Review only the incremental diff](https://github.com/spk-ai/runners/compare/0492121...f05b479).
+  Rebase this dependent unit onto accepted prerequisites before an upstream PR;
+  do not submit the combined ancestry as an undifferentiated patch.
+- Scope: owner-scoped database admission, predecessor confirmation, immutable
+  protected workload evidence, guarded volume deletion/reopen and upgrade audit.
+- Evidence: build, vet and 335 full race tests pass with both real PostgreSQL
+  fixtures enabled; 48 forced interleavings cover all isolation settings and
+  prove unrelated owners still progress. See
+  [the acceptance report](AGYN-CHECKED-VOLUMES.md#workload-admission).
+
+The branch is pushed and the existing license is unchanged. No upstream PR has
+been submitted. This is not controller integration, native backend fencing or a
+production rollout; it requires the coordinated contract and all-writer audit.
+
 ## Runner Ingress Isolation
 
 A separate chart-only contribution adds opt-in workload ingress denial without

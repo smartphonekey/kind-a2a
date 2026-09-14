@@ -46,7 +46,9 @@ orphan deletion inferred from stale/scoped registry snapshots and reject incompl
 runner inventories. Independent and combined native checks pass, with all
 existing task PVCs preserved. The next [checked-volume contract](AGYN-CHECKED-VOLUMES.md)
 now passes API, registry and native runner acceptance, including real Kubernetes
-stale-delete rejection. Orchestrator/sandbox caller migration, production garbage
+stale-delete rejection. A dependent registry admission guard also passes real
+PostgreSQL concurrency and migration tests, preventing follow-up admission from
+racing checked deletion. Orchestrator/sandbox caller migration, production garbage
 collection and coordinated rollout remain open; these fixes are not permanently
 deployed.
 

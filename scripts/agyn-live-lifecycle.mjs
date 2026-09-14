@@ -146,17 +146,17 @@ const selectProxyPod = () => {
 };
 const captureProxy = async () => {
   const report = { image: llmProxyImage, pod: proxyPod, since: proxyStartedAt, observedAt: new Date().toISOString(),
-    rawLogsStored: false, captured: false, refusals: [], streamErrors: [] };
+    rawLogsStored: false, captured: false, refusals: [], streamErrors: [], requests: [] };
   try {
     assert(proxyPod, "diagnostic proxy identity was not observed");
     const current = JSON.parse(k(["get", "pod", proxyPod.name, "-n", "agyn-platform", "-o", "json"]));
     assert.equal(current.metadata.uid, proxyPod.uid, "proxy Pod was replaced");
     assert.equal(current.spec.containers.find(c => c.name === "llm-proxy").image, llmProxyImage, "proxy image changed during acceptance");
     assert.equal(current.status.containerStatuses.find(c => c.name === "llm-proxy").restartCount, 0, "proxy restarted during acceptance");
-    const { nativeProxyRefusals, nativeProxyStreamErrors } = await import("../dist/live/proxy-diagnostics.js");
+    const { nativeProxyRefusals, nativeProxyStreamErrors, nativeProxyRequests } = await import("../dist/live/proxy-diagnostics.js");
     const logs = k(["logs", proxyPod.name, "-n", "agyn-platform", "-c", "llm-proxy", "--timestamps=true",
       `--since-time=${proxyStartedAt}`, "--tail=200", "--limit-bytes=65536"]);
-    report.refusals = nativeProxyRefusals(logs); report.streamErrors = nativeProxyStreamErrors(logs); report.captured = true;
+    report.refusals = nativeProxyRefusals(logs); report.streamErrors = nativeProxyStreamErrors(logs); report.requests = nativeProxyRequests(logs); report.captured = true;
   } finally {
     writeFileSync(join(directory, "proxy-diagnostics.json"), JSON.stringify(report, null, 2), { mode: 0o600 });
   }

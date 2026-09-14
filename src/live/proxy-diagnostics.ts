@@ -16,6 +16,35 @@ export function nativeProxyStreamErrors(logs: string): Record<string, string | n
   return projectNativeDiagnostics(logs, true);
 }
 
+export function nativeProxyRequests(logs: string): Record<string, string | number | boolean>[] {
+  if (Buffer.byteLength(logs) > 64 * 1024) throw new Error("proxy log capture exceeded its bound");
+  const records: Record<string, string | number | boolean>[] = [];
+  const marker = "native: request metadata ";
+  const labels: Record<string, string[]> = {
+    phase: ["start", "response", "transport_error"], vendor: ["anthropic", "openai", "unknown"], method: ["GET", "POST", "HEAD", "other"],
+    endpoint: ["anthropic_messages", "anthropic_count_tokens", "openai_responses", "other"],
+    response_kind: ["sse", "json", "other", "absent"], response_encoding: ["identity", "encoded", "absent"]
+  };
+  for (const line of logs.split("\n")) {
+    const start = line.indexOf(marker);
+    if (start < 0 || line.length > 4096) continue;
+    let value: Record<string, unknown>;
+    try { value = JSON.parse(line.slice(start + marker.length)); } catch { continue; }
+    if (!value || Array.isArray(value) || Object.entries(labels).some(([key, allowed]) => typeof value[key] !== "string" || !allowed.includes(value[key])) ||
+      typeof value.request_stream !== "boolean" || typeof value.credential_present !== "boolean" || !Number.isInteger(value.status) ||
+      typeof value.call_id !== "string" || identifiers.some(key => value[key] !== undefined &&
+        (typeof value[key] !== "string" || !uuid.test(value[key]) || value[key] === "00000000-0000-0000-0000-000000000000"))) continue;
+    if (value.phase === "response" ? Number(value.status) < 100 || Number(value.status) > 599 || value.response_kind === "absent" || value.response_encoding === "absent" :
+      value.status !== 0 || value.response_kind !== "absent" || value.response_encoding !== "absent") continue;
+    if (String(value.endpoint).startsWith("anthropic_") && value.vendor !== "anthropic" || value.endpoint === "openai_responses" && value.vendor !== "openai") continue;
+    const record: Record<string, string | number | boolean> = { status: Number(value.status), request_stream: value.request_stream, credential_present: value.credential_present };
+    for (const key of [...Object.keys(labels), ...identifiers]) if (typeof value[key] === "string") record[key] = value[key];
+    records.push(record);
+    if (records.length === 128) break;
+  }
+  return records;
+}
+
 function projectNativeDiagnostics(logs: string, stream: boolean): Record<string, string | number | boolean>[] {
   if (Buffer.byteLength(logs) > 64 * 1024) throw new Error("proxy log capture exceeded its bound");
   const records: Record<string, string | number | boolean>[] = [];

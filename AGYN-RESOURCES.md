@@ -685,8 +685,64 @@ the original `native.jsonl` and `native-reconciliation.json`;
 source hashes in `native-run.json`, and matching `native-before.json` /
 `native-after.json`. The source hashes were rechecked before commit.
 
-This branch is pushed but not combined with the startup-cleanup/resource stack
-or deployed through A2A yet. Stock k8s-runner remains unchanged. Caller
+The lab-only `lab/pvc-owner-integration` branch at `641e2f7` combines this patch
+with startup credential cleanup, its chart permission, resources and quota.
+Local API generation, `go build ./...` and the full Go race suite pass. A new
+cross-patch test verifies matching-owner startup, foreign-owner and missing-key
+rejection, and partial PVC creation: rejected attempts remove only their own
+pull credentials with identity preconditions and never mutate/delete claims.
+The independent review branch remains unchanged.
+
+The combined native PVC test also passes all six subcases (seven entries with
+the parent), without skips. Private evidence is
+`.state/pvc-combined-native-oONnCp/`: source `641e2f7`, native JSONL and independent
+before/after snapshots. All 53 prior claims and four deployment identities,
+specs and generations were unchanged. Fixture namespace
+`runner-pvc-4e24ae82-c02`, UID `16431dc0-9034-4b3a-8aac-e873835450cf`, is confirmed
+absent. This is native PVC acceptance, not a combined A2A lifecycle pass.
+
+### Combined A2A acceptance
+
+The unchanged first-provision recovery scenario passes on the combined image
+`a2a-agyn-runner:641e2f7-api3c84a6a`, with Runners `5f66067`, Gateway `6d7d432`,
+orchestrator `d77e7d5`, API `3c84a6a` and the combined diagnostic/session init
+image. This run used the existing Codex subscription reference, not a new
+provider credential. A fresh model-free network preflight passed 92 checks.
+
+- Run: 05:54:49-05:59:10 UTC on 2026-09-14, approximately 261 seconds.
+- Task: `9f67c2e2-e678-40b7-ae8f-cc2fbf36da48`; retained instance
+  `0e51cc03-8c53-429a-bd7b-3c1eb557ed1d` and volume record
+  `fd60dd9d-441c-57d2-bc42-ea5c19b95144`.
+- Three infrastructure provisioning attempts hit the deliberate first-PVC
+  quota rejection before one A2A quarantine. No agent ran for that request;
+  startup credential cleanup was confirmed. Capacity restoration did not
+  authorize a retry. Explicit reconciliation retired the request `ack_only`.
+- Two native Codex turns then passed with a real Stop reminder, MCP outcomes,
+  confirmed release and no replay of the rejected request. Changed Pod UIDs
+  `47fe46e2-3b74-4d47-b748-003ed733310a` and
+  `257001b1-f8a5-4e9e-9d65-1db1a0d9d9ed` retained native session
+  `01a09e7e-10d4-7ba3-b30d-f6df484af812` and PVC
+  `pv-0e51cc03-8c5-de5998c7-d79` (final UID
+  `f87a54e2-2809-4626-8727-dfd2dcd24d28`).
+- Independent read-only PostgreSQL checks confirmed all five workload-removal
+  timestamps, the same active volume ownership tuple and its physical claim.
+  Gateway confirmed the instance paused and its workspace persistent with no TTL.
+- All 55 prior claim UIDs/specs/phases and 16 older Secret identities were
+  unchanged; 56 claims remain. Stock deployment UIDs/settings/readiness and
+  temporary RBAC were restored, with no workload Pods/Services/quotas remaining.
+
+Private evidence is `.state/agyn-pvc-recovery-KnA7dX/` and
+`.state/agyn-reporting-live-qxkNiI/`. Build provenance is in
+`.state/agyn-pvc-integration-build-BXMgeq/build.json`; image index digest
+`sha256:8b9a620053825b922ef1f4c72b777b1803b5b030208223eea57fe21c4d5e87e2`.
+The deployed `/app/k8s-runner` independently matched binary SHA-256
+`7c202c79098b65474105af0d326c57e9b4d8adb658630b7a69284220c2341ea3` before
+the native turns completed. The inspected runtime base was upstream `0.12.0`
+at digest `sha256:dadb9ad718533cce73f7918734c8ebe379bc539b786a09b4d3f6861ed535d5fa`.
+
+Both branches are pushed. Stock k8s-runner is restored, not permanently fixed.
+This is first-provision/continuation acceptance, not a new interrupted-turn,
+parallel or adversarial storage test. Caller
 authentication, sandbox open-record checks, UID/ownership-safe volume deletion,
 late-create reconciliation and old-writer fencing remain separate requirements.
 The claim check cannot stop a privileged writer from replacing storage after

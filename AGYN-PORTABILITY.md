@@ -1,17 +1,20 @@
 # Agent Portability
 
-Status: completed-turn Claude A2A/Pod recovery passes; the full portability gate
-remains open. The A2A controller and workflows are unchanged. Claude has a
+Status: completed-turn and explicit interrupted-turn Claude A2A/Pod recovery
+have passing fixtures; the full portability gate remains open. The A2A
+controller and workflows are unchanged. Claude has a
 reporting adapter, focused daemon patches and an operator-selected live profile.
-The evidence below separates successful completed-turn recovery from earlier
-failures and the still-required interrupted/concurrent lifecycle scenarios.
+The evidence below separates successful recovery fixtures from failures and
+the still-required streaming/concurrent lifecycle scenarios.
 
-The latest attempted interrupted-turn test failed before fault injection and
+An earlier interrupted-turn test failed before fault injection and
 exposed an independent [workload-removal contract bug](AGYN-REMOVAL.md).
 The historical successful profile below is no longer sufficient for the current
 driver. Coordinated local rollout, model-free failed-Pod acceptance and all five
-Codex lifecycle regressions now pass. No new Claude lifecycle result is claimed;
-its native error investigation and remaining scenarios are still required.
+Codex lifecycle regressions now pass. Refreshed Claude completed-turn recovery
+and a fresh interrupted-turn recovery also pass, as distinguished below from
+the failed interruption sweep. Native error investigation and the remaining
+Claude scenarios are still required.
 An isolated native HTTP 401 diagnostic now passes without provider credentials
 or a model backend. It verifies the proposed diagnostic path, not the cause of
 the historical failures or another Claude A2A lifecycle scenario.
@@ -228,15 +231,122 @@ On 2026-09-14 the operator refreshed the host login. A metadata-only check at
 04:46 UTC confirmed `loggedIn=true`, `authMethod=claude.ai`, subscription type
 `max`, and access-token expiry at `12:43:54Z`. No token value was printed or
 written to evidence. Agyn still had no Claude subscription binding at this
-checkpoint. Temporary managed-secret/subscription provisioning and the fresh
-Claude lifecycle sweep are pending; successful login alone is not acceptance.
+checkpoint. The subsequent temporary bindings and actual execution results are
+recorded below; successful login alone is not acceptance.
+
+### Refreshed Subscription Acceptance
+
+The first sweep after login, `.state/agyn-claude-lifecycle-XmgbFo/`, ran at
+04:59-05:04 UTC on 2026-09-14 using the combined diagnostic/session daemon,
+Claude runtime `2.1.225` and model `claude-sonnet-5`:
+
+- Completed recovery passed in `.state/agyn-reporting-live-adJWdg/`, task
+  `e06feafc-0032-497b-9fce-225b67c4a136`. Changed Pod UIDs retained native session
+  `3f3e5d3a-60be-4556-bd1c-f12a8d569350` and PVC
+  `pv-96b31f71-505-566d98ab-45d`. Native MCP reports, Stop reminder and confirmed
+  compute release passed on both turns.
+- Interrupted recovery did not pass in `.state/agyn-reporting-live-TB3ovb/`,
+  task `e87146ba-89f9-4cba-9f20-3b18cd7316f1`. The append, gated replacement,
+  quarantine and explicit reconciliation occurred, but the subsequent native
+  follow-up failed without an outcome. Streaming/cancellation/parallel were
+  not run because the sweep stopped at this failure.
+- Read-only retained-PVC inspection found exactly one append, the original
+  request `ack_only`, the follow-up `pending`, and unchanged native session
+  `706e5a2c-023f-469f-abf2-009614bd9f15`. No native agent was started by inspection.
+  Both message-filtered and workload-level tracing contained only invocation
+  records, not a provider status. This failure remains unclassified, not an
+  established HTTP 400/401 or proof of safe completed interrupted recovery.
+- The four stock deployments and temporary named-Secret read grant were
+  restored. All 51 previous claims and 16 older Secret identities were unchanged;
+  53 claims remained and no workload Pods/Services/quotas remained. The owned
+  subscription, credential and two attachments were deleted and absence checked.
+  Host login contents were unchanged; none of 19 retained evidence files
+  contained the temporary provider token.
+
+A fresh interrupted-only test then passed with the same reviewed agent/runtime
+stack and unchanged A2A controller/workflows. It did not retry or edit the failed
+task. Evidence: `.state/agyn-claude-interrupted-Aduaph/` and
+`.state/agyn-reporting-live-l0lxoq/`, task
+`9dd8c389-7021-47b4-9d9b-afc56678bc81`. Three different Pod UIDs retained instance
+`4f00abdf-08d1-486e-b1ab-b25ccd177fdd`, native session
+`69b23941-6a57-4095-b81a-4acd5e932217` and PVC `pv-4f00abdf-08d-9764aa2a-a73`.
+After explicit reconciliation the old request became `ack_only`, the append
+remained exactly once, and the new turn reported its artifact/outcome and
+released compute. All three workloads have explicit removal confirmations.
+Stock services/RBAC were restored, all 53 previous claims survived and 54 were
+retained. The temporary credential/subscription/attachment were removed;
+16 evidence files were credential-free and the host login was unchanged.
+This fresh pass does not explain or erase the earlier failure.
+
+The remaining-scenarios sweep, `.state/agyn-claude-remaining-x0vAy5/`, stopped on
+streaming follow-up failure. Task `33460d05-4dc0-4190-8649-b3eca72eafbc` in
+`.state/agyn-reporting-live-QvVQlO/` completed its first turn, then resumed in
+Pod UID `c8a5295d-062f-4cd7-812e-0ffe9b39a27f`. This time the observer captured
+`claude_result_error`, `result_subtype=success`, `terminal_reason=api_error`,
+`api_status=401`; the daemon exited with code 1 and left the execution
+quarantined without a successful outcome. The misleading native `success`
+subtype did not override `IsError`. No raw error body was stored. Cancellation
+and parallel scenarios were not run. This is not a passing streaming test.
+
+All 54 previous claims survived, 55 were retained, and stock deployments/RBAC
+were restored with zero workload Pods/Services/quotas. The temporary managed
+credential/subscription/attachment were deleted; all 16 fixture evidence files
+were token-free and host login contents were unchanged. Its token was not due
+to expire until 12:43:54 UTC, hours after the failure. Expiry metadata alone
+does not prove a credential is accepted by the provider.
+
+The inspected Agyn credential path gives Claude an environment placeholder;
+the native LLM proxy resolves the attached subscription and replaces the
+outbound Authorization header. Deployed proxy `0.14.0` corresponds to
+`agynio/llm-proxy` tag `v0.14.0` (`dd1a3fb`); see its
+[binding resolution](https://github.com/agynio/llm-proxy/blob/dd1a3fb757ac4f742bbffbb4ac3daec462943642/internal/native/server.go)
+and [native forwarder](https://github.com/agynio/llm-proxy/blob/dd1a3fb757ac4f742bbffbb4ac3daec462943642/internal/proxy/native.go).
+The newer upstream refusal-logging commit `212b0a8` changes the platform
+handler, not this native path. The next investigation must
+distinguish credential resolution/interception from upstream refusal. The
+runtime's 401 alone does not prove either cause, and it does not classify the
+older interruption failure retroactively. No proxy or native CLI patch/upgrade
+was deployed as part of these tests.
+
+A subsequent bounded, network-denied inspector mounted only the streaming
+fixture PVC read-only. Its identity and contents were retained, its Pod/policy
+were removed, and no native CLI or provider credential was supplied. Native
+session `31dd0b7f-aba8-4cd0-a785-5f20166d6a02` still mapped to the same instance;
+the first inbox request was `ack_only` and the failed follow-up remained
+`pending`, with no new assistant/tool response after the follow-up. The native
+transcript and absent debug log did not retain the HTTP error body. Consequently
+the 401 is supported by live runtime diagnostics, not inferred from transcript
+contents. Metadata-only evidence is `retained-inspection.json` in the sweep
+directory. No failed task was replayed or its history repaired.
+
+### Runtime Diagnostic Capture
+
+Live reporting acceptance now starts a separate read-only diagnostic observer
+before submitting tasks. It remains responsive during synchronous operator
+probes and stops during cleanup. `runtime-diagnostics.json` retains validated
+agent/instance/workload/Pod identities, bounded container states, exit codes and
+allowlisted daemon/result error metadata. Raw logs, termination messages,
+environment values and provider response bodies are never persisted. The
+observer cannot control, delete or retry an execution. Pod log reads do not
+support UID preconditions; known replacements are rejected, but this is not a
+security boundary against privileged name replacement or forged agent logs.
+
+Build and all 230 service tests (including subtests) pass, with nine new parser
+and subprocess cases for redaction, foreign/ambiguous identities, replaced Pods,
+failed inventory, vanished logs and bounded shutdown. The fresh interrupted
+test captured all three Pods in 248 successful inventory polls. The original
+fault-injection exit and gated replacement failure are expected test actions,
+not diagnoses of the earlier unexplained native failure. Missing log reads are
+counted rather than treated as proof of success. This is acceptance diagnostics,
+not a production runtime-error storage/export implementation.
 
 ## Remaining Integration
 
-Run the remaining streaming, parallel isolation, cancellation and interrupted-turn
-recovery tests through Claude. Completed turns now verify the same instance,
-task PVC and native session across follow-ups with changed Pod UIDs. Explain
-the authentication failure below and test failures as well as successful turns.
+Streaming, parallel isolation and cancellation still need passing acceptance
+through Claude. Fresh completed-turn and explicit interrupted-turn recovery
+verify the same instance, task PVC and native session across changed Pod UIDs.
+Explain the captured 401 and earlier unclassified failures; a passing fresh
+fixture alone does not establish reliable recovery or resolve those incidents.
 
 The acceptance criterion remains unchanged: select a different operator agent
 profile without changing the A2A controller or workflow code. The broader

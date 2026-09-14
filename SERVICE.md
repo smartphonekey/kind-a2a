@@ -131,9 +131,10 @@ retained inbox/workspace state and explicit reconciliation after a rejected
 follow-up, without changing this scheduler. The independent
 [runner startup-secret fix](AGYN-RESOURCES.md#native-first-provision-failures)
 also passes native first-provision quota rejection and partial-PVC retention,
-but is not yet in the coordinated A2A images. First-provision A2A recovery,
-whole-task CPU/RAM accounting, production quota rollout, storage/PID/IO limits,
-fairness and sustained-load sizing remain separate production work.
+and now passes [combined first-provision A2A recovery](AGYN-RESOURCES.md#combined-a2a-acceptance)
+with named-PVC ownership validation. Stock services are restored after acceptance;
+production rollout, whole-task CPU/RAM accounting, storage/PID/IO limits,
+fairness and sustained-load sizing remain separate work.
 
 ## Client Authentication
 

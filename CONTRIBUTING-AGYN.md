@@ -381,8 +381,15 @@ The branch is pushed, retains the repository's AGPL license and has no upstream
 PR. It changes no API, A2A controller or workflow. Unkeyed custom callers require
 an explicit migration; this intentional validation change needs maintainer
 review. Startup Secret cleanup remains a separate dependency for credentialed
-deployments. The combined deployment/A2A regression is pending, and stock Agyn
-is unchanged. This is not RPC authentication, single-writer fencing, safe
+deployments. Lab-only `lab/pvc-owner-integration` (`641e2f7`) combines the patches
+with resources/quota and is pushed separately. Build, full race tests, a new
+credential-rollback/PVC-conflict matrix and native Kubernetes ownership tests
+pass, retaining all 53 existing claims. The subsequent combined first-provision
+A2A regression also passes: quota rejection, credential cleanup, explicit
+request retirement and two native Codex turns across replacement. Independent
+database/Gateway checks confirm five removed workloads and a paused instance
+with a persistent/no-TTL workspace; all 55 previous claims survived. Stock Agyn
+was restored, not permanently upgraded. This is not RPC authentication, single-writer fencing, safe
 name-only volume deletion or protection from privileged claim replacement.
 
 ## Claude SDK Session Selection

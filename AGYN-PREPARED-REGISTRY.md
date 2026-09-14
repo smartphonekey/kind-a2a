@@ -5,8 +5,9 @@
 Status: API, registry implementation and disposable PostgreSQL/RPC acceptance
 verified on 2026-09-14. This follows the [native prepared-workload stage](AGYN-PREPARED-WORKLOADS.md).
 The native runner and registry have been tested separately, not together through
-the A2A controller. Both controller migrations and coordinated rollout remain
-open. No installed platform service, database or task workspace was changed.
+the A2A controller. [Both controller paths now pass component acceptance](AGYN-PREPARED-CONTROLLERS.md);
+combined lifecycle acceptance and coordinated rollout remain open. No installed
+platform service, database or task workspace was changed.
 
 ## Implemented
 
@@ -80,8 +81,8 @@ The production checks were not relaxed to accommodate them.
 
 ## Next
 
-1. Migrate both agent and sandbox controllers and generated clients. Persist and
-   read these states before native prepare/activate/remove; do not use legacy fallback.
+1. Verify the [migrated agent and sandbox controllers](AGYN-PREPARED-CONTROLLERS.md)
+   against the real prepared registry and native runner, including process replacement.
 2. Add explicit uncertain-prepare observation/reconciliation, late-operation and
    interrupted Secret-ownership recovery. A retained unknown binding is safe
    quarantine, not a complete resource-recovery solution.

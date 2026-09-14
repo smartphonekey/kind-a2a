@@ -4,8 +4,10 @@
 
 Status: native API/runner implementation and isolated real Kubernetes acceptance
 verified on 2026-09-14. [Registry binding storage and guards are now verified
-separately](AGYN-PREPARED-REGISTRY.md). Both controller migrations, combined
-prepared-lifecycle acceptance and coordinated A2A rollout remain open. Installed
+separately](AGYN-PREPARED-REGISTRY.md). [Both controller paths are now migrated
+and component-tested](AGYN-PREPARED-CONTROLLERS.md), with separate native
+inspection acceptance. Combined prepared-lifecycle acceptance and coordinated
+A2A rollout remain open. Installed
 platform services remain stock. This is not a production-ready deployment.
 
 ## Why Two Phases

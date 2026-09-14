@@ -364,7 +364,7 @@ ordinary native race entries, 1,060 repeated prepared entries, build and vet
 pass; real Kubernetes execution/resume and replacement-race checks pass too.
 
 These branches are based on acceptance combinations, not standalone upstream
-bases. Both controller migrations and full A2A rollout remain pending.
+bases. Combined prepared-lifecycle acceptance and full A2A rollout remain pending.
 [Two more dependent registry branches](AGYN-PREPARED-REGISTRY.md), API `4f957e5`
 and Runners `e7c42f4` on `feat/prepared-workload-registry`, now add immutable
 bindings, state/revision CAS, owner/backend pins and database old-writer guards.
@@ -373,6 +373,16 @@ disposable PostgreSQL; native observations and authorization are fixtures, not
 combined native/A2A acceptance. Keep their original licenses and review the
 contract with maintainers before declaring it an Agyn API. Do not bundle them
 into the independent transport proposal below. No upstream PR was opened.
+
+[Three further dependent proposals](AGYN-PREPARED-CONTROLLERS.md) are now pushed:
+API `24b73ca` and runner `1a5a7b6` on `feat/prepared-workload-inspection`, plus
+orchestrator `20647af` on `feat/prepared-workloads`. Both agent and sandbox starts
+use the shared prepared lifecycle; exact-binding inspection never activates or
+repairs a Pod. All 597 ordinary controller entries, 596 selected race entries
+and 2,360 repeated entries pass. Native inspection passes 493 ordinary race
+entries and separate real Kubernetes scenarios. Existing unfiltered controller
+race/vet limits remain disclosed. This is not combined registry/controller/A2A
+acceptance, an installed upgrade or upstream approval.
 
 ## Runner Control Transport
 

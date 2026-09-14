@@ -7,14 +7,18 @@ const run = "7c51e3d1-5fa9-465c-8c0a-d3fbbcb0f635";
 const hard = { "requests.cpu": "1500m", "requests.memory": "5Gi", "limits.cpu": "6", "limits.memory": "5Gi", "count/pods": "2" };
 const render = () => ({ apiVersion: "v1", kind: "ResourceQuota", metadata: { name: `a2a-quota-${run}`, namespace: "agyn-workloads" }, spec: { hard } });
 const fixture = () => quotaFixture(JSON.stringify(render()), run, hard);
-function fake(mode = "") {
-  const state = { current: undefined as any, busy: false, calls: [] as any[] };
-  const status = (spec: any) => ({ hard: structuredClone(spec.hard), used: Object.fromEntries(Object.keys(hard).map(key => [key, "0"])) });
+function fake(mode = "", provisioning = false) {
+  const state = { current: undefined as any, busy: false, calls: [] as any[], claims: 2 };
+  const budget = provisioning ? { ...hard, persistentvolumeclaims: "3" } : hard;
+  const deniedResource = provisioning ? "persistentvolumeclaims" : "count/pods";
+  const spec = quotaFixture(JSON.stringify({ ...render(), spec: { hard: budget } }), run, budget, deniedResource);
+  const status = (spec: any) => ({ hard: structuredClone(spec.hard), used: Object.fromEntries(Object.keys(spec.hard).map(key =>
+    [key, key === "persistentvolumeclaims" ? String(state.claims) : "0"])) });
   const error = (code: number) => Object.assign(new Error(`fixture ${code}`), { code });
   const api: any = {
     list: async (_version: string, kind: string, namespace: string) => {
       assert.equal(namespace, "agyn-workloads");
-      return { items: kind === "Pod" ? state.busy ? [{}] : [] : mode === "existing-quota" ? [{}] : [] };
+      return { items: kind === "Pod" ? state.busy ? [{}] : [] : kind === "PersistentVolumeClaim" ? Array(state.claims).fill({}) : mode === "existing-quota" ? [{}] : [] };
     },
     create: async (spec: any) => {
       state.calls.push("create");
@@ -38,8 +42,39 @@ function fake(mode = "") {
       state.calls.push("delete"); state.current = undefined;
     }
   };
-  return { state, quota: new QuotaFixture(api, fixture()) };
+  return { state, quota: new QuotaFixture(api, spec, undefined, deniedResource) };
 }
+
+test("first-provision quota requires an explicit PVC mode and exact additional workspace slot", async () => {
+  const budget = { ...hard, persistentvolumeclaims: "3" };
+  assert.deepEqual(parseQuotaBudget(budget, "persistentvolumeclaims"), budget);
+  assert.throws(() => parseQuotaBudget(budget));
+  for (const value of [undefined, 3, "0", "-1", "1.5", "01", "9007199254740992", "3m"])
+    assert.throws(() => parseQuotaBudget({ ...hard, persistentvolumeclaims: value }, "persistentvolumeclaims"));
+  const { state, quota } = fake("", true);
+  state.claims = 1;
+  await assert.rejects(quota.create(), /exactly one/);
+  await quota.close(); assert.deepEqual(state.calls, []);
+});
+
+test("PVC quota denies the first allocation without changing Pod capacity or requiring retained storage to be zero", async () => {
+  const { state, quota } = fake("", true);
+  await quota.create(); await quota.setDenied(true);
+  assert.equal(state.current.spec.hard.persistentvolumeclaims, "2");
+  assert.equal(state.current.spec.hard["count/pods"], "2");
+  await quota.observe(true, true); await quota.setDenied(false);
+  state.claims = 3; state.current.status.used.persistentvolumeclaims = "3";
+  await quota.observe(false, true);
+  await assert.rejects(quota.setDenied(true), /exactly one/, "cannot deny a now-allocated workspace as an initial allocation");
+  await quota.close(); assert.deepEqual(state.calls, ["create", "replace", "replace", "delete"]);
+});
+
+test("PVC quota retains externally changed storage budgets", async () => {
+  const { state, quota } = fake("", true); await quota.create();
+  state.current.spec.hard.persistentvolumeclaims = "4";
+  await assert.rejects(quota.setDenied(true)); await assert.rejects(quota.close());
+  assert.deepEqual(state.calls, ["create"]);
+});
 
 test("quota proof validates a complete operator budget and exactly one unscoped chart document", () => {
   assert.deepEqual(parseQuotaBudget(hard), hard);
@@ -119,4 +154,17 @@ test("quota rejection proof requires a retained receipt, native quota failure, q
     (x: any) => { x.events.push({ kind: "execution.dispatched", executionId: x.executionId }); },
     (x: any) => { x.events.push({ kind: "execution.recovered", executionId: x.executionId }); }
   ]) { const sample = rejected(); edit(sample); assert.throws(() => assertQuotaRejection(sample)); }
+});
+
+test("first-provision rejection requires PVC denial, no earlier workload and confirmed secret cleanup", () => {
+  const sample = { ...rejected(), deniedResource: "persistentvolumeclaims" as const };
+  sample.previousWorkloadIds = []; sample.workloads.shift();
+  sample.workloads[0].failureMessage = `exceeded quota: a2a-quota-${run}, persistentvolumeclaims`;
+  assert.equal(assertQuotaRejection(sample), "inbox-request");
+  for (const edit of [
+    (x: any) => { x.previousWorkloadIds = ["previous"]; },
+    (x: any) => { x.workloads[0].failureMessage += "; startup_secret_cleanup_unconfirmed"; },
+    (x: any) => { x.workloads[0].failureMessage = `exceeded quota: a2a-quota-${run}, count/pods`; },
+    (x: any) => { delete x.deniedResource; }
+  ]) { const copy = structuredClone(sample); edit(copy); assert.throws(() => assertQuotaRejection(copy)); }
 });

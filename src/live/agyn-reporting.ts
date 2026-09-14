@@ -22,6 +22,7 @@ import { claudeNativeProbe, liveAgentProfileSchema, nativeIdentities, persistent
 import { assertConfirmedWorkloads } from "./removal-proof.js";
 import { parseQuotaBudget, quotaFixture, QuotaFixture } from "./quota-proof.js";
 import { runQuotaRejectedTurn } from "./agyn-quota.js";
+import { assertProvisioningInventory, assertReopenedVolume, provisioningInventory, runProvisioningRejectedTurn } from "./agyn-provisioning.js";
 
 if (process.env.AGYN_LIVE_ACCEPTANCE !== "trusted-local") throw new Error("Set AGYN_LIVE_ACCEPTANCE=trusted-local to run real-model tests");
 const interrupted = process.env.AGYN_LIVE_SCENARIO === "interrupted";
@@ -29,16 +30,19 @@ const cancellation = process.env.AGYN_LIVE_SCENARIO === "cancellation";
 const parallel = process.env.AGYN_LIVE_SCENARIO === "parallel";
 const streaming = process.env.AGYN_LIVE_SCENARIO === "streaming";
 const quotaRecovery = process.env.AGYN_LIVE_SCENARIO === "quota-recovery";
-if (process.env.AGYN_LIVE_SCENARIO && !interrupted && !cancellation && !parallel && !streaming && !quotaRecovery) throw new Error("Unknown live scenario");
+const provisioningRecovery = process.env.AGYN_LIVE_SCENARIO === "provisioning-recovery";
+const quotaEnabled = quotaRecovery || provisioningRecovery;
+const deniedResource = provisioningRecovery ? "persistentvolumeclaims" : "count/pods";
+if (process.env.AGYN_LIVE_SCENARIO && !interrupted && !cancellation && !parallel && !streaming && !quotaEnabled) throw new Error("Unknown live scenario");
 if (parallel) assert(process.env.AGYN_LIVE_RUNNER_CHART, "parallel acceptance requires explicit workload network policies");
-const scenario = interrupted ? "interrupted" : cancellation ? "cancellation" : parallel ? "parallel" : streaming ? "streaming" : quotaRecovery ? "quota-recovery" : "completed";
+const scenario = process.env.AGYN_LIVE_SCENARIO || "completed";
 const bounded = process.env.AGYN_LIVE_COMPUTE_RESOURCES === "true";
 assert(!process.env.AGYN_LIVE_COMPUTE_RESOURCES || bounded, "invalid compute resource opt-in");
-if (quotaRecovery) assert(bounded && process.env.AGYN_LIVE_RUNNER_CHART, "quota acceptance requires the bounded resource/network profile");
-if (quotaRecovery) assert(isAbsolute(process.env.AGYN_KUBECONFIG ?? ""), "quota acceptance requires an explicit absolute kubeconfig");
-const quotaBudget = quotaRecovery ? parseQuotaBudget(JSON.parse(process.env.AGYN_LIVE_QUOTA_HARD ?? "null")) : undefined;
+if (quotaEnabled) assert(bounded && process.env.AGYN_LIVE_RUNNER_CHART, "quota acceptance requires the bounded resource/network profile");
+if (quotaEnabled) assert(isAbsolute(process.env.AGYN_KUBECONFIG ?? ""), "quota acceptance requires an explicit absolute kubeconfig");
+const quotaBudget = quotaEnabled ? parseQuotaBudget(JSON.parse(process.env.AGYN_LIVE_QUOTA_HARD ?? "null"), deniedResource) : undefined;
 const quotaRun = randomUUID();
-const quotaEvidence: any = { enabled: quotaRecovery, samples: [], turns: [] };
+const quotaEvidence: any = { enabled: quotaEnabled, deniedResource, samples: [], turns: [], inventories: [] };
 let quotaOperator: QuotaFixture | undefined;
 const resourceEvidence: any = { enabled: bounded, pods: {} };
 const protocolEvidence: Record<string, unknown> = { enabled: streaming };
@@ -61,7 +65,7 @@ const networkTemplate = process.env.AGYN_LIVE_RUNNER_CHART ? execFileSync("helm"
   resolve(process.env.AGYN_LIVE_RUNNER_CHART), "--set", "workloadIngressNetworkPolicy.enabled=true",
   "--set", "workloadNamespace=agyn-workloads", "--show-only", "templates/workload-ingress-networkpolicy.yaml"],
 { encoding: "utf8", timeout: 30_000 }) : undefined;
-const quotaTemplate = quotaRecovery ? execFileSync("helm", ["template", "a2a-quota-proof", resolve(process.env.AGYN_LIVE_RUNNER_CHART!),
+const quotaTemplate = quotaEnabled ? execFileSync("helm", ["template", "a2a-quota-proof", resolve(process.env.AGYN_LIVE_RUNNER_CHART!),
   "-f", "-", "--show-only", "templates/workload-resourcequota.yaml"], { encoding: "utf8", timeout: 30_000, input: JSON.stringify({
     workloadNamespace: "agyn-workloads", env: [{ name: "KUBE_NAMESPACE", value: "agyn-workloads" }],
     workloadResourceQuota: { enabled: true, name: `a2a-quota-${quotaRun}`, hard: quotaBudget }
@@ -229,6 +233,7 @@ const inspectInstance = (instanceId: string): any[] => {
             cgroup:${bounded ? '{cpuMax:fs.readFileSync("/sys/fs/cgroup/cpu.max","utf8").trim(),memoryMax:fs.readFileSync("/sys/fs/cgroup/memory.max","utf8").trim()}' : "null"},
             journal:records("/workspace/.agyn/inbox-journal/"+process.env.AGENT_INSTANCE_ID),
             marker:fs.readFileSync("/workspace/reporting-proof.txt","utf8"),
+            provisioningReplay:fs.existsSync("/workspace/provisioning-replay.txt"),
             cancellation:control?{...control,alive,signals:fs.readFileSync("/workspace/cancel-signals.txt","utf8"),heartbeat:fs.readFileSync("/workspace/cancel-heartbeat.txt","utf8")}:null,
             configured:fs.existsSync("/run/agyn-execution/configured.json")}));`],
         { encoding: "utf8", timeout: 5000, stdio: ["ignore", "pipe", "pipe"] }));
@@ -321,6 +326,12 @@ const cancelRunningTurn = async (taskId: string) => {
   }
 };
 const runSingleTask = async () => {
+  const config = new KubeConfig(); config.loadFromFile(kubeconfig);
+  const core = config.makeApiClient(CoreV1Api);
+  const before = provisioningRecovery ? await provisioningInventory(core) : undefined;
+  if (before) quotaEvidence.inventoryBefore = before;
+  let rejectedProvisioning: Awaited<ReturnType<typeof runProvisioningRejectedTurn>> | undefined;
+  let rejectedTurn: { executionId: string; requestId: string } | undefined;
   const firstInput = { message: { messageId: randomUUID(), role: "ROLE_USER", parts: [{ text:
     cancellation ? `Cancellation acceptance test. Report progress, then use your command-execution tool to run /agyn/bin/node with this JavaScript and wait for it to finish. Do not detach the process, report an outcome, or run other commands while it is running. JavaScript: const fs=require("node:fs");fs.writeFileSync("/workspace/cancel-signals.txt","");process.on("SIGTERM",()=>fs.appendFileSync("/workspace/cancel-signals.txt","SIGTERM\\n"));fs.writeFileSync("/workspace/reporting-proof.txt",${JSON.stringify(suffix)});fs.writeFileSync("/workspace/cancel-heartbeat.txt",String(Date.now()));fs.writeFileSync("/workspace/cancel-control.json",JSON.stringify({pid:process.pid,nonce:${JSON.stringify(suffix)}}));setInterval(()=>fs.writeFileSync("/workspace/cancel-heartbeat.txt",String(Date.now())),250);setTimeout(()=>{fs.writeFileSync("/workspace/cancel-late.txt","unexpected completion");process.exit(0)},120000);`
       : interrupted ? `Interruption acceptance test. Append the line ${suffix} to /workspace/reporting-proof.txt using >>, unconditionally and exactly once. This append is deliberately not idempotent. Report progress and publish the file's exact contents as a text artifact. Then run sleep 120. Do not report an outcome until that sleep finishes. Do not repeat the append on a stop reminder.`
@@ -345,10 +356,36 @@ const runSingleTask = async () => {
     });
     void blocking.catch(() => {});
   } else {
-    const first = await rpc("SendMessage", firstInput); taskId = first.task.id; tasks.push(taskId);
+    const first = await rpc("SendMessage", provisioningRecovery ? { ...firstInput, message: { ...firstInput.message, parts: [{ text:
+      `Append the line provisioning-replayed-${suffix} to /workspace/provisioning-replay.txt unconditionally, then report turn_done.` }] } } : firstInput);
+    taskId = first.task.id; tasks.push(taskId);
   }
   console.log(JSON.stringify({ kind: "live.task", taskId, directory }));
-  const waitTurn = async (turn: number, executionNumber = turn) => {
+  const quotaCallbacks = {
+    taskId, gateway, core, quota: quotaOperator!, rpc,
+    events: async () => {
+      const response = await fetch(`${base}/tasks/${taskId}/events?limit=1000`, { headers, signal: AbortSignal.timeout(10_000) });
+      assert.equal(response.status, 200); return ((await response.json()) as any).events;
+    }, reconcile: async (executionId: string, reason: string) => {
+      const response = await fetch(`${base}/tasks/${taskId}/executions/${executionId}/reconcile`, { method: "POST", headers,
+        body: JSON.stringify({ resolution: "continue", reason }), signal: AbortSignal.timeout(10_000) });
+      assert.equal(response.status, 200, "explicit quota reconciliation failed");
+    }, record: (sample: any) => {
+      quotaEvidence.samples.push(sample); writeFileSync(join(directory, "quota.json"), JSON.stringify(quotaEvidence, null, 2), { mode: 0o600 });
+    }
+  };
+  const volumes = async (instanceId: string): Promise<any[]> => {
+    const page = await call("RunnersGateway", "ListVolumesByAgentInstance", { agentInstanceId: instanceId, pageSize: 100 });
+    assert(!page.nextPageToken, "unexpected extra task volume page");
+    return page.volumes ?? [];
+  };
+  if (provisioningRecovery) {
+    rejectedProvisioning = await runProvisioningRejectedTurn({ ...quotaCallbacks, before: before!, volumes });
+    rejectedTurn = rejectedProvisioning;
+    const resumed = await rpc("SendMessage", { ...firstInput, message: { ...firstInput.message, taskId, messageId: randomUUID() } });
+    assert.equal(resumed.task.id, taskId, "first-provision recovery created another task");
+  }
+  const waitTurn = async (turn: number, executionNumber = turn + (provisioningRecovery ? 1 : 0)) => {
     let last = "";
     for (let attempt = 0; attempt < 300; attempt++) {
       const page = await fetch(`${base}/tasks/${taskId}/events`, { headers }).then(r => r.json()) as any;
@@ -362,6 +399,11 @@ const runSingleTask = async () => {
         if (quotaOperator && snapshots[turn]?.length) {
           const quota = await quotaOperator.observe(false);
           assert.equal(quota.status?.used?.["count/pods"], "1", "native turn was not counted by the quota");
+          if (provisioningRecovery) {
+            assert.equal(quota.status?.used?.persistentvolumeclaims, quotaBudget!.persistentvolumeclaims);
+            assert.equal(snapshots[turn][0].provisioningReplay, false, "rejected initial message executed side effects");
+            assert.equal(snapshots[turn][0].journal.find((item: any) => item.message_id === rejectedTurn!.requestId)?.state, "ack_only");
+          }
           quotaEvidence.turns.push({ turn, executionId, podUid: snapshots[turn][0].uid, quota });
         }
       }
@@ -376,6 +418,25 @@ const runSingleTask = async () => {
         assert(events.filter(event => event.kind === "agent.outcome" && event.payload.outcome === "turn_done").length >= turn - (interrupted ? 1 : 0), "missing real MCP outcome");
         assert(events.filter(event => event.kind === "agent.artifact" && event.payload.text.trim() === suffix).length >= turn, "missing persistent file artifact");
         if (turn === 1) assert(events.some(event => event.kind === "execution.stop_check" && event.payload.action === "remind"), "native stop hook did not remind");
+        if (rejectedProvisioning) {
+          const bindings = events.filter(event => event.kind === "runtime.bound");
+          assert.equal(bindings.length, 1, "task runtime binding was replaced");
+          assert.deepEqual(binding, rejectedProvisioning.binding);
+          const inventory = await provisioningInventory(core);
+          assertProvisioningInventory(before!, inventory, snapshots[turn][0].pvc[0]);
+          if (quotaEvidence.inventories.length) assert.deepEqual(inventory, quotaEvidence.inventories[0], "recovered workspace changed between turns");
+          quotaEvidence.inventories.push(inventory);
+          let current: any[] = [];
+          for (let attempt = 0; attempt < 30; attempt++) {
+            current = await volumes(binding.instanceId);
+            if (current[0]?.status === "VOLUME_STATUS_ACTIVE") break;
+            await delay(1000);
+          }
+          assert.equal(current.length, 1);
+          assertReopenedVolume(rejectedProvisioning.volume, current[0], snapshots[turn][0].pvc[0]);
+          quotaCallbacks.record({ kind: "provisioning.reopened", turn, volume: current[0], inventory });
+          await quotaOperator!.observe(false, true);
+        }
         return;
       }
       await delay(1000);
@@ -434,18 +495,8 @@ const runSingleTask = async () => {
       assert.equal(response.status, 200, "explicit reconciliation failed");
       console.log(JSON.stringify({ kind: "live.interruption-reconciled", taskId, executionId }));
     } else await waitTurn(1);
-    let rejectedTurn: { executionId: string; requestId: string } | undefined;
     if (quotaRecovery) {
-      const config = new KubeConfig(); config.loadFromFile(kubeconfig);
-      rejectedTurn = await runQuotaRejectedTurn({ taskId, suffix, first: evidence[0], gateway, core: config.makeApiClient(CoreV1Api),
-        quota: quotaOperator!, rpc, events: async () => {
-          const response = await fetch(`${base}/tasks/${taskId}/events?limit=1000`, { headers, signal: AbortSignal.timeout(10_000) });
-          assert.equal(response.status, 200); return ((await response.json()) as any).events;
-        }, reconcile: async (executionId, reason) => {
-          const response = await fetch(`${base}/tasks/${taskId}/executions/${executionId}/reconcile`, { method: "POST", headers,
-            body: JSON.stringify({ resolution: "continue", reason }), signal: AbortSignal.timeout(10_000) });
-          assert.equal(response.status, 200, "explicit quota reconciliation failed");
-        }, record: sample => { quotaEvidence.samples.push(sample); writeFileSync(join(directory, "quota.json"), JSON.stringify(quotaEvidence, null, 2), { mode: 0o600 }); } });
+      rejectedTurn = await runQuotaRejectedTurn({ ...quotaCallbacks, suffix, first: evidence[0] });
     }
     if (blocking) {
       const result = await blocking;
@@ -458,7 +509,7 @@ const runSingleTask = async () => {
     await rpc("SendMessage", { message: { taskId, messageId: randomUUID(), role: "ROLE_USER", parts: [{ text:
       "Read /workspace/reporting-proof.txt. Publish its exact existing contents as an artifact. Do not create or rewrite it. Run sleep 3 to leave an inspection window, then report turn_done." }],
       ...(streaming ? { metadata: { endTask: true } } : {}) }, configuration: { returnImmediately: true } });
-    await waitTurn(2, quotaRecovery ? 3 : 2);
+    await waitTurn(2, quotaEnabled ? 3 : 2);
     assert(snapshots[1]?.length && snapshots[2]?.length, "native session evidence was not captured");
     assert.notEqual(snapshots[1][0].uid, snapshots[2][0].uid, "follow-up must run in a recreated pod");
     assert.deepEqual(snapshots[1][0].pvc, snapshots[2][0].pvc, "task PVC changed");
@@ -466,7 +517,8 @@ const runSingleTask = async () => {
     assert.equal(snapshots[2][0].marker, interrupted ? `${suffix}\n` : suffix, "follow-up repeated a side effect or changed the file");
     if (interrupted) assert.equal(snapshots[2][0].journal.find((record: any) => record.message_id === snapshots[1][0].journal[0].message_id)?.state, "ack_only", "old inbox request was not retired explicitly");
     if (rejectedTurn) {
-      assert.equal(snapshots[2][0].journal.find((record: any) => record.message_id === rejectedTurn.requestId)?.state, "ack_only", "quota-rejected inbox request was not retired without execution");
+      const rejectedRequestId = rejectedTurn.requestId;
+      assert.equal(snapshots[2][0].journal.find((record: any) => record.message_id === rejectedRequestId)?.state, "ack_only", "quota-rejected inbox request was not retired without execution");
       assert.equal(quotaEvidence.turns.length, 2, "both native turns must be observed under quota");
       await quotaOperator!.observe(false, true);
       Object.assign(quotaEvidence, { rejectedTurn, passed: true });
@@ -490,10 +542,11 @@ const runSingleTask = async () => {
 try {
   if (quotaTemplate) {
     const config = new KubeConfig(); config.loadFromFile(kubeconfig);
-    quotaOperator = new QuotaFixture(KubernetesObjectApi.makeApiClient(config), quotaFixture(quotaTemplate, quotaRun, quotaBudget!), sample => {
+    quotaOperator = new QuotaFixture(KubernetesObjectApi.makeApiClient(config), quotaFixture(quotaTemplate, quotaRun, quotaBudget!, deniedResource), sample => {
       quotaEvidence.samples.push(sample); writeFileSync(join(directory, "quota.json"), JSON.stringify(quotaEvidence, null, 2), { mode: 0o600 });
-    });
+    }, deniedResource);
     await quotaOperator.create();
+    if (provisioningRecovery) await quotaOperator.setDenied(true);
   }
   if (networkTemplate) {
     const config = new KubeConfig(); config.loadFromFile(kubeconfig);

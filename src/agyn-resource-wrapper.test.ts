@@ -17,7 +17,8 @@ for (const mode of ["success", "child-failure", "runner-patch-failure", "runner-
   "runners-patch-failure", "gateway-patch-failure", "runners-rollout-failure", "gateway-rollout-failure",
   "lost-runners-patch-ack", "lost-gateway-patch-ack", "managed-runners-edit", "managed-gateway-edit", "replaced-gateway",
   "missing-runners-image", "missing-gateway-image", "setup-busy", "startup-failure", "startup-no-model",
-  "quota-recovery", "quota-no-budget", "quota-partial-budget", "quota-invalid-quantity", "quota-unbounded", "quota-no-kubeconfig", "quota-existing", "quota-retained", "quota-child-failure"]) {
+  "quota-recovery", "quota-no-budget", "quota-partial-budget", "quota-invalid-quantity", "quota-unbounded", "quota-no-kubeconfig", "quota-existing", "quota-retained", "quota-child-failure",
+  "provisioning-recovery", "provisioning-no-count", "provisioning-invalid-count", "provisioning-wrong-count", "provisioning-existing", "provisioning-retained", "provisioning-child-failure", "provisioning-mixed"]) {
   test(`resource deployment wrapper: ${mode}`, t => {
     const directory = mkdtempSync(join(tmpdir(), "a2a-resource-wrapper-"));
     t.after(() => rmSync(directory, { recursive: true, force: true }));
@@ -39,7 +40,8 @@ const save=()=>fs.writeFileSync(file,JSON.stringify(state));
 const fail=()=>{state.failed=true;save();process.exit(2)};
 if(args.includes('get')) {
   console.log(JSON.stringify(args.includes('deployment')?state.deployments[args[args.indexOf('deployment')+1]]:args.includes('resourcequotas')?
-    {items:mode==='quota-existing'||state.quotaRetained?[{metadata:{name:'retained-quota'}}]:[]}:{items:state.busy?[{metadata:{name:'unreleased'}}]:[]}));
+    {items:mode.endsWith('-existing')||state.quotaRetained?[{metadata:{name:'retained-quota'}}]:[]}:
+    args.includes('persistentvolumeclaims')?{items:[{metadata:{name:'older-a'}},{metadata:{name:'older-b'}}]}:{items:state.busy?[{metadata:{name:'unreleased'}}]:[]}));
 } else if(args.includes('patch')) {
   const name=args[args.indexOf('deployment')+1],d=state.deployments[name],c=d.spec.template.spec.containers[0];
   if(!state.failed && ((mode==='runner-patch-failure'&&name==='k8s-runner')||(mode==='orchestrator-patch-failure'&&name==='agents-orchestrator')||mode===name+'-patch-failure'))fail();
@@ -70,6 +72,7 @@ s.childRan=true;
 assert.equal(process.env.AGYN_LIVE_COMPUTE_RESOURCES,'true');
 if(mode==='startup-failure')assert.equal(process.env.AGYN_LIVE_SCENARIO,'startup-failure');
 if(mode.startsWith('quota-')){assert.equal(process.env.AGYN_LIVE_SCENARIO,'quota-recovery');assert.equal(JSON.parse(process.env.AGYN_LIVE_QUOTA_HARD)['count/pods'],'2');}
+if(mode.startsWith('provisioning-')){assert.equal(process.env.AGYN_LIVE_SCENARIO,'provisioning-recovery');assert.equal(JSON.parse(process.env.AGYN_LIVE_QUOTA_HARD).persistentvolumeclaims,'3');}
 for(const name of ['runners','gateway','k8s-runner','agents-orchestrator'])assert.equal(s.deployments[name].spec.template.spec.containers[0].image,'reviewed-'+name+':1');
 const runner=s.deployments['k8s-runner'].spec.template.spec.containers[0];
 assert.equal(runner.env.find(e=>e.name==='SUPPORTING_CONTAINER_RESOURCES').value,process.env.AGYN_LIVE_SUPPORTING_RESOURCES);
@@ -81,11 +84,12 @@ if(mode==='runner-env-edit')runner.env.find(e=>e.name==='SUPPORTING_CONTAINER_RE
 if(mode==='replaced-runner'){s.deployments['k8s-runner'].metadata.uid='replacement';runner.image='external:1';}
 if(mode==='replaced-gateway'){s.deployments.gateway.metadata.uid='replacement';s.deployments.gateway.spec.template.spec.containers[0].image='external:1';}
 if(mode==='late-busy')s.busy=true;
-if(mode==='quota-retained')s.quotaRetained=true;
+if(['quota-retained','provisioning-retained'].includes(mode))s.quotaRetained=true;
 for(const d of Object.values(s.deployments))d.metadata.resourceVersion=String(Number(d.metadata.resourceVersion)+1);
-fs.writeFileSync(file,JSON.stringify(s));process.exit(['child-failure','quota-child-failure'].includes(mode)?1:0);
+fs.writeFileSync(file,JSON.stringify(s));process.exit(['child-failure','quota-child-failure','provisioning-child-failure'].includes(mode)?1:0);
 `);
-    const result = spawnSync(process.execPath, [wrapper, mode.startsWith("startup-") ? "startup-failure" : mode.startsWith("quota-") ? "quota-recovery" : "completed"], { cwd: directory, encoding: "utf8", timeout: 15_000,
+    const result = spawnSync(process.execPath, [wrapper, mode.startsWith("startup-") ? "startup-failure" : mode.startsWith("quota-") ? "quota-recovery" :
+      mode.startsWith("provisioning-") ? "provisioning-recovery" : "completed", ...(mode === "provisioning-mixed" ? ["completed"] : [])], { cwd: directory, encoding: "utf8", timeout: 15_000,
       env: { ...process.env, PATH: `${join(directory, "bin")}:${process.env.PATH}`, FAKE_DEPLOYMENT: stateFile, FAKE_MODE: mode,
         AGYN_KUBECONFIG: mode === "quota-no-kubeconfig" ? "" : "/fixture/config", AGYN_LIVE_ACCEPTANCE: "trusted-local", AGYN_LIVE_INIT_IMAGE: "reviewed-init:1",
         AGYN_LIVE_ORCHESTRATOR_IMAGE: "reviewed-agents-orchestrator:1", AGYN_LIVE_RUNNER_IMAGE: mode === "missing-image" ? "" : "reviewed-k8s-runner:1",
@@ -94,17 +98,20 @@ fs.writeFileSync(file,JSON.stringify(s));process.exit(['child-failure','quota-ch
         AGYN_LIVE_GATEWAY_IMAGE: mode === "missing-gateway-image" ? "" : "reviewed-gateway:1",
         AGYN_LIVE_RUNNER_CHART: mode === "no-network" ? "" : "/reviewed/chart", AGYN_LIVE_COMPUTE_RESOURCES: ["no-flag", "quota-unbounded"].includes(mode) ? "" : "true",
         AGYN_LIVE_QUOTA_HARD: mode.startsWith("quota-") && mode !== "quota-no-budget" ? JSON.stringify(mode === "quota-partial-budget" ? {} :
-          mode === "quota-invalid-quantity" ? { ...quotaHard, "limits.cpu": "invalid" } : quotaHard) : "",
+          mode === "quota-invalid-quantity" ? { ...quotaHard, "limits.cpu": "invalid" } : quotaHard) : mode.startsWith("provisioning-") ?
+          JSON.stringify({ ...quotaHard, ...(mode === "provisioning-no-count" ? {} : { persistentvolumeclaims:
+            mode === "provisioning-invalid-count" ? "0" : mode === "provisioning-wrong-count" ? "4" : "3" }) }) : "",
         AGYN_LIVE_SUPPORTING_RESOURCES: mode === "partial-bounds" ? "{}" : bounds } });
     assert.ifError(result.error);
-    assert.equal(result.status === 0, ["success", "unmanaged-edit", "setup-unmanaged-edit", "startup-failure", "quota-recovery"].includes(mode), result.stderr);
+    assert.equal(result.status === 0, ["success", "unmanaged-edit", "setup-unmanaged-edit", "startup-failure", "quota-recovery", "provisioning-recovery"].includes(mode), result.stderr);
     assert(!(result.stdout + result.stderr).includes("do-not-log-resource-fixture"), "private deployment fields were logged");
     const current = JSON.parse(readFileSync(stateFile, "utf8"));
     if (mode === "success") assert.deepEqual(current.operations, [...deploymentNames, ...[...deploymentNames].reverse()]
       .flatMap(name => [{ op: "patch", name }, { op: "rollout", name }]), "dependencies must roll out first and restore last");
     if (["missing-runners-image", "missing-gateway-image"].includes(mode)) assert.match(result.stderr, /Runners and Gateway removal-confirmation images are required/);
     if (mode === "startup-no-model") { assert.match(result.stderr, /explicit platform model metadata UUID/); assert.deepEqual(current.operations, []); }
-    if (["quota-no-budget", "quota-partial-budget", "quota-invalid-quantity", "quota-unbounded", "quota-no-kubeconfig", "quota-existing"].includes(mode)) {
+    if (["quota-no-budget", "quota-partial-budget", "quota-invalid-quantity", "quota-unbounded", "quota-no-kubeconfig", "quota-existing",
+      "provisioning-no-count", "provisioning-invalid-count", "provisioning-wrong-count", "provisioning-existing", "provisioning-mixed"].includes(mode)) {
       assert.deepEqual(current.operations, [], "quota preflight changed deployments"); assert(!current.childRan);
     }
     if (mode.includes("patch-failure") || mode.includes("rollout-failure") || mode.startsWith("lost-") || mode.startsWith("missing-") ||
@@ -113,7 +120,7 @@ fs.writeFileSync(file,JSON.stringify(s));process.exit(['child-failure','quota-ch
     }
     for (const name of deploymentNames) {
       const c = current.deployments[name].spec.template.spec.containers[0];
-      if (["late-busy", "quota-retained"].includes(mode)) { assert.equal(c.image, `reviewed-${name}:1`); continue; }
+      if (["late-busy", "quota-retained", "provisioning-retained"].includes(mode)) { assert.equal(c.image, `reviewed-${name}:1`); continue; }
       if (mode === "setup-busy") { assert.equal(c.image, `${name === "runners" ? "reviewed" : "stock"}-${name}:1`); continue; }
       if (mode === `managed-${name}-edit` || name === "gateway" && mode === "replaced-gateway") {
         assert.equal(c.image, "external:1", "external dependency image was overwritten"); continue;

@@ -50,13 +50,26 @@ export async function runQuotaRejectedTurn(input: {
   console.log(JSON.stringify({ kind: "live.quota-rejected", taskId, executionId, requestId,
     workloads: workloads.filter(workload => !previousWorkloadIds.includes(workload.meta.id)).map(workload => workload.meta.id) }));
 
+  return restoreQuotaAndReconcile({ ...input, instanceId: binding.instanceId, executionId, requestId,
+    reason: "Operator observed the exact native quota rejection, no admitted Pod, explicit removal confirmation and unchanged task PVC. Retire the rejected inbox request without execution before continuing the existing session." });
+}
+
+export async function restoreQuotaAndReconcile(input: {
+  taskId: string; instanceId: string; executionId: string; requestId: string; reason: string;
+  gateway: AgynClient; core: CoreV1Api; quota: QuotaFixture;
+  rpc: (method: string, params: unknown) => Promise<any>; events: () => Promise<any[]>;
+  reconcile: (executionId: string, reason: string) => Promise<void>; record: (sample: any) => void;
+}): Promise<{ executionId: string; requestId: string }> {
+  const { taskId, instanceId, executionId, requestId, gateway, core, quota, rpc, events, reconcile, record } = input;
+  const namespace = "agyn-workloads";
+  const message = { taskId, role: "ROLE_USER", parts: [{ text: "This unreconciled follow-up must not run." }] };
   await assert.rejects(rpc("SendMessage", { message: { ...message, messageId: randomUUID() } }), "unreconciled follow-up was accepted");
   await quota.setDenied(false);
   // Availability returning must not silently resubmit or wake the failed turn.
   const eventCount = (await events()).length;
   for (let attempt = 0; attempt < 5; attempt++) {
     await delay(1000);
-    assert.equal((await gateway.getInstance(binding.instanceId)).state, "AGENT_INSTANCE_STATE_PAUSED");
+    assert.equal((await gateway.getInstance(instanceId)).state, "AGENT_INSTANCE_STATE_PAUSED");
     assert.equal((await core.listNamespacedPod({ namespace })).items.length, 0, "quota restoration restarted old work");
     const current = await rpc("GetTask", { id: taskId });
     assert.equal(current.metadata?.recoveryRequired, true);
@@ -64,7 +77,7 @@ export async function runQuotaRejectedTurn(input: {
     await quota.observe(false, true);
   }
   await assert.rejects(rpc("SendMessage", { message: { ...message, messageId: randomUUID() } }), "quota availability bypassed reconciliation");
-  await reconcile(executionId, "Operator observed the exact native quota rejection, no admitted Pod, explicit removal confirmation and unchanged task PVC. Retire the rejected inbox request without execution before continuing the existing session.");
+  await reconcile(executionId, input.reason);
   const reconciled = (await events()).filter(event => event.executionId === executionId && event.kind === "execution.reconciled");
   assert.equal(reconciled.length, 1); assert.equal(reconciled[0].payload.resolution, "continue");
   record({ kind: "quota.reconciled", executionId, requestId, event: reconciled[0] });

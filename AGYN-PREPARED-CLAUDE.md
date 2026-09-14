@@ -1,5 +1,9 @@
 # Claude On The Prepared Agyn Stack
 
+This is the historical report for the pre-DNS-fix prepared stack. The
+subsequent [native resolver correction and new acceptance](AGYN-NATIVE-DNS.md)
+are recorded separately; the failed rows below are not retroactively passes.
+
 Status: four lifecycle scenarios have passing local evidence; parallel acceptance
 and the intermittent native authentication failure remain open. This is not a
 production-ready deployment or a passing five-scenario Claude sweep.

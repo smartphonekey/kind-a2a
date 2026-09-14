@@ -8,14 +8,20 @@ reporting adapter, focused daemon patches and an operator-selected live profile.
 The evidence below separates successful lifecycle fixtures from unresolved
 native authentication and earlier unclassified failures.
 
-Latest deployment evidence is the [prepared-stack Claude report](AGYN-PREPARED-CLAUDE.md):
+The pre-fix deployment evidence is the [prepared-stack Claude report](AGYN-PREPARED-CLAUDE.md):
 completed continuation, explicit interrupted recovery, cancellation and streaming
 pass, but three parallel attempts fail with native 401. The historical five
 scenario passes below are not a passing five-scenario sweep on this newer stack.
 Request diagnostics now distinguish proxied Messages calls from other traffic;
 the failing instance has no recorded Messages call in the latest attempt.
-The cause remains unproven. Temporary diagnostics/credentials are cleaned up,
-the four upgraded services remain installed, and all 444 service tests pass.
+That report did not prove a cause. Its temporary diagnostics/credentials were
+cleaned up and its upgraded services retained. The subsequent
+[native DNS reproduction and correction](AGYN-NATIVE-DNS.md) demonstrates an
+actual CLI interception bypass, installs the focused resolver fix on the
+prepared-compatible orchestrator, and passes all five scenarios for both Claude
+and Codex with the stock proxy, plus a Claude diagnostic parallel run. All 83
+prior claims remain intact; there are 97 retained task claims and zero task Pods
+or unconfirmed removals. All 449 service tests pass.
 
 An earlier interrupted-turn test failed before fault injection and
 exposed an independent [workload-removal contract bug](AGYN-REMOVAL.md).

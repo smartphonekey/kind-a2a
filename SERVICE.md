@@ -8,8 +8,12 @@ production deployment. See [PRODUCTION.md](PRODUCTION.md) for release gates and
 
 The current local installation uses the retained prepared stack through registry
 migration `0022`, not the stock services restored by historical fixtures below.
-All five Codex scenarios and four Claude scenarios have passing evidence on it;
-Claude parallel attempts still fail with native 401. See the current
+The original stack passes all five Codex scenarios and four Claude scenarios;
+three Claude parallel attempts failed with native 401. A subsequent
+[native DNS fix](AGYN-NATIVE-DNS.md) is now retained on the prepared-compatible
+orchestrator. All five scenarios pass for both Claude and Codex with the stock
+proxy, with all 83 prior claims retained and zero task Pods/unconfirmed removals.
+See that report and the historical
 [Codex rollout](AGYN-PREPARED-ROLLOUT.md#final-retained-verification) and
 [Claude report](AGYN-PREPARED-CLAUDE.md) before operating or upgrading the lab.
 

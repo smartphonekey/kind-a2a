@@ -94,11 +94,14 @@ running main-container inventory before the single ticket request. All five
 Codex lifecycle scenarios now pass on the final corrected service and retained
 stack. [Prepared-stack Claude acceptance](AGYN-PREPARED-CLAUDE.md) now passes
 completed/interrupted recovery, cancellation and streaming; three parallel
-attempts fail with native 401. Request-path diagnostics narrow the investigation
-but do not establish the authentication failure's cause. Sustained reliability
-and the production gates remain open.
+attempts failed with native 401. A subsequent [native DNS reproduction and
+fix](AGYN-NATIVE-DNS.md) prevents parallel resolver bypass and is installed on a
+prepared-compatible orchestrator. All five scenarios now pass for both Claude
+and Codex with the stock proxy, plus a separate Claude diagnostic parallel run.
+Cleanup retains all 83 prior claims, with 97 total and zero task Pods/unconfirmed
+removals. Sustained reliability and the production gates remain open.
 [Scoped runner RBAC](AGYN-RUNNER-RBAC.md) passes 57 allow/deny probes. The latest
-service build and all 444 tests pass, with no skipped tests.
+service build and all 449 tests pass, with no skipped tests.
 
 The new [durable execution service](SERVICE.md) adds authenticated A2A routing,
 transactional queued turns, reporting MCP, bounded outcome checks and a recoverable

@@ -5,8 +5,14 @@ Status: the reviewed prepared Agyn stack is now deployed and retained locally,
 with registry migrations through `0022`. All five Codex lifecycle scenarios pass
 on the final readiness-corrected service, with exact Pod/PVC/removal evidence.
 A captured terminal-readiness race is corrected; earlier startup failures remain
-unclassified. Prepared-stack Claude acceptance, sustained reliability and remaining
-[production gates](PRODUCTION.md) are still required.
+unclassified. Subsequent Claude acceptance and a DNS correction are linked below;
+sustained reliability and the remaining [production gates](PRODUCTION.md) are
+still required.
+
+The later [native DNS correction](AGYN-NATIVE-DNS.md) replaces only the
+orchestrator image with a prepared-compatible build. Its retained image and
+acceptance record supersede that component's original digest below; the other
+three services and registry schema are unchanged.
 
 ## Why The Rollout Changed
 

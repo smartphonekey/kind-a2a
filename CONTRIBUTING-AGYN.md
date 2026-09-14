@@ -89,6 +89,16 @@ RBAC overlay is not a reconciled Helm platform release. No upstream PR is open.
 
 ## Orchestrator Lifecycle Fixes
 
+The independent [workload DNS correction](AGYN-NATIVE-DNS.md) is pushed as
+`fix/workload-dns-interception`, `204b5e9`, based on upstream `ae7d0bf`. It removes
+the ordinary fallback resolver from Ziti-enabled agent/sandbox workloads and
+readiness checks while keeping explicit upstream forwarding in the tunneler.
+Regressions fail before the fix and pass afterward; a credential-free fixture
+with the actual native Claude CLI reproduces the bypass and its corrected
+controls. There is no A2A or prepared-workload API change in this focused patch.
+The separate `lab/prepared-native-dns` combination is for local acceptance,
+not the upstream review boundary. No upstream PR has been opened.
+
 Two independent, runtime-neutral changes are pushed in
 <https://github.com/spk-ai/agents-orchestrator>, based on upstream `ae7d0bf`:
 

@@ -14,17 +14,18 @@ const scope = { postgresPod: "platform-postgres-0", postgresPodUid: id(20), post
 function fixture(checked = false): CheckedVolumeCapture {
   const labels = { "app.kubernetes.io/managed-by": "k8s-runner", "agyn.dev/managed-by": "agents-orchestrator", "managed-by": "agents-orchestrator",
     volume_key: id(1), "agent-instance-id": id(2), "agent-id": id(5) };
-  const bound = { instanceId: "pvc-one", instanceUid: id(10), volumeKey: id(1), identityLabels: structuredClone(labels) };
+  const bound = { instanceId: "pvc-one", instanceUid: id(10), volumeKey: id(1), identityLabels: structuredClone(labels), backendId: `kubernetes-namespace/v1/agyn-workloads/${scope.namespaceUid}` };
   const owner = { ownerKind: "agent_instance", ownerId: id(2), runnerId: id(3), organizationId: id(4), agentId: id(5), threadId: id(6) };
   return { scope, inventoryStable: true, registry: { database: "runners", readOnly: "on", isolation: "repeatable read", at,
-    migrations: ["0017_workload_removal_confirmation.sql", ...(checked ? ["0018_checked_volume_lifecycle.sql", "0019_volume_workload_admission.sql", "0020_legacy_volume_adoption.sql"] : [])],
+    migrations: ["0017_workload_removal_confirmation.sql", ...(checked ? ["0018_checked_volume_lifecycle.sql", "0019_volume_workload_admission.sql", "0020_legacy_volume_adoption.sql", "0021_volume_backend_identity.sql"] : [])],
     counts: { volumes: 1, workloads: 1, runners: 1 }, runners: [{ id: id(3), organizationId: null, status: "enrolled" }],
     volumes: [{ ...owner, id: id(1), definitionId: id(7), instanceId: "pvc-one", sizeGb: "1", status: "active", removedAt: null,
       checkedLifecycle: checked ? true : null, revision: checked ? 2 : null, bound: checked ? bound : null, intent: null }],
     workloads: [{ ...owner, id: id(8), instanceId: "old-pod", status: "stopped", removedAt: at, removalConfirmedAt: at }],
     triggers: checked ? [{ table: "volumes", name: "volumes_checked_lifecycle", enabled: "O" },
       { table: "volumes", name: "volumes_workload_admission", enabled: "O" }, { table: "workloads", name: "workloads_volume_admission", enabled: "O" },
-      { table: "volumes", name: "volumes_legacy_adoption", enabled: "O" }] : [] },
+      { table: "volumes", name: "volumes_legacy_adoption", enabled: "O" }] : [],
+    constraints: checked ? [{ table: "volumes", name: "volumes_checked_backend", validated: true }] : [] },
     claims: [{ name: "pvc-one", uid: id(10), resourceVersion: "10", labels, deleting: false, owners: 0 }], pods: [],
     deployments: ["agents-orchestrator", "gateway", "k8s-runner", "runners"].map((name, n) => ({ name, uid: id(30+n), generation: 1,
       images: [{ name, image: `reviewed-${name}@sha256:${"a".repeat(64)}` }], ready: true })) };
@@ -37,7 +38,7 @@ test("volume upgrade audit reports legacy observations without granting lifecycl
   assert.deepEqual(f, before);
   assert.deepEqual(result.volumes[0].physical, [{ name: "pvc-one", uid: id(10) }]);
   assert.equal(result.summary.legacyVolumes, 1); assert.equal(result.summary.unconfirmedWorkloads, 0);
-  assert.deepEqual(codes(f), ["missing-checked-volume-migration", "missing-admission-migration", "missing-legacy-adoption-migration", "legacy-volume-requires-explicit-adoption"]);
+  assert.deepEqual(codes(f), ["missing-checked-volume-migration", "missing-admission-migration", "missing-legacy-adoption-migration", "missing-volume-backend-migration", "legacy-volume-requires-explicit-adoption"]);
   for (const flag of [result.permitsAdoption, result.permitsDeletion, result.permitsRollout]) assert.equal(flag, false);
 });
 
@@ -72,13 +73,23 @@ const findings: [string, (f: CheckedVolumeCapture) => void, string][] = [
   ["live native Pod", f => { f.pods = [{ name: "busy", uid: id(80), resourceVersion: "1", deleting: false }]; }, "native-workloads-present"],
   ["incomplete client rollout", f => { f.deployments[0].ready = false; }, "client-rollout-incomplete"],
   ["disabled database guard", f => { db(f).triggers[0].enabled = "D"; }, "missing-or-disabled-database-guard"],
-  ["missing adoption migration", f => { db(f).migrations.pop(); }, "missing-legacy-adoption-migration"],
+  ["missing adoption migration", f => { db(f).migrations = db(f).migrations.filter((v: string) => !v.startsWith("0020")); }, "missing-legacy-adoption-migration"],
+  ["missing backend migration", f => { db(f).migrations.pop(); }, "missing-volume-backend-migration"],
+  ["backend without adoption", f => { db(f).migrations = db(f).migrations.filter((v: string) => !v.startsWith("0020")); }, "inconsistent-migration-history"],
+  ["missing backend constraint", f => { db(f).constraints = []; }, "missing-or-unvalidated-backend-constraint"],
+  ["unvalidated backend constraint", f => { db(f).constraints[0].validated = false; }, "missing-or-unvalidated-backend-constraint"],
+  ["other table backend constraint", f => { db(f).constraints[0].table = "workloads"; }, "missing-or-unvalidated-backend-constraint"],
   ["adoption without admission", f => { db(f).migrations = db(f).migrations.filter((v: string) => !v.startsWith("0019")); }, "inconsistent-migration-history"],
   ["missing adoption guard", f => { db(f).triggers.pop(); }, "missing-or-disabled-database-guard"],
   ["disabled adoption guard", f => { db(f).triggers[3].enabled = "D"; }, "missing-or-disabled-database-guard"],
   ["replica-only adoption guard", f => { db(f).triggers[3].enabled = "R"; }, "missing-or-disabled-database-guard"],
   ["missing checked metadata", f => { db(f).volumes[0].revision = null; }, "inconsistent-checked-metadata"],
   ["replacement physical UID", f => { f.claims[0].uid = id(99); }, "bound-incarnation-mismatch-retain"],
+  ["missing backend identity", f => { delete db(f).volumes[0].bound.backendId; }, "invalid-persisted-binding"],
+  ["padded backend identity", f => { db(f).volumes[0].bound.backendId += " "; }, "invalid-persisted-binding"],
+  ["oversized backend identity", f => { db(f).volumes[0].bound.backendId = "x".repeat(513); }, "invalid-persisted-binding"],
+  ["other namespace incarnation", f => { db(f).volumes[0].bound.backendId = `kubernetes-namespace/v1/agyn-workloads/${id(99)}`; }, "bound-backend-mismatch-retain"],
+  ["other namespace name", f => { db(f).volumes[0].bound.backendId = `kubernetes-namespace/v1/other/${scope.namespaceUid}`; }, "bound-backend-mismatch-retain"],
   ["missing active binding", f => { db(f).volumes[0].bound = null; }, "missing-required-binding"],
   ["retargeted binding", f => { db(f).volumes[0].bound.volumeKey = id(99); }, "invalid-persisted-binding"],
   ["unapproved binding label", f => { db(f).volumes[0].bound.identityLabels["workload_key"] = id(8); }, "invalid-persisted-binding"],

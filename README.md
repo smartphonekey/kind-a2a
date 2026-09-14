@@ -66,6 +66,12 @@ now reject unconfirmed predecessors and implicit legacy reopen, with registry
 race, upgrade and combined native regression tests passing. Migration `0020`
 and the checked stack are not installed; this is not a rollout permit.
 
+[Backend-bound volume operations](AGYN-VOLUME-BACKEND.md) now retain namespace
+identity across inventory, bindings and deletion confirmation. A distinct RPC
+rejects old-runner fallback; real controller/registry/Kubernetes acceptance
+preserves the original workspace on wrong-runner routing. Workload-start
+backend pinning, authentication/fencing and coordinated rollout remain open.
+
 The new [durable execution service](SERVICE.md) adds authenticated A2A routing,
 transactional queued turns, reporting MCP, bounded outcome checks and a recoverable
 worker. It is a development implementation with explicit [production gates](PRODUCTION.md),

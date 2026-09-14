@@ -2,6 +2,12 @@
 
 # Checked Volume Removal
 
+The dependent [backend-identity extension](AGYN-VOLUME-BACKEND.md) now adds
+`RemoveVolumeBound`, immutable storage-scope binding and registry migration
+`0021`. Wrong-runner and old-runner cases pass isolated combined acceptance.
+The earlier checked API below remains historical evidence, not the latest
+deployable profile; workload-start fencing and coordinated A2A rollout remain.
+
 Status: proposed API, registry implementation, native runner checks and the
 dependent orchestrator/sandbox migration pass component acceptance. The
 [combined process fixture](#combined-process-acceptance) now also passes with

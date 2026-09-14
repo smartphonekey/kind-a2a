@@ -334,6 +334,24 @@ Keep the CNI enforcement incident separate from this chart proposal: adding a
 NetworkPolicy cannot repair a controller that is not enforcing policies. Do not
 describe the local K3s restart as a permanent bootstrap or runtime-code fix.
 
+## Volume Backend Identity
+
+Four dependent [backend-identity contributions](AGYN-VOLUME-BACKEND.md) are
+pushed on `feat/volume-backend-identity`: API `72394f4`, native runner `bdcb67a`,
+Runners registry `c3b5338` and orchestrator `3445cbe`. They pin the storage scope
+through inventory, durable bindings/intents and physical absence confirmation.
+The distinct `RemoveVolumeBound` RPC rejects old-runner capability rather than
+silently ignoring a new precondition. There is no fallback to older deletion.
+
+The native implementation and namespace GET-only RBAC, registry migration
+`0021`, caller migration and operator audit are separate ownership boundaries.
+The 495-test selected controller race suite includes actual PostgreSQL,
+Kubernetes and process recovery; 186 independent/409 combined native tests,
+423 registry race tests and 323 service tests also pass. Known unrelated
+unfiltered orchestrator race/vet failures remain disclosed. Workload-start
+pinning, authentication, fencing and rollout are not established by these tests.
+Acceptance-only API `ad5405b` and runner `2968787` are not bundled upstream PRs.
+
 ## Runner Control Transport
 
 - Fork/branch: [`spk-ai/k8s-runner`, `fix/ziti-control-listener`](https://github.com/spk-ai/k8s-runner/tree/fix/ziti-control-listener),

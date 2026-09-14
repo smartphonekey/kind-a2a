@@ -21,10 +21,12 @@ const registrySchema = z.object({ database: z.literal("runners"), readOnly: z.li
   counts: z.object({ volumes: z.number().int().nonnegative(), workloads: z.number().int().nonnegative(), runners: z.number().int().nonnegative() }),
   volumes: z.array(volume), workloads: z.array(workload),
   runners: z.array(z.object({ id: uuid, organizationId: nullableUuid, status: text })),
-  triggers: z.array(z.object({ table: text, name: text, enabled: text })) });
+  triggers: z.array(z.object({ table: text, name: text, enabled: text })),
+  constraints: z.array(z.object({ table: text, name: text, validated: z.boolean() })) });
 type Volume = z.infer<typeof volume>;
 type Registry = z.infer<typeof registrySchema>;
-const binding = z.object({ instanceId: text, instanceUid: text, volumeKey: uuid, identityLabels: z.record(z.string()) });
+const backendId = z.string().min(1).max(512).refine(value => value.trim() === value && Buffer.byteLength(value) <= 512);
+const binding = z.object({ instanceId: text, instanceUid: text, volumeKey: uuid, identityLabels: z.record(z.string()), backendId });
 const intent = z.object({ id: text, requestedAt: text, confirmedAt: text.optional(), expected: binding });
 
 export const persistentVolumeLabelKeys = ["app.kubernetes.io/managed-by", "agyn.dev/managed-by", "volume_key",
@@ -65,11 +67,14 @@ export function auditCheckedVolumes(capture: CheckedVolumeCapture) {
   const hasChecked = db.migrations.includes("0018_checked_volume_lifecycle.sql");
   const hasAdmission = db.migrations.includes("0019_volume_workload_admission.sql");
   const hasAdoption = db.migrations.includes("0020_legacy_volume_adoption.sql");
+  const hasBackend = db.migrations.includes("0021_volume_backend_identity.sql");
   if (!db.migrations.includes("0017_workload_removal_confirmation.sql")) add("missing-workload-confirmation-migration");
   if (!hasChecked) add("missing-checked-volume-migration");
   if (!hasAdmission) add("missing-admission-migration");
   if (!hasAdoption) add("missing-legacy-adoption-migration");
-  if (hasAdmission && !hasChecked || hasAdoption && !hasAdmission) add("inconsistent-migration-history");
+  if (!hasBackend) add("missing-volume-backend-migration");
+  if (hasAdmission && !hasChecked || hasAdoption && !hasAdmission || hasBackend && !hasAdoption) add("inconsistent-migration-history");
+  if (hasBackend && !db.constraints.some(c => c.table === "volumes" && c.name === "volumes_checked_backend" && c.validated)) add("missing-or-unvalidated-backend-constraint");
   for (const [table, name, required] of [
     ["volumes", "volumes_checked_lifecycle", hasChecked], ["volumes", "volumes_workload_admission", hasAdmission],
     ["workloads", "workloads_volume_admission", hasAdmission], ["volumes", "volumes_legacy_adoption", hasAdoption]
@@ -141,6 +146,8 @@ export function auditCheckedVolumes(capture: CheckedVolumeCapture) {
       if (v.bound !== null && (!bound.success || bound.data.volumeKey !== v.id || bound.data.instanceId !== v.instanceId ||
         bound.data.identityLabels.volume_key !== v.id || !isDeepStrictEqual(labels(bound.data.identityLabels), bound.data.identityLabels))) issue("invalid-persisted-binding");
       if (["active", "deprovisioning", "deleted"].includes(v.status) && !bound.success) issue("missing-required-binding");
+      if (bound.success && v.runnerId === capture.scope.runnerId &&
+        bound.data.backendId !== `kubernetes-namespace/v1/agyn-workloads/${capture.scope.namespaceUid}`) issue("bound-backend-mismatch-retain");
       if (bound.success && claim && (bound.data.instanceId !== claim.name || bound.data.instanceUid !== claim.uid ||
         !isDeepStrictEqual(bound.data.identityLabels, labels(claim.labels)))) issue("bound-incarnation-mismatch-retain");
       if (["deprovisioning", "deleted"].includes(v.status) ?
@@ -155,7 +162,7 @@ export function auditCheckedVolumes(capture: CheckedVolumeCapture) {
   return { kind: "checked-volume-upgrade-audit", version: 1, at: db.at, observationalOnly: true,
     permitsAdoption: false, permitsDeletion: false, permitsRollout: false, inventoryStable: capture.inventoryStable,
     scope: capture.scope, migrations: db.migrations, deployments: capture.deployments,
-    registryFingerprint: createHash("sha256").update(JSON.stringify([db.migrations, db.triggers, db.counts, db.volumes, db.workloads, db.runners])).digest("hex"),
+    registryFingerprint: createHash("sha256").update(JSON.stringify([db.migrations, db.triggers, db.constraints, db.counts, db.volumes, db.workloads, db.runners])).digest("hex"),
     summary: { volumes: db.volumes.length, checkedVolumes: db.volumes.filter(v => v.checkedLifecycle).length,
       legacyVolumes: db.volumes.filter(v => !v.checkedLifecycle).length, physicalClaims: capture.claims.length,
       workloads: db.workloads.length, unconfirmedWorkloads: db.workloads.filter(w => !w.removalConfirmedAt).length,
@@ -188,7 +195,10 @@ SELECT json_build_object(
   'runners', (SELECT COALESCE(json_agg(json_build_object('id', r.id, 'organizationId', r.organization_id, 'status', r.status) ORDER BY r.id), '[]'::json) FROM public.runners r),
   'triggers', (SELECT COALESCE(json_agg(json_build_object('table', c.relname, 'name', t.tgname, 'enabled', t.tgenabled::text) ORDER BY c.relname,t.tgname), '[]'::json)
     FROM pg_catalog.pg_trigger t JOIN pg_catalog.pg_class c ON c.oid=t.tgrelid
-    JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname IN ('volumes','workloads') AND NOT t.tgisinternal)
+    JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname IN ('volumes','workloads') AND NOT t.tgisinternal),
+  'constraints', (SELECT COALESCE(json_agg(json_build_object('table', c.relname, 'name', t.conname, 'validated', t.convalidated) ORDER BY c.relname,t.conname), '[]'::json)
+    FROM pg_catalog.pg_constraint t JOIN pg_catalog.pg_class c ON c.oid=t.conrelid
+    JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relname IN ('volumes','workloads') AND t.contype='c')
 );
 ROLLBACK;
 `;

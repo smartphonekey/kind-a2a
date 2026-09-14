@@ -100,7 +100,8 @@ for the new driver; complete the coordinated rollout in
 [AGYN-REMOVAL.md](AGYN-REMOVAL.md) first. Do not label stock images as reviewed
 confirmation images to bypass the new preflight.
 
-Build and test the service with `npm ci && npm test`. From the combined daemon
+Select the [patched Node/SQLite runtime](SERVICE.md#run-requirements) with
+`nvm use`, then build and test with `npm ci && npm test`. From the combined daemon
 checkout, build the integration binary into the lab's dedicated build context:
 
 ```sh

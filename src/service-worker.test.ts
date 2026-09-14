@@ -2,6 +2,9 @@
 import assert from "node:assert/strict";
 import { Message, TaskState } from "@a2a-js/sdk";
 import { randomUUID } from "node:crypto";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import { DurableTaskStore, type Execution } from "./service/task-store.js";
@@ -58,6 +61,39 @@ test("worker: parallel isolated tasks, same-task FIFO, profile changes require n
   store.requestCancel(scope, first.task.id);
   assert.throws(() => store.submit(scope, input(first.task.id), "agent-one"));
   await until(() => store.get(scope, first.task.id).status?.state === TaskState.TASK_STATE_CANCELED);
+});
+
+test("worker: independent database connections keep the global slot until release is confirmed", async t => {
+  const directory = mkdtempSync(join(tmpdir(), "a2a-workers-"));
+  const path = join(directory, "tasks.sqlite");
+  const store = new DurableTaskStore(path); const other = new DurableTaskStore(path);
+  const driver = new Driver(); driver.allowStop = false;
+  let releaseAttempts = 0;
+  const tracked: RuntimeDriver = { ...driver, release: async execution => { releaseAttempts++; return driver.release(execution); } };
+  const one = worker(store, tracked); const two = worker(other, tracked);
+  t.after(async () => { await one.stop(); await two.stop(); store.close(); other.close(); rmSync(directory, { recursive: true, force: true }); });
+  const tasks = Array.from({ length: 4 }, () => store.submit(scope, input(), "agent"));
+  one.start(); two.start();
+  await until(() => driver.sends.length === 2);
+  const completed = driver.sends[0];
+  const neighbor = driver.sends[1];
+  store.report(completed.runtime!.instanceId, completed.id, { eventId: "done", kind: "outcome", outcome: "turn_done", message: "done" });
+  await until(() => releaseAttempts >= 3);
+  assert.equal(driver.sends.length, 2);
+  assert.equal(store.execution(completed.id)!.phase, "releasing");
+  assert.equal(other.execution(neighbor.id)!.phase, "running");
+  assert.deepEqual(other.admission(), { maxActive: 2, reserved: 2 });
+  assert.equal(tasks.filter(task => store.execution(task.execution.id)!.phase === "queued").length, 2);
+  driver.allowStop = true;
+  await until(() => driver.sends.length === 3);
+  assert(driver.stops.has(completed.id));
+  assert.equal(store.execution(completed.id)!.phase, "settled");
+  assert.deepEqual(store.admission(), { maxActive: 2, reserved: 2 });
+  assert.equal(store.execution(neighbor.id)!.phase, "running");
+  for (const task of tasks) store.requestCancel(scope, task.task.id);
+  await until(() => store.admission().reserved === 0);
+  assert(tasks.every(task => store.execution(task.execution.id)!.phase === "settled"));
+  assert.equal(driver.sends.length, 3);
 });
 
 test("worker: lost dispatch acknowledgement is quarantined after stopping, never automatically resent", async t => {

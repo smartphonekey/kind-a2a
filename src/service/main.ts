@@ -11,6 +11,7 @@ import { ExecutionWorker } from "./worker.js";
 import { createServiceApp } from "./http.js";
 import { fileAuthorizer } from "./auth.js";
 import { serviceCard } from "./card.js";
+import { requireSqliteWalFix } from "./sqlite-runtime.js";
 
 const pathSchema = z.string().refine(isAbsolute, "absolute path required");
 const schema = z.object({
@@ -30,6 +31,7 @@ function required(name: string): string {
   return value;
 }
 
+requireSqliteWalFix(process.versions.sqlite);
 const config = schema.parse(JSON.parse(readFileSync(required("A2A_SERVICE_CONFIG_FILE"), "utf8")));
 if (!config.profiles.some(profile => profile.id === config.defaultProfile)) throw new Error("default profile is missing");
 if (!statSync(config.reportingSetupExecutable).isFile()) throw new Error("reporting setup executable is missing");

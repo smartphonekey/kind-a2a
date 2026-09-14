@@ -29,6 +29,7 @@ export class ExecutionWorker {
     }
     if (options.leaseMs < options.pollMs * 3) throw new Error("lease must allow at least three poll intervals");
     this.workerId = options.workerId ?? randomUUID();
+    this.store.configureAdmission(options.concurrency);
   }
 
   start(): void {

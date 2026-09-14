@@ -337,6 +337,15 @@ units; further protocol/capability changes still require agreement on a contract
 - Exclude databases, credentials, transcripts, kubeconfigs and generated code.
 - See [LICENSING.md](LICENSING.md) for the new service's AGPL-3.0-only scope.
 
-Local service verification is `npm ci && npm test`. The tests use temporary
+Local service verification is `nvm use`, then `npm ci && npm test`; see the
+[patched SQLite runtime requirement](SERVICE.md#run-requirements). The tests use temporary
 databases, official MCP/A2A transports, independent worker processes and fake
 provider fault injection. Live Agyn acceptance is not replaced by these tests.
+
+The [durable admission limit](SERVICE.md#shared-execution-admission), its operator
+CLI and runtime checks belong to the focused A2A service. They use SQLite's
+existing transaction/constraint machinery and add no agent-specific logic or
+Agyn API changes. Whole-cluster resource admission should use the platform's
+native quota mechanisms with separate acceptance, not be inferred from this
+task count. These new files retain AGPL-3.0-only; no upstream branch or PR is
+changed by this service work.

@@ -2,6 +2,37 @@
 
 Evidence below spans the preserved `kind-aira-a2a-lab` baseline and the new self-hosted Agyn backend. Each section identifies its environment; fake-agent tests and live-model evidence are deliberately separated.
 
+## Shared Admission And SQLite Runtime (2026-09-14)
+
+The build and all **190 tests** pass (171 top-level) on Node 24.21.0 with SQLite
+3.53.4. The admission regression first failed on the old code: a worker using
+limit two could claim another task while a worker using limit one already held
+a reservation. The limit is now durable and checked at worker startup and every
+claim, with a database constraint covering the old claim SQL path too.
+
+Six barrier-synchronized processes sharing one disposable database retain at
+most two reservations across different owners/profiles and reject mismatched
+limits. Separate tests race operator changes against each other and against a
+claim. Eight phase cases verify that outcomes, cancellation, ambiguous execution
+and expired leases do not release capacity; recovery keeps the same reservation.
+Two real worker loops with separate database connections and a fake provider
+hold the global slot through repeated unconfirmed release responses, then admit
+queued work only after settlement. Additive migration, drained compare-and-change,
+stale-worker rejection and the operator CLI also pass.
+
+The host's original Node 22.20.0 bundles SQLite 3.50.4, affected by SQLite's
+documented [WAL-reset bug](https://www.sqlite.org/wal.html#walreset). The service
+entry points now refuse an unpatched runtime before modifying a database;
+subprocess tests exercise both checks. `.nvmrc` selects the already-installed
+patched runtime without changing the host default. The bug itself was not
+reproduced, and this is not a storage disaster-recovery test.
+
+These checks use temporary local databases, not provider credentials, model
+calls or Kubernetes mutations. They do not add a live Agyn lifecycle pass or
+prove cluster resource quotas. Existing live evidence remains separate below;
+[whole-task accounting, infrastructure fencing and other production gates](PRODUCTION.md)
+are still open. [Operation and upgrade procedure](SERVICE.md#shared-execution-admission).
+
 ## Combined Runtime Regression (2026-09-13)
 
 SDK `54490e0` and daemon `7ed299f` combine the focused Claude session and

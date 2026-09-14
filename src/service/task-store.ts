@@ -22,6 +22,7 @@ export type Execution = {
 };
 export type Submission = { task: Task; execution: Execution; duplicate: boolean };
 export type StoreOptions = { clock?: () => number; maxQueuedPerTask?: number; maxPendingPerOwner?: number };
+export type Admission = { maxActive: number | null; reserved: number };
 
 export class TaskStoreError extends Error {
   constructor(readonly code: "not_found" | "conflict" | "invalid" | "capacity" | "stale_lease", message: string) {
@@ -99,6 +100,15 @@ export class DurableTaskStore {
         execution_id TEXT NOT NULL REFERENCES task_executions(id), check_id TEXT NOT NULL,
         decision_json TEXT NOT NULL, PRIMARY KEY(execution_id,check_id)
       );
+      CREATE TABLE IF NOT EXISTS execution_admission (
+        id INTEGER PRIMARY KEY CHECK(id=1), max_active INTEGER NOT NULL CHECK(max_active>0)
+      );
+      CREATE TRIGGER IF NOT EXISTS execution_admission_capacity
+        BEFORE UPDATE OF phase ON task_executions
+        WHEN OLD.phase='queued' AND NEW.phase NOT IN ('queued','settled','uncertain')
+          AND (SELECT count(*) FROM task_executions WHERE phase NOT IN ('queued','settled','uncertain'))
+            >= (SELECT max_active FROM execution_admission WHERE id=1)
+        BEGIN SELECT RAISE(ABORT, 'execution admission capacity exceeded'); END;
     `);
   }
 
@@ -266,18 +276,43 @@ export class DurableTaskStore {
     });
   }
 
+  configureAdmission(maxActive: number): void {
+    this.validateAdmissionLimit(maxActive);
+    this.transaction(() => this.assertAdmissionLimit(maxActive));
+  }
+
+  admission(): Admission {
+    const row = this.db.prepare(`SELECT
+      (SELECT max_active FROM execution_admission WHERE id=1) AS max_active,
+      (SELECT count(*) FROM task_executions WHERE phase NOT IN ('queued','settled','uncertain')) AS reserved`).get() as Row;
+    return { maxActive: row.max_active === null ? null : Number(row.max_active), reserved: Number(row.reserved) };
+  }
+
+  changeAdmissionLimit(expected: number, maxActive: number): Admission {
+    this.validateAdmissionLimit(expected);
+    this.validateAdmissionLimit(maxActive);
+    return this.transaction(() => {
+      const current = this.admission();
+      if (current.maxActive !== expected) throw new TaskStoreError("conflict", "stored admission limit does not match the expected limit");
+      if (current.reserved !== 0) throw new TaskStoreError("conflict", "compute reservations must drain before changing the admission limit");
+      this.db.prepare("UPDATE execution_admission SET max_active=? WHERE id=1").run(maxActive);
+      return { maxActive, reserved: 0 };
+    });
+  }
+
   claim(workerId: string, leaseMs: number, maxActive: number): { execution: Execution; lease: Lease; recovered: boolean } | undefined {
     if (!workerId || !Number.isSafeInteger(leaseMs) || leaseMs < 1 || !Number.isSafeInteger(maxActive) || maxActive < 1) {
       throw new TaskStoreError("invalid", "invalid worker lease or concurrency limit");
     }
     return this.transaction(() => {
+      // Check on every claim so already-open workers cannot bypass an operator change.
+      this.assertAdmissionLimit(maxActive);
       const now = this.clock();
       let row = this.db.prepare(`SELECT id FROM task_executions WHERE phase NOT IN ('queued','settled','uncertain')
         AND lease_until<=? ORDER BY created_at,ordinal LIMIT 1`).get(now) as Row | undefined;
       const recovered = Boolean(row);
       if (!row) {
-        const active = this.db.prepare("SELECT count(*) AS n FROM task_executions WHERE phase NOT IN ('queued','settled','uncertain')").get() as Row;
-        if (Number(active.n) >= maxActive) return undefined;
+        if (this.admission().reserved >= maxActive) return undefined;
         row = this.db.prepare(`SELECT e.id FROM task_executions e WHERE e.phase='queued' AND NOT EXISTS
           (SELECT 1 FROM task_executions p WHERE p.task_id=e.task_id AND p.ordinal<e.ordinal AND p.phase!='settled')
           ORDER BY e.created_at,e.ordinal,e.id LIMIT 1`).get() as Row | undefined;
@@ -591,6 +626,16 @@ export class DurableTaskStore {
 
   private validateScope(scope: Scope): void {
     if (!scope.subject || scope.subject.length > 256 || scope.tenant.length > 256) throw new TaskStoreError("invalid", "authenticated scope required");
+  }
+
+  private validateAdmissionLimit(maxActive: number): void {
+    if (!Number.isSafeInteger(maxActive) || maxActive < 1) throw new TaskStoreError("invalid", "admission limit must be a positive integer");
+  }
+
+  private assertAdmissionLimit(maxActive: number): void {
+    this.db.prepare("INSERT INTO execution_admission(id,max_active) VALUES(1,?) ON CONFLICT(id) DO NOTHING").run(maxActive);
+    const row = this.db.prepare("SELECT max_active FROM execution_admission WHERE id=1").get() as Row;
+    if (Number(row.max_active) !== maxActive) throw new TaskStoreError("conflict", "worker concurrency differs from the stored admission limit");
   }
 
   private transaction<T>(fn: () => T): T {

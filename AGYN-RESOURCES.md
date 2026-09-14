@@ -5,14 +5,19 @@
 Status: source-level integration, credential-free kernel enforcement and real
 resource-bounded Agyn lifecycle acceptance passed on 2026-09-13. The operator
 wrapper temporarily deployed the combined images, then restored the stock
-deployments. This is not a permanent production upgrade. Aggregate admission,
-whole-task accounting, sizing and adversarial hardening remain release gates.
+deployments. This is not a permanent production upgrade. The service's
+[shared task-count admission](SERVICE.md#shared-execution-admission) also passes
+local multi-process and delayed-release tests on 2026-09-14. Whole-task resource
+accounting, cluster quota admission, sizing and adversarial hardening remain
+release gates; an execution count is not a CPU/RAM or physical-container budget.
 
 The resource measurements remain valid, but these historical lifecycle images
 do not implement the new [removal-confirmation contract](AGYN-REMOVAL.md).
 An unrelated failed-Pod case disproved billing `removedAt` as deletion evidence.
 The new service requires coordinated Runners/Gateway/orchestrator updates before
-repeating the model tests; the source fixes have not yet had that live rollout.
+repeating the model tests. The later coordinated five-scenario sweep is recorded
+in [the replacement contract](AGYN-REMOVAL.md); the historical image recipe below
+must not be used as a current confirmation-capable deployment.
 
 ## Problem And Contract
 

@@ -8,7 +8,17 @@ production deployment. See [PRODUCTION.md](PRODUCTION.md) for release gates and
 
 ## Run Requirements
 
-Use a supported Node release with `node:sqlite`, then `npm ci && npm test`.
+Select the pinned Node runtime with `nvm use` (`nvm install` if necessary), then
+run `npm ci && npm test`. `.nvmrc` pins Node 24.21.0; its bundled SQLite was
+verified locally as 3.53.4. The service and admission CLI reject missing,
+unrecognized or unpatched SQLite versions before opening the task database.
+SQLite documents a rare multi-connection
+[WAL-reset corruption bug](https://www.sqlite.org/wal.html#walreset), fixed in
+3.51.3 and later, with backports to 3.50.7 and 3.44.6. The guard accepts those
+backport branches too. The previously used Node 22.20.0 bundles 3.50.4 and is no
+longer suitable for these service entry points. This pin does not change the
+machine's default Node, agent runtime images or existing database contents.
+
 Configure an existing Agyn gateway and agent classes with per-instance durable
 volumes. The worker does not create Kubernetes objects itself.
 
@@ -55,6 +65,67 @@ may be supplied with `NODE_EXTRA_CA_CERTS`. Then run `npm run start:service`.
 Only the explicit `trusted-local` environment profile is accepted in this
 development entry point. It does not modify seccomp or weaken a cluster's policy.
 Network enforcement and a validated hardened deployment remain release work.
+
+## Shared Execution Admission
+
+`concurrency` is a durable execution-count ceiling for **all** workers sharing
+one service database, across owners and agent profiles. Worker construction
+initializes the stored limit on first use, even without queued tasks. Every
+subsequent worker must match it; a mismatch fails before the service listens or
+calls the provider. Claims recheck it inside the existing SQLite write
+transaction. A database trigger also prevents the previous claim SQL path from
+exceeding an initialized ceiling; it does not make mixed-version operation a
+supported upgrade procedure.
+
+A claimed execution reserves one slot from provisioning through confirmed
+release. An outcome, cancellation request, expired lease or lost worker does
+not free the slot. Recovery takes over the same reservation. Only settlement
+after confirmed removal frees it; a stopped but uncertain task then remains
+blocked for its own follow-ups until explicit reconciliation. Idle durable
+workspaces and queued turns do not consume execution slots. This is not a
+count of physical containers: one task can have supporting containers, and
+unexpected/late provider workloads still require infrastructure reconciliation.
+
+The additive schema keeps existing tasks, events and runtime bindings. On
+initial adoption, old reservations may already exceed the configured ceiling.
+They remain counted and recoverable; no new execution is admitted until enough
+reservations settle. Do not delete/recreate the database to reset the limit.
+
+To change the limit:
+
+1. Stop upstream submissions. Let accepted work settle, or cancel it and wait
+   for confirmed removal under the existing worker configuration. Inspect any
+   ambiguous provider state. SIGTERM alone does not drain remote workloads.
+2. Stop all service workers. Inspect the existing database using the patched
+   Node runtime:
+
+   ```sh
+   node dist/service/admission-cli.js --db /absolute/private/service/tasks.sqlite
+   ```
+
+3. With `reserved: 0`, atomically compare the old limit and set the new one:
+
+   ```sh
+   node dist/service/admission-cli.js --db /absolute/private/service/tasks.sqlite --expect 2 --max-active 4
+   ```
+
+4. Set `concurrency: 4` in every worker's configuration and restart them. Retain
+   the command result with the deployment audit. A stale expected limit or any
+   unreleased reservation causes a nonzero exit without changing the limit.
+
+The CLI uses an existing absolute regular file, refuses symlinks/missing paths,
+and checks for the service's task tables read-only before schema initialization.
+It has no force option, provider credentials or agent-facing endpoint. A valid
+service database receives the same additive schema initialization as the
+service. Queued work and retained task state survive the change.
+
+Verification includes six barrier-synchronized processes, conflicting limits,
+operator-change races, all unreleased phases, expired-lease recovery, the legacy
+SQL guard, and two workers retaining a slot while a fake provider delays
+release. These are local process/storage tests, not a new live Agyn acceptance.
+Different databases and directly created Agyn workloads are outside this budget.
+Whole-task CPU/RAM accounting, Kubernetes quota admission, storage/PID/IO limits,
+fairness and sustained-load sizing remain separate production work.
 
 ## Client Authentication
 

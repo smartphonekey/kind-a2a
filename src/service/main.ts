@@ -12,6 +12,7 @@ import { createServiceApp } from "./http.js";
 import { fileAuthorizer } from "./auth.js";
 import { serviceCard } from "./card.js";
 import { requireSqliteWalFix } from "./sqlite-runtime.js";
+import { parseSetupFailure } from "./setup-diagnostics.js";
 
 const pathSchema = z.string().refine(isAbsolute, "absolute path required");
 const schema = z.object({
@@ -51,7 +52,11 @@ const driver = new AgynRuntimeDriver(client, config.profiles, async (execution, 
     child.on("error", () => reject(new Error("reporting setup failed")));
     child.stdin.on("error", () => {});
     child.once("close", code => {
-      if (code !== 0) { reject(new Error("reporting setup failed")); return; }
+      if (code !== 0) {
+        const failure = parseSetupFailure(output);
+        if (failure) console.error(JSON.stringify({ kind: "reporting.setup_failed", executionId: execution.id, ...failure }));
+        reject(new Error("reporting setup failed")); return;
+      }
       try {
         const ack = z.object({ executionId: z.literal(execution.id), instanceId: z.literal(execution.runtime!.instanceId),
           workloadId: z.string().uuid(), reportingConfigured: z.literal(true) }).strict().parse(JSON.parse(output));

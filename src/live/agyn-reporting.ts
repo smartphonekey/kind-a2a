@@ -26,6 +26,7 @@ import { assertProvisioningInventory, assertReopenedVolume, provisioningInventor
 import { startRuntimeDiagnostics } from "./runtime-diagnostics.js";
 import { assertPreparedSchema, collectPreparedUpgradeState } from "./prepared-upgrade.js";
 import { assertPreparedRemoval, capturePreparedPod, type PreparedPodProof } from "./prepared-proof.js";
+import { waitForInspectableReplacement } from "./replacement-wait.js";
 
 if (process.env.AGYN_LIVE_ACCEPTANCE !== "trusted-local") throw new Error("Set AGYN_LIVE_ACCEPTANCE=trusted-local to run real-model tests");
 const interrupted = process.env.AGYN_LIVE_SCENARIO === "interrupted";
@@ -219,9 +220,9 @@ const waitService = async () => {
     await delay(100);
   }
 };
-const inspectInstance = (instanceId: string): any[] => {
+const inspectInstance = (instanceId: string, pods = instancePods(kubeconfig, instanceId)): any[] => {
   const found: any[] = [];
-  for (const pod of instancePods(kubeconfig, instanceId)) {
+  for (const pod of pods) {
     if (networkEvidence.enabled) {
       assert.equal(pod.metadata.labels?.["agent-id"], agentId, "ingress policy does not select the live agent pod");
       assert.equal(pod.metadata.labels?.[managedLabel], "agents-orchestrator");
@@ -495,13 +496,15 @@ const runSingleTask = async () => {
       const executionId = initial.find(event => event.kind === "execution.queued")!.executionId;
       child.kill("SIGKILL"); await exited;
       execFileSync("kubectl", ["--kubeconfig", kubeconfig, "delete", "pod", snapshots[1][0].name, "-n", "agyn-workloads", "--grace-period=1", "--wait=true", "--timeout=60s"], { encoding: "utf8", timeout: 65000 });
-      let gated: any[] = [];
-      for (let attempt = 0; attempt < 60; attempt++) {
-        gated = inspectInstance(binding.instanceId);
-        if (gated.length) break;
-        await delay(1000);
-      }
-      assert.equal(gated.length, 1, "Agyn did not recreate the unacked workload");
+      // Lost-workload detection defaults to 60s, followed by retry backoff and
+      // container initialization. Observe only; never redispatch the turn.
+      const { snapshots: gated, observation: replacementObservation } = await waitForInspectableReplacement({
+        previousUid: snapshots[1][0].uid, timeoutMs: 180_000, observe: () => {
+          const pods = instancePods(kubeconfig, binding.instanceId);
+          return { podUids: pods.map((pod: any) => pod.metadata.uid), snapshots: inspectInstance(binding.instanceId, pods) };
+        }
+      });
+      console.log(JSON.stringify({ kind: "live.replacement-inspected", taskId, executionId, ...replacementObservation }));
       assert.notEqual(gated[0].uid, snapshots[1][0].uid);
       assert.equal(gated[0].configured, false, "replacement must not authorize the old execution");
       assert.equal(gated[0].marker, `${suffix}\n`, "replacement replayed the append");
@@ -519,7 +522,7 @@ const runSingleTask = async () => {
       assertInstanceAbsent(kubeconfig, binding.instanceId);
       const recoveredEvents = (await fetch(`${base}/tasks/${taskId}/events`, { headers }).then(r => r.json()) as any).events;
       const workloads = await confirmedWorkloads(binding.instanceId, executionId, recoveredEvents, [...snapshots[1], ...gated]);
-      evidence.push({ turn: 1, task: quarantined, events: recoveredEvents, workloads, snapshots: snapshots[1], gatedReplacement: gated });
+      evidence.push({ turn: 1, task: quarantined, events: recoveredEvents, workloads, snapshots: snapshots[1], gatedReplacement: gated, replacementObservation });
       await assert.rejects(rpc("SendMessage", { message: { taskId, messageId: randomUUID(), role: "ROLE_USER", parts: [{ text: "must not run before reconciliation" }] } }));
       const response = await fetch(`${base}/tasks/${taskId}/executions/${executionId}/reconcile`, { method: "POST", headers,
         body: JSON.stringify({ resolution: "continue", reason: "Operator inspected the durable marker and pending journal in the gated replacement; append already happened once. Retire the old request without replay." }) });

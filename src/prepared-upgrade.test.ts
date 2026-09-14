@@ -116,7 +116,7 @@ const wrapper = fileURLToPath(new URL("../scripts/agyn-live-lifecycle.mjs", impo
 const names = ["runners", "gateway", "k8s-runner", "agents-orchestrator"];
 const image = (name: string) => `reviewed-${name}@sha256:${"a".repeat(64)}`;
 for (const mode of ["success", "child-failure", "no-retain", "unpinned", "no-backup", "stale-backup", "unconfirmed", "no-secret-get", "no-secret-patch", "no-namespace-get",
-  "busy", "bad-selector", "wrong-namespace", "plaintext-runner", "scale-conflict", "lost-stop-ack", "old-writer-remains", "database-drift", "late-writer", "registry-patch-failure", "migration-incomplete", "disabled-guard",
+  "busy", "bad-selector", "wrong-namespace", "plaintext-runner", "scale-conflict", "lost-stop-ack", "old-writer-remains", "terminating-writer", "false-deletion-ack", "drain-scale-conflict", "drain-identity-conflict", "database-drift", "late-writer", "registry-patch-failure", "migration-incomplete", "disabled-guard",
   "runner-patch-failure", "orchestrator-patch-failure", "lost-resume-ack", "managed-edit", "external-scale", "late-busy", "late-unconfirmed"]) {
   test(`prepared deployment wrapper: ${mode}`, t => {
     const directory = mkdtempSync(join(tmpdir(), "prepared-wrapper-test-")); t.after(() => rmSync(directory, { recursive: true, force: true }));
@@ -148,8 +148,16 @@ if(args.includes('auth')) {
  if(resource==='deployment')console.log(JSON.stringify(s.deployments[args[args.indexOf('deployment')+1]]));
  else if(resource==='namespace')console.log(JSON.stringify({metadata:{name:'agyn-workloads',uid:${JSON.stringify(scope.namespaceUid)}}}));
  else if(resource==='pod')console.log(JSON.stringify({metadata:{name:${JSON.stringify(scope.postgresPod)},namespace:'agyn-platform',uid:${JSON.stringify(scope.postgresPodUid)}},status:{phase:'Running',containerStatuses:[{name:'postgres',ready:true,containerID:'containerd://postgres',restartCount:0}]}}));
- else if(resource==='pods')console.log(JSON.stringify({items:args.includes('agyn-platform')?(mode==='old-writer-remains'?[{metadata:{name:'old-writer'}}]:[]):s.busy?[{metadata:{name:'unreleased'}}]:[]}));
+ else if(resource==='pods')console.log(JSON.stringify({items:args.includes('agyn-platform')?(['old-writer-remains','terminating-writer','false-deletion-ack','drain-scale-conflict','drain-identity-conflict'].includes(mode)&&!s.writerDeleted?[{metadata:{name:'old-writer'}}]:[]):s.busy?[{metadata:{name:'unreleased'}}]:[]}));
  else throw Error('unexpected get');
+} else if(args.includes('wait')) {
+ assert(args.includes('--for=delete')&&args.includes('pod')&&args.includes('agyn-platform')&&args.includes('--timeout=80s'));
+ assert.equal(args[args.indexOf('-l')+1],'app=agents-orchestrator');assert.equal(d.spec.replicas,0);
+ s.waitedForWriter=true;if(mode==='old-writer-remains')fail();
+ if(mode!=='false-deletion-ack')s.writerDeleted=true;
+ if(mode==='drain-scale-conflict')d.spec.replicas=1;
+ if(mode==='drain-identity-conflict')d.metadata.uid='replacement-orchestrator';
+ save();
 } else if(args.includes('scale')) {
  const from=Number(args.find(a=>a.startsWith('--current-replicas=')).split('=')[1]),to=Number(args.find(a=>a.startsWith('--replicas=')).split('=')[1]);
  assert(args.includes('--resource-version='+d.metadata.resourceVersion));assert.equal(d.spec.replicas,from);
@@ -191,17 +199,24 @@ fs.writeFileSync(file,JSON.stringify(s));process.exit(mode==='child-failure'?1:0
       AGYN_AUDIT_POSTGRES_POD: scope.postgresPod, AGYN_AUDIT_POSTGRES_UID: scope.postgresPodUid, AGYN_AUDIT_POSTGRES_USER: scope.postgresUser,
       AGYN_AUDIT_RUNNER_ID: scope.runnerId, AGYN_AUDIT_NAMESPACE_UID: scope.namespaceUid
     } });
-    assert.ifError(result.error); assert.equal(result.status === 0, mode === "success", result.stderr);
+    assert.ifError(result.error); assert.equal(result.status === 0, ["success", "terminating-writer"].includes(mode), result.stderr);
     assert(!(result.stdout + result.stderr).includes("PRIVATE_DEPLOYMENT"));
     const state = JSON.parse(readFileSync(stateFile, "utf8"));
     const preflight = ["no-retain", "unpinned", "no-backup", "stale-backup", "unconfirmed", "no-secret-get", "no-secret-patch", "no-namespace-get", "busy", "bad-selector", "wrong-namespace", "plaintext-runner"].includes(mode);
     if (preflight) assert.deepEqual(state.deployments, deployments, "failed preflight mutated deployments");
-    const ran = ["success", "child-failure", "managed-edit", "external-scale", "late-busy", "late-unconfirmed"].includes(mode);
+    const ran = ["success", "terminating-writer", "child-failure", "managed-edit", "external-scale", "late-busy", "late-unconfirmed"].includes(mode);
     assert.equal(state.childRan, ran);
+    if (["old-writer-remains", "terminating-writer", "false-deletion-ack", "drain-scale-conflict", "drain-identity-conflict"].includes(mode)) {
+      assert.equal(state.waitedForWriter, true);
+      if (!ran) {
+        assert.deepEqual(state.operations, [{ op: "scale", to: 0 }], "unconfirmed drain allowed an image change");
+        assert.deepEqual(state.db, f, "unconfirmed drain allowed registry migration");
+      }
+    }
     if (ran) {
       assert.deepEqual(state.operations, [{ op: "scale", to: 0 }, ...names.map(name => ({ op: "patch", name })), { op: "scale", to: 1 }]);
       for (const name of names) assert.equal(state.deployments[name].spec.template.spec.containers[0].image, mode === "managed-edit" && name === "gateway" ? "external:1" : image(name));
-    } else if (!preflight && !["scale-conflict", "late-writer", "lost-resume-ack"].includes(mode)) {
+    } else if (!preflight && !["scale-conflict", "drain-scale-conflict", "late-writer", "lost-resume-ack"].includes(mode)) {
       assert.equal(state.deployments["agents-orchestrator"].spec.replicas, 0, "old writer restarted after uncertain/partial upgrade");
     }
     if (!preflight) {

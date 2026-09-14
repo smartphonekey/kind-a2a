@@ -17,14 +17,16 @@ The live Agyn installation uses CLI `0.19.0`, platform chart `0.72.1`, Codex run
 
 The separate durable service now has [live-tested reporting and native-session
 recovery](AGYN-REPORTING.md) using focused daemon and orchestrator patches. It remains a gated
-trusted-local integration; the legacy adapter and original deployment are preserved.
+trusted-local integration. The legacy adapter source is preserved; the installed
+Agyn services now use the retained reviewed stack described below.
 
 The current service now requires a separate [workload removal confirmation](AGYN-REMOVAL.md)
 because Runners' billing timestamp can be set while a failed Pod remains.
 Source/database fixes, coordinated local deployment, a model-free failed-Pod
-test and all five Codex lifecycle regressions pass. Stock deployments are
-restored; the additive database migration remains. The older integration images
-are not compatible, and production hardening/rollout remain open.
+test and all five Codex lifecycle regressions passed on that coordinated stack.
+Those fixtures restored stock deployments afterward. The subsequent prepared
+rollout is retained, with migrations through `0022`; restoring the old images is
+no longer a supported rollback. Production hardening remains open.
 
 [Live network checks](AGYN-NETWORK.md) found and locally repaired missing CNI
 enforcement despite installed policies. Pod-network isolation has separate
@@ -56,21 +58,24 @@ now also passes [combined process acceptance](AGYN-CHECKED-VOLUMES.md#combined-p
 with real PostgreSQL, registry RPCs, controller processes and native Kubernetes
 deletion. Admission/deletion races and SIGKILL at three lifecycle boundaries
 pass for agent and sandbox owners. Agents metadata and authorization writes are
-still stubs; A2A end-to-end acceptance, production garbage collection and
-coordinated rollout remain open. These fixes are not permanently deployed.
+still stubs in that process fixture; full A2A lifecycle acceptance, production
+garbage collection and coordinated production rollout remain open. The reviewed
+combination is now installed in the local lab.
 The [read-only upgrade audit](AGYN-CHECKED-VOLUMES.md#read-only-upgrade-audit)
 now records the installed legacy-data and client state without granting rollout,
 adoption or deletion authority. Explicit legacy reconciliation remains necessary.
 Dependent [legacy-adoption guards](AGYN-CHECKED-VOLUMES.md#legacy-adoption-guards)
 now reject unconfirmed predecessors and implicit legacy reopen, with registry
 race, upgrade and combined native regression tests passing. Migration `0020`
-and the checked stack are not installed; this is not a rollout permit.
+is now installed with the reviewed stack; this does not authorize automatic
+legacy-volume adoption or deletion.
 
 [Backend-bound volume operations](AGYN-VOLUME-BACKEND.md) now retain namespace
 identity across inventory, bindings and deletion confirmation. A distinct RPC
 rejects old-runner fallback; real controller/registry/Kubernetes acceptance
-preserves the original workspace on wrong-runner routing. Workload-start
-backend pinning, authentication/fencing and coordinated rollout remain open.
+preserves the original workspace on wrong-runner routing. Prepared starts now
+pin their backend; authenticated backend identity, infrastructure fencing and
+coordinated production rollout remain open.
 
 The next [prepared-workload proposal](AGYN-PREPARED-WORKLOADS.md) adds gated Pod
 creation and exact-identity activation with claim deletion protection. Native
@@ -78,9 +83,18 @@ race tests and real Kubernetes execution/resume and replacement-race tests pass.
 [Registry persistence](AGYN-PREPARED-REGISTRY.md), [controller migration and combined
 model-free execution/crash acceptance](AGYN-PREPARED-CONTROLLERS.md) also pass.
 [Gateway wire checks, guarded rollout tooling and an offline restore/migration
-rehearsal](AGYN-PREPARED-ROLLOUT.md) now cover the next integration prerequisites.
-The installed A2A path still does not use these new RPCs; full real-agent
-acceptance and permanent rollout remain pending.
+rehearsal](AGYN-PREPARED-ROLLOUT.md) now support the retained local deployment.
+Real Codex completed-turn continuation passes through the prepared APIs with
+the same native session and exact PVC identity across two removed Pods.
+The complete interrupted scenario now also passes: controller SIGKILL and Pod
+loss preserve a single non-idempotent side effect, quarantine requires explicit
+retirement, and the follow-up resumes the same native session without replay.
+That investigation fixed a terminal-readiness race by waiting for published
+running main-container inventory before the single ticket request. All five
+Codex lifecycle scenarios now pass on the final corrected service and retained
+stack. Prepared-stack Claude acceptance and sustained startup reliability remain open.
+[Scoped runner RBAC](AGYN-RUNNER-RBAC.md) passes 57 allow/deny probes. The latest
+service build and all 437 tests pass, with no skipped tests.
 
 The new [durable execution service](SERVICE.md) adds authenticated A2A routing,
 transactional queued turns, reporting MCP, bounded outcome checks and a recoverable

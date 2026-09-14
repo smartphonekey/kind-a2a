@@ -1,4 +1,4 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 # Trusted-local resource acceptance image; preserve the deployed runtime base.
-FROM ghcr.io/agynio/k8s-runner:0.12.0
+FROM ghcr.io/agynio/k8s-runner:0.12.0@sha256:dadb9ad718533cce73f7918734c8ebe379bc539b786a09b4d3f6861ed535d5fa
 COPY --chown=appuser:appgroup k8s-runner /app/k8s-runner

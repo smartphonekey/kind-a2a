@@ -18,7 +18,7 @@ import { installRuntime, managedReportingConfig } from "./reporting/runtime.js";
 import { DurableTaskStore } from "./service/task-store.js";
 import { createServiceApp } from "./service/http.js";
 import { serviceCard } from "./service/card.js";
-import { deliverBinding } from "./service/agyn-terminal.js";
+import { deliverBinding, reportingTargetReady, ReportingDeliveryError } from "./service/agyn-terminal.js";
 import type { AgynWorkload } from "./agyn-client.js";
 
 test("Agyn installer does not hide unconfirmed failed/stopped workloads behind billing end", async t => {
@@ -54,7 +54,8 @@ test("Agyn installer does not hide unconfirmed failed/stopped workloads behind b
     const replacementId = randomUUID();
     workloads = [{ meta: { id: randomUUID() }, agentInstanceId: setup.instanceId, status: scenario.status,
       removedAt: new Date().toISOString(), ...(scenario.confirmed ? { removalConfirmedAt: new Date().toISOString() } : {}) }];
-    if (scenario.replacement) workloads.push({ meta: { id: replacementId }, agentInstanceId: setup.instanceId, status: "WORKLOAD_STATUS_RUNNING" });
+    if (scenario.replacement) workloads.push({ meta: { id: replacementId }, agentInstanceId: setup.instanceId, status: "WORKLOAD_STATUS_RUNNING",
+      containers: [{ name: "agent", role: "CONTAINER_ROLE_MAIN", status: "CONTAINER_STATUS_RUNNING" }] });
     terminalRequests = [];
     const child: ChildProcessWithoutNullStreams = spawn(process.execPath, [new URL("./service/agyn-reporting-installer.js", import.meta.url).pathname], {
       env: { ...process.env, AGYN_GATEWAY_URL: `http://127.0.0.1:${address.port}`, AGYN_TOKEN: "test-gateway",
@@ -68,10 +69,70 @@ test("Agyn installer does not hide unconfirmed failed/stopped workloads behind b
     const [code, terminationSignal] = await exited;
     assert.equal(terminationSignal, null, `${scenario.name}: installer did not fail promptly`);
     assert.equal(code, 1, scenario.name);
-    assert.equal(output, "", scenario.name);
+    assert.deepEqual(JSON.parse(output), scenario.confirmed ? {
+      reportingSetupFailed: true, stage: "ticket", httpStatus: 503, rpcCode: "unknown"
+    } : { reportingSetupFailed: true, stage: "runtime" }, scenario.name);
+    assert(!output.includes(setup.reporting.token) && !output.includes("test-gateway"), "failure output exposed credentials");
     assert.equal(errors, "Agyn execution reporting setup failed\n", scenario.name);
     assert.deepEqual(terminalRequests, scenario.confirmed ? [replacementId] : [], scenario.name);
   }
+});
+
+test("terminal readiness requires a published running main container", () => {
+  const workload: AgynWorkload = { meta: { id: "workload" }, status: "WORKLOAD_STATUS_RUNNING" };
+  assert.equal(reportingTargetReady(workload), false);
+  for (const containers of [[], [{ name: "sidecar", role: "CONTAINER_ROLE_SIDECAR", status: "CONTAINER_STATUS_RUNNING" }],
+    [{ name: "agent", role: "CONTAINER_ROLE_MAIN" }], [{ name: "agent", role: "CONTAINER_ROLE_MAIN", status: "CONTAINER_STATUS_WAITING" }]]) {
+    assert.equal(reportingTargetReady({ ...workload, containers }), false);
+  }
+  for (const name of ["main", "agent-instance"]) {
+    assert.equal(reportingTargetReady({ ...workload, containers: [{ name, role: "CONTAINER_ROLE_MAIN", status: "CONTAINER_STATUS_RUNNING" }] }), true);
+  }
+});
+
+test("terminal readiness rejects ambiguous aliases, duplicate names and terminated main containers", () => {
+  const main = { name: "agent", role: "CONTAINER_ROLE_MAIN", status: "CONTAINER_STATUS_RUNNING" };
+  for (const containers of [[main, { ...main, name: "other" }], [main, { ...main, role: "CONTAINER_ROLE_SIDECAR" }],
+    [main, { name: "main", role: "CONTAINER_ROLE_SIDECAR" }], [{ ...main, status: "CONTAINER_STATUS_TERMINATED" }]]) {
+    assert.throws(() => reportingTargetReady({ meta: { id: "workload" }, status: "WORKLOAD_STATUS_RUNNING", containers }));
+  }
+});
+
+test("Agyn installer observes delayed container inventory before its only terminal attempt", async t => {
+  const setup = { executionId: randomUUID(), instanceId: randomUUID(), threadId: randomUUID(), requestId: randomUUID(),
+    retiredRequestIds: [], profileId: "test", reporting: { url: "https://reporting.invalid", token: "A".repeat(43) } };
+  const workloadId = randomUUID();
+  let reads = 0, terminalAttempts = 0, readsAtTerminal = 0;
+  const server = createServer((request, response) => {
+    request.resume();
+    response.setHeader("content-type", "application/json");
+    const method = request.url?.split("/").at(-1);
+    if (method === "GetInstance") response.end(JSON.stringify({ instance: { meta: { id: setup.instanceId }, state: "AGENT_INSTANCE_STATE_ACTIVE" } }));
+    else if (method === "ListWorkloadsByAgentInstance") {
+      reads++;
+      response.end(JSON.stringify({ workloads: [{ meta: { id: workloadId }, agentInstanceId: setup.instanceId, status: "WORKLOAD_STATUS_RUNNING",
+        ...(reads > 1 ? { containers: reads === 2 ? [] : [{ name: "agent", role: "CONTAINER_ROLE_MAIN",
+          status: reads === 3 ? "CONTAINER_STATUS_WAITING" : "CONTAINER_STATUS_RUNNING" }] } : {}) }] }));
+    } else if (method === "CreateTerminalSession") {
+      terminalAttempts++; readsAtTerminal = reads;
+      response.writeHead(503).end("{}");
+    } else response.writeHead(404).end("{}");
+  });
+  server.listen(0, "127.0.0.1"); await once(server, "listening");
+  const address = server.address(); assert(address && typeof address !== "string");
+  const child = spawn(process.execPath, [new URL("./service/agyn-reporting-installer.js", import.meta.url).pathname], {
+    env: { ...process.env, AGYN_GATEWAY_URL: `http://127.0.0.1:${address.port}`, AGYN_TOKEN: "test-gateway",
+      AGYN_ORGANIZATION_ID: randomUUID(), AGYN_IDENTITY_ID: randomUUID() }, timeout: 8000, killSignal: "SIGKILL"
+  });
+  const exited = once(child, "close");
+  let output = "";
+  child.stdout.on("data", chunk => { output += chunk; }); child.stderr.resume();
+  t.after(async () => { if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL"); await exited;
+    server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); });
+  child.stdin.end(JSON.stringify(setup));
+  assert.deepEqual(await exited, [1, null]);
+  assert.equal(readsAtTerminal, 4); assert.equal(terminalAttempts, 1);
+  assert.deepEqual(JSON.parse(output), { reportingSetupFailed: true, stage: "ticket", httpStatus: 503, rpcCode: "unknown" });
 });
 
 test("managed runtime config preserves tracing and existing tools without exposing credentials", () => {
@@ -184,9 +245,31 @@ test("Agyn terminal delivery waits for verified raw-mode readiness and requires 
     const delivery = deliverBinding({ websocketUrl: `ws://127.0.0.1:${address.port}`, ticket: "one-time" }, expected,
       "private-binding", AbortSignal.timeout(2000), true);
     if (scenario === "ok") await delivery;
-    else await assert.rejects(delivery, /delivery failed/);
+    else await assert.rejects(delivery, error => {
+      assert(error instanceof ReportingDeliveryError);
+      assert.equal(error.diagnostic.deliveryReason, scenario === "wrong-instance" ? "protocol" : scenario === "closed" ? "closed" : "remote_exit");
+      assert.equal(error.diagnostic.receiverReady, scenario !== "wrong-instance");
+      assert.equal(error.diagnostic.payloadAttempted, scenario !== "wrong-instance");
+      assert.equal(error.diagnostic.acknowledged, scenario === "closed" || scenario === "nonzero");
+      assert(!JSON.stringify(error.diagnostic).includes("private-binding"));
+      return true;
+    });
     assert.equal(credentialSent, scenario !== "wrong-instance");
   }
+});
+
+test("Agyn terminal handshake diagnostics never retain response bodies or tickets", async t => {
+  const server = createServer((_req, res) => { res.writeHead(403); res.end("private-response"); });
+  server.listen(0, "127.0.0.1"); await once(server, "listening");
+  const address = server.address(); assert(address && typeof address !== "string");
+  t.after(() => new Promise<void>(resolve => { server.closeAllConnections(); server.close(() => resolve()); }));
+  await assert.rejects(deliverBinding({ websocketUrl: `ws://127.0.0.1:${address.port}`, ticket: "private-ticket" },
+    { executionId: "execution", instanceId: "instance", workloadId: "workload", runtimeSha256: "hash" },
+    "private-binding", AbortSignal.timeout(2000), true), error => {
+    assert(error instanceof ReportingDeliveryError);
+    assert.deepEqual(error.diagnostic, { deliveryReason: "handshake", receiverReady: false, payloadAttempted: false, acknowledged: false, httpStatus: 403 });
+    return true;
+  });
 });
 
 test("Claude installation validates both files before mutation and acknowledges only complete scoped setup", async t => {

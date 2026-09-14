@@ -10,6 +10,8 @@ const reasons = new Set(["Completed", "Error", "OOMKilled", "ContainerCannotRun"
   "PodInitializing", "CrashLoopBackOff", "ImagePullBackOff", "ErrImagePull", "CreateContainerConfigError", "CreateContainerError"]);
 const subtypes = new Set(["success", "error_during_execution", "error_max_turns", "error_max_budget_usd", "error_max_structured_output_retries"]);
 const terminalReasons = new Set(["api_error", "completed", "max_turns", "max_budget_usd", "max_structured_output_retries", "aborted_streaming", "aborted_tools"]);
+const rpcCodes = new Set(["Canceled", "Unknown", "InvalidArgument", "DeadlineExceeded", "NotFound", "AlreadyExists", "PermissionDenied",
+  "ResourceExhausted", "FailedPrecondition", "Aborted", "OutOfRange", "Unimplemented", "Internal", "Unavailable", "DataLoss", "Unauthenticated"]);
 
 export function runtimePodIdentity(pod: V1Pod, agentId: string) {
   assert.match(agentId, uuid);
@@ -40,8 +42,20 @@ export function safeRuntimeLog(text: string) {
         terminalReason: terminalReasons.has(result[2]) ? result[2] : "unknown", apiStatus: status >= 400 && status <= 599 ? status : 0 };
     } else if (/claude process exited: exit status \d+/.test(line)) {
       item = { kind: "claude_process_exit", exitCode: Number(/exit status (\d{1,3})\b/.exec(line)?.[1] ?? -1) };
-    } else if (/terminal agent processing failure:|daemon exited:|daemon init failed:/.test(line)) {
-      item = { kind: "daemon_failure_unclassified" };
+    } else {
+      const failure = /(terminal agent processing failure:|daemon exited:|daemon init failed:|config error:) (.*)$/.exec(line);
+      if (failure) {
+        const stage = ({ "terminal agent processing failure:": "processing", "daemon exited:": "run", "daemon init failed:": "init", "config error:": "config" })[failure[1]]!;
+        item = { kind: "daemon_failure_unclassified", stage };
+        const rpcCode = /\brpc error: code = ([A-Za-z]+) desc = /.exec(failure[2])?.[1];
+        if (rpcCode) item.rpcCode = rpcCodes.has(rpcCode) ? rpcCode : "unknown";
+        for (const [pattern, code] of [[/\bpermission denied\b/, "permission_denied"], [/\bread-only file system\b/, "read_only_filesystem"],
+          [/\bno such file or directory\b/, "not_found"], [/\bconnection refused\b/, "connection_refused"],
+          [/\bcontext deadline exceeded\b/, "deadline"], [/\bcontext canceled\b/, "canceled"]] as const) {
+          if (pattern.test(failure[2])) { item.errorClass = code; break; }
+        }
+        if (/\brequired init script [a-f0-9-]{36} failed with exit code \d+\b/.test(failure[2])) item.errorClass = "required_init_exit";
+      }
     }
     if (item) found.set(JSON.stringify(item), item);
   }

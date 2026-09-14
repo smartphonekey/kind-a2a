@@ -27,9 +27,28 @@ test("runtime diagnostics retain safe result metadata, not arbitrary log text", 
   assert.deepEqual(safeRuntimeLog("Claude returned an error result; reconciliation required (result_subtype=never-export-this, terminal_reason=private, api_status=999)"), [
     { kind: "claude_result_error", subtype: "unknown", terminalReason: "unknown", apiStatus: 0 }
   ]);
-  assert.deepEqual(safeRuntimeLog("daemon exited: private provider response"), [{ kind: "daemon_failure_unclassified" }]);
+  assert.deepEqual(safeRuntimeLog("daemon exited: private provider response"), [{ kind: "daemon_failure_unclassified", stage: "run" }]);
   assert.deepEqual(safeRuntimeLog("claude process exited: exit status 1"), [{ kind: "claude_process_exit", exitCode: 1 }]);
   assert.throws(() => safeRuntimeLog("x".repeat(65537)), /bound/);
+});
+
+test("runtime diagnostics retain only enumerated daemon failure stages and error codes", () => {
+  for (const [prefix, stage] of [["daemon init failed", "init"], ["daemon exited", "run"],
+    ["terminal agent processing failure", "processing"], ["config error", "config"]]) {
+    for (const code of ["Unauthenticated", "PermissionDenied", "InvalidArgument", "Unavailable", "PrivateCredential"]) {
+      const result = safeRuntimeLog(`2026/09/14 ${prefix}: private context: rpc error: code = ${code} desc = never-export-this`);
+      assert.deepEqual(result, [{ kind: "daemon_failure_unclassified", stage, rpcCode: code === "PrivateCredential" ? "unknown" : code }]);
+      assert(!JSON.stringify(result).includes("never-export-this"));
+    }
+  }
+  for (const [text, errorClass] of [["open /private/secret: permission denied", "permission_denied"],
+    ["mkdir /private: read-only file system", "read_only_filesystem"], ["open /private: no such file or directory", "not_found"],
+    ["dial private: connection refused", "connection_refused"], ["context deadline exceeded", "deadline"],
+    ["context canceled", "canceled"], [`required init script ${randomUUID()} failed with exit code 4`, "required_init_exit"]]) {
+    assert.deepEqual(safeRuntimeLog(`daemon init failed: ${text}`), [{ kind: "daemon_failure_unclassified", stage: "init", errorClass }]);
+  }
+  assert.deepEqual(safeRuntimeLog("private provider payload: permission denied\nrpc error: code = Unauthenticated desc = private"), []);
+  assert.deepEqual(safeRuntimeLog("daemon init failed: arbitrary-private-value"), [{ kind: "daemon_failure_unclassified", stage: "init" }]);
 });
 
 test("runtime diagnostics reject foreign or ambiguous Pod bindings before reading logs", async () => {

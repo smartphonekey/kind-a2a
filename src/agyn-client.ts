@@ -2,9 +2,17 @@ export type AgynParticipant = { id: string; nickname?: string };
 export type AgynThread = { id: string; participants: AgynParticipant[]; messageCount?: number };
 export type AgynMessage = { id: string; threadId: string; senderId: string; body: string; createdAt: string };
 export type AgynInstance = { meta: { id: string }; state: string; handle: string; defaultThreadId?: string; label?: string; agentId?: string };
-export type AgynWorkload = { meta: { id: string }; status: string; removedAt?: string; removalConfirmedAt?: string; agentInstanceId?: string };
+export type AgynWorkload = { meta: { id: string }; status: string; removedAt?: string; removalConfirmedAt?: string; agentInstanceId?: string;
+  containers?: { name: string; role: string; status?: string }[] };
 
 type GatewayError = { code?: string; message?: string };
+
+export class AgynRpcError extends Error {
+  constructor(message: string, readonly httpStatus: number, readonly rpcCode?: string) {
+    super(message);
+    this.name = "AgynRpcError";
+  }
+}
 
 export class AgynClient {
   constructor(
@@ -106,7 +114,8 @@ export class AgynClient {
     });
     if (!response.ok) {
       const error = await response.json().catch(() => ({})) as GatewayError;
-      throw new Error(`Agyn ${service}.${method} failed (${response.status}${error.code ? ` ${error.code}` : ""}): ${error.message ?? response.statusText}`);
+      throw new AgynRpcError(`Agyn ${service}.${method} failed (${response.status}${error.code ? ` ${error.code}` : ""}): ${error.message ?? response.statusText}`,
+        response.status, error.code);
     }
     return await response.json() as T;
   }

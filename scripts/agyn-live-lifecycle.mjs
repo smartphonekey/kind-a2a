@@ -175,13 +175,20 @@ const scalePreparedOrchestrator = (from, to) => {
   k(["scale", "deployment/agents-orchestrator", "-n", "agyn-platform", `--replicas=${to}`, `--current-replicas=${from}`, `--resource-version=${current.metadata.resourceVersion}`]);
   rollout(orchestratorTarget.name);
 };
-const assertPreparedWriterStopped = () => {
+const assertPreparedWriterStopped = (waitForDeletion = false) => {
   const current = deployment(orchestratorTarget.name);
   assert.equal(current.metadata.uid, orchestratorTarget.original.metadata.uid, "orchestrator identity changed while stopped");
   assert.equal(current.spec.replicas, 0, "orchestrator was restarted during coordinated upgrade");
   const selector = orchestratorTarget.original.spec.selector;
   assert(selector?.matchLabels && Object.keys(selector.matchLabels).length && !selector.matchExpressions?.length, "unsupported orchestrator selector");
-  assert.equal(JSON.parse(k(["get", "pods", "-n", "agyn-platform", "-l", Object.entries(selector.matchLabels).map(([key, value]) => `${key}=${value}`).join(","), "-o", "json"])).items.length,
+  const labels = Object.entries(selector.matchLabels).map(([key, value]) => `${key}=${value}`).join(",");
+  const pods = JSON.parse(k(["get", "pods", "-n", "agyn-platform", "-l", labels, "-o", "json"])).items;
+  if (waitForDeletion && pods.length) {
+    // A zero-replica Deployment can finish rolling out before its Pods exit.
+    k(["wait", "--for=delete", "pod", "-n", "agyn-platform", "-l", labels, "--timeout=80s"]);
+    return assertPreparedWriterStopped();
+  }
+  assert.equal(pods.length,
     0, "old orchestrator Pods still exist; refusing registry migration");
 };
 const assertPreparedStackInstalled = (orchestratorReplicas) => {
@@ -200,7 +207,7 @@ try {
   if (prepared) {
     preparedStage = "stopping-old-orchestrator";
     scalePreparedOrchestrator(1, 0);
-    assertPreparedWriterStopped();
+    assertPreparedWriterStopped(true);
     assertIdle("workload appeared while stopping old orchestrator");
     const stopped = preparedSnapshot();
     assert.equal(stopped.fingerprint, preparedBefore.fingerprint, "database changed while draining; a fresh verified backup is required");

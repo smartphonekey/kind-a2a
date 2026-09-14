@@ -77,6 +77,16 @@ This is a replay guard, not exactly-once execution or a root-agent security
 boundary. The control-file contract is a review proposal, not an accepted Agyn
 API; discuss it with maintainers before extending Gateway.
 
+## Runner Workload RBAC
+
+The separate [runner workload RBAC placement fix](AGYN-RUNNER-RBAC.md) is pushed
+as `fix/workload-namespace-rbac`, `92b25e9`, based on upstream `baadc75`.
+It keeps the runner account in the release namespace while placing namespaced
+workload grants in `workloadNamespace`. It adds Helm-rendering tests without
+changing runtime code or broadening rules. Independent and prepared-branch
+tests pass; the installed local permission matrix passes 57 checks. The local
+RBAC overlay is not a reconciled Helm platform release. No upstream PR is open.
+
 ## Orchestrator Lifecycle Fixes
 
 Two independent, runtime-neutral changes are pushed in
@@ -409,8 +419,12 @@ requirement explicit. No upstream PR is open.
 
 The separate [local rollout/backup/proof tools](AGYN-PREPARED-ROLLOUT.md) belong
 in this AGPL service repository, not in that Gateway contribution. Offline
-restoration and migration of installed registry data pass, but do not constitute
-a deployed prepared-stack A2A acceptance or whole-platform disaster recovery.
+restoration and migration of installed registry data pass. The reviewed stack
+is now retained locally, and real Codex completed-turn continuation passes
+through the prepared APIs. That is not the full real-agent lifecycle matrix or
+whole-platform disaster recovery. Keep the independent
+[workload-namespace RBAC correction](AGYN-RUNNER-RBAC.md) separate from the
+dependent prepared-workload contract.
 
 ## Runner Control Transport
 

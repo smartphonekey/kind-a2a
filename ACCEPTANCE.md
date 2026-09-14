@@ -2,6 +2,32 @@
 
 Evidence below spans the preserved `kind-aira-a2a-lab` baseline and the new self-hosted Agyn backend. Each section identifies its environment; fake-agent tests and live-model evidence are deliberately separated.
 
+## Native Namespace Quota (2026-09-14)
+
+A separate credential-free real runner/Kubernetes test passed in **35.82s**.
+The opt-in chart uses native ResourceQuota for CPU/memory requests and limits
+plus Pod object count. Each CPU/memory key independently rejected a start before
+Pod creation; effective usage included the main, helper, restartable init and
+regular init containers. Each process checked UID 1000 and its real cgroup caps.
+A completed Pod retained an object slot until deletion. Six concurrent gRPC
+starts with one remaining slot admitted exactly one and rejected five, while an
+existing neighbor continued progressing. All used values returned to zero after
+observed Pod removal, and the temporary namespace was confirmed absent.
+
+Focused chart commit `28d4562` passes render/validation checks, Helm lint, existing
+network-policy checks, the full runner race suite and build. The combined test
+at `dc67264` passes its ordinary full race suite with live tests disabled as well
+as the opt-in live test. An independent cluster audit verified all 48 existing
+PVC UIDs/specs/phases and all four stock deployment UIDs/specs/generations unchanged
+and ready. Zero workload Pods/Services/ResourceQuotas remain. No PVC was created
+or deleted; the test used no model credentials or provider calls.
+
+[Exact source, measurements, reproduction and limits](AGYN-RESOURCES.md#native-namespace-quota-acceptance)
+are recorded separately from A2A/model evidence. This is not a newly deployed
+quota profile or proof of A2A recovery after quota rejection. Whole-task cost
+reporting, mandatory production profiles, sizing, fencing and the other
+[production gates](PRODUCTION.md) remain open.
+
 ## Shared Admission And SQLite Runtime (2026-09-14)
 
 The build and all **190 tests** pass (171 top-level) on Node 24.21.0 with SQLite

@@ -124,7 +124,9 @@ operator-change races, all unreleased phases, expired-lease recovery, the legacy
 SQL guard, and two workers retaining a slot while a fake provider delays
 release. These are local process/storage tests, not a new live Agyn acceptance.
 Different databases and directly created Agyn workloads are outside this budget.
-Whole-task CPU/RAM accounting, Kubernetes quota admission, storage/PID/IO limits,
+The separate [native quota acceptance](AGYN-RESOURCES.md#native-namespace-quota-acceptance)
+now proves controlled runner/Kubernetes admission, not deployed A2A recovery.
+Whole-task CPU/RAM accounting, production quota rollout, storage/PID/IO limits,
 fairness and sustained-load sizing remain separate production work.
 
 ## Client Authentication

@@ -233,6 +233,34 @@ wrapper cases. The A2A controller and workflow code did not change for this
 resource profile. Aggregate admission, accounting and production hardening are
 not established by the tiny agent fixtures.
 
+## Native Workload Quota
+
+An eighteenth focused branch adds opt-in namespace-wide admission using the
+existing Kubernetes ResourceQuota controller, without changing the runner
+binary, API, A2A controller or workflow:
+
+- Fork: [spk-ai/k8s-runner](https://github.com/spk-ai/k8s-runner).
+- Branch: `feat/workload-resource-quota`, commit `28d4562`, based on `baadc75`.
+- Compare: <https://github.com/agynio/k8s-runner/compare/main...spk-ai:k8s-runner:feat/workload-resource-quota>.
+- Explicit CPU/memory request/limit totals and Pod object count are required.
+  The chart validates its rendered runner namespace binding and stays disabled
+  by default. It introduces no fallback resource allocations or scoped bypass.
+- Helm render/negative tests use the existing Kubernetes parsers and run in the
+  existing Go CI. Full `GOMAXPROCS=4 go test -race ./...`, `go build ./...`,
+  Helm lint and existing network-policy checks pass.
+- The branch is pushed with existing AGPL licensing preserved. No upstream PR
+  has been submitted; review this chart change independently of resource/API work.
+
+The separate `lab/quota-integration` branch combines resource and chart patches
+for a credential-free Kubernetes test, not an upstream review unit. Test source
+`dc67264` with API `3c84a6a` passes real per-key quota rejection, init/sidecar
+accounting, completed-Pod counting, six competing starts and verified cleanup.
+The ordinary combined runner race suite also passes with live fixtures disabled.
+[Evidence and reproduction](AGYN-RESOURCES.md#native-namespace-quota-acceptance)
+distinguish this from deployed A2A quota recovery and mandatory production
+profiles, which remain open. Keep the lab image, integration test and evidence
+out of the focused chart proposal.
+
 ## Claude SDK Session Selection
 
 A separate SDK-only contribution adds `Options.SessionID` and `Options.Resume`
@@ -288,7 +316,7 @@ Two additional focused review units improve observability, not retry behavior:
   `go test -race ./internal/daemon -run 'ClaudeError|ClaudeDiagnostic' -count=1`
   pass with an isolated HOME. The unrelated full daemon race failure remains.
 
-Both branches are pushed, bringing the focused branch count to seventeen; no
+Both branches are pushed, bringing the then-current focused branch count to seventeen; no
 upstream PR is submitted. Review the daemon diff against its error-result
 prerequisite, and replace its temporary SDK fork pin with an upstream release
 before merge. The native opt-in test passed using the real packaged CLI and a
@@ -345,7 +373,7 @@ provider fault injection. Live Agyn acceptance is not replaced by these tests.
 The [durable admission limit](SERVICE.md#shared-execution-admission), its operator
 CLI and runtime checks belong to the focused A2A service. They use SQLite's
 existing transaction/constraint machinery and add no agent-specific logic or
-Agyn API changes. Whole-cluster resource admission should use the platform's
-native quota mechanisms with separate acceptance, not be inferred from this
-task count. These new files retain AGPL-3.0-only; no upstream branch or PR is
-changed by this service work.
+Agyn API changes. The separate native quota contribution above now has controlled
+runner/Kubernetes acceptance; neither check implies deployed A2A quota recovery
+or whole-cluster protection. These new service files retain AGPL-3.0-only; no
+upstream branch or PR is changed by the service admission work.

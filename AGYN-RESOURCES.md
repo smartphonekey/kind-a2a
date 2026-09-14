@@ -7,9 +7,11 @@ resource-bounded Agyn lifecycle acceptance passed on 2026-09-13. The operator
 wrapper temporarily deployed the combined images, then restored the stock
 deployments. This is not a permanent production upgrade. The service's
 [shared task-count admission](SERVICE.md#shared-execution-admission) also passes
-local multi-process and delayed-release tests on 2026-09-14. Whole-task resource
-accounting, cluster quota admission, sizing and adversarial hardening remain
-release gates; an execution count is not a CPU/RAM or physical-container budget.
+local multi-process and delayed-release tests on 2026-09-14. A separate real
+runner/Kubernetes quota test now passes, including supporting-container usage,
+concurrent admission and release. Whole-task accounting, deployed A2A quota
+recovery, production sizing and adversarial hardening remain release gates;
+an execution count is not a CPU/RAM or physical-container budget.
 
 The resource measurements remain valid, but these historical lifecycle images
 do not implement the new [removal-confirmation contract](AGYN-REMOVAL.md).
@@ -124,6 +126,96 @@ CNI enforcement proof; [network acceptance](AGYN-NETWORK.md) covers that separat
 The observed behavior matches Kubernetes v1.33's documented
 [CPU throttling and reactive OOM enforcement](https://v1-33.docs.kubernetes.io/docs/concepts/configuration/manage-resources-containers/#requests-and-limits).
 No Pod-level alpha resource feature is needed.
+
+## Native Namespace Quota Acceptance
+
+The independent runner chart branch
+[feat/workload-resource-quota](https://github.com/spk-ai/k8s-runner/tree/feat/workload-resource-quota)
+at `28d4562` adds an operator-selected namespace budget using Kubernetes
+ResourceQuota. It does not change the runner binary, API, A2A controller or
+workflow. It is disabled by default; enabling it requires explicit totals for
+`requests.cpu`, `requests.memory`, `limits.cpu`, `limits.memory` and `count/pods`.
+Rendering rejects an absent, dynamic, duplicate or mismatched runner
+`KUBE_NAMESPACE`, incomplete budgets and unsupported scope options. It adds no
+implicit container limits. Helm/render, existing network-policy checks, full
+runner race tests and `go build ./...` pass on the focused branch.
+
+The lab-only [quota integration branch](https://github.com/spk-ai/k8s-runner/tree/lab/quota-integration)
+combines that chart with the existing typed-resource implementation. Test source
+`dc67264d9ecd648705950e493ebde01c23fff05e` uses local API
+`3c84a6a9e60ccb869aa9ac2a045875a6832f2568`. Ordinary combined runner race tests
+pass with both live fixtures disabled. No upstream PR has been submitted.
+
+### Real Runner And Kubernetes Evidence
+
+`TestLiveWorkloadQuota` passed in **35.82 seconds** on 2026-09-14, using local K3s
+`v1.33.1+k3s1`. It renders the real chart and calls the real RunnerService through
+loopback gRPC backed by Kubernetes. Run ID:
+`0025c4dc-7559-47d3-b689-0e0f5519a29e`; temporary namespace `runner-quota-hglt5`,
+UID `a2618fab-5780-4f06-8668-3c436644ab0a`.
+
+The pinned image built from `ops/Dockerfile.agyn-quota-probe` defaults to UID
+1000. Main, helper, restartable init and regular init each checked their UID and
+real cgroup caps before sending bounded heartbeats. No model/backend, provider
+credentials, PVCs, service-account token, Pod volumes or stress loops were used.
+A deny-all ingress/egress policy was installed in the owned temporary namespace;
+this fixture does not independently verify CNI enforcement.
+
+| Check | Observed evidence |
+| --- | --- |
+| Assembled-Pod usage | Heavy Pod plus neighbor used `550m`/`288Mi` requests, `1750m`/`448Mi` limits and two Pod objects. The heavy Pod includes a helper, restartable init and larger regular init; these are not main-only totals. |
+| Real container caps | Main: `250m`/`128Mi`; helper and restartable init: `500m`/`64Mi` each; regular init: `1` CPU/`256Mi`. Each probe reported UID 1000 and the run nonce. |
+| Independent CPU/RAM admission | Each of the four resource quota keys independently rejected a candidate with gRPC `PermissionDenied` and the native exceeded-quota reason. Each rejected Pod was confirmed absent. |
+| Existing work | Neighbor heartbeat advanced during the quota rejections. |
+| Terminal object capacity | A Succeeded Pod released compute quota but retained a `count/pods` slot; another start was rejected until the object was removed. |
+| Concurrent admission | Six real gRPC starts competed for one remaining Pod slot: exactly one accepted, five quota rejections, zero rejected Pods present. |
+| Release and cleanup | All four admitted Pods were stopped and independently confirmed absent. All five used quota values returned to zero, then namespace removal was confirmed. |
+
+Admitted Pod UIDs were `2d766738-e27b-4692-ad70-70527c9ee3ef` (heavy),
+`8c1e3cf2-3be3-4965-9ae8-ffd23e2278db` (neighbor),
+`85007129-f022-4cf5-8a4f-1bb3e2d98a03` (completed), and
+`9ddbc671-a27a-457a-92e1-1ff26a7ee4a0` (concurrent winner).
+
+The independent post-run audit confirmed all **48** original PVC UIDs, specs and
+phases unchanged; all four stock deployment UIDs, generations and specs unchanged
+and ready; the original network policy unchanged; and zero workload Pods,
+Services or ResourceQuotas in `agyn-workloads`. No PVC was created or deleted.
+Private evidence is under `.state/quota-probe-build-ILcTYL/`: `live-bdmvwF/run.json`,
+`live-bdmvwF/go-test.log`, `before.json` and `post-audit.json`. None is committed.
+
+### Reproduction And Remaining Boundary
+
+Use the combined runner checkout with local API bindings and Helm dependencies
+generated as described in its README. The following digest is the independently
+verified, already-loaded local fixture image, not a public registry artifact.
+For another cluster, build the tracked Dockerfile using an empty build context,
+load it and use its verified digest reference instead.
+
+```sh
+cd /home/alex/work/agyn-contrib/k8s-runner-quota-integration
+env -u RUNNER_LIVE_RESOURCE_TEST GOMAXPROCS=4 \
+  RUNNER_LIVE_QUOTA_TEST=trusted-local \
+  RUNNER_LIVE_KUBECONFIG=/home/alex/work/aira-a2a-lab/.state/agyn-kubeconfig \
+  RUNNER_LIVE_NODE_IMAGE=docker.io/library/a2a-quota-probe@sha256:d086089ef330d40f93bd673d886b440f72668095e1d9f4a6fdb1a7cd1ee9f4e6 \
+  go test -v ./internal/server -run '^TestLiveWorkloadQuota$' -count=1 -timeout=6m
+```
+
+This establishes controlled admission of assembled Pods, not a global budget
+across all namespaces or a replacement for the service's durable task scheduler.
+Kubernetes applies its own effective init/sidecar accounting; no parallel
+production resource arithmetic was added. See the native
+[quota contract](https://v1-33.docs.kubernetes.io/docs/concepts/policy/resource-quotas/)
+and [sidecar accounting](https://v1-33.docs.kubernetes.io/docs/concepts/workloads/pods/sidecar-containers/#resource-sharing-within-containers).
+
+The deployed stock Agyn runner remains unchanged and has no installed workload
+quota. Coordinated A2A acceptance must still prove durable state retention and
+explicit recovery after a rejected start. The current runner creates supporting
+resources before Pod creation; this PVC-free test does not prove their lifecycle
+under rejection. The chart does not fix orchestrator whole-task cost reporting,
+add typed quota errors/retries, enforce producer bootstrap or mandatory profiles,
+or establish agent OOM recovery, tenant fairness, storage/PID/IO bounds or node
+partition fencing. UID 1000 in this fixture is not a hardened production agent
+security profile. These gates remain open.
 
 ## Bounded Agent Profile
 

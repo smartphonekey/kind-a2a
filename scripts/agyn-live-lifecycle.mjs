@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 
 assert.equal(process.env.AGYN_LIVE_ACCEPTANCE, "trusted-local");
 const image = process.env.AGYN_LIVE_ORCHESTRATOR_IMAGE;
@@ -25,7 +25,14 @@ if (bounded) {
   assert(process.env.AGYN_LIVE_RUNNER_CHART, "resource acceptance requires the reviewed network policy chart");
 } else assert(!runnerImage && !supportingResources, "resource settings require AGYN_LIVE_COMPUTE_RESOURCES=true");
 const scenarios = process.argv.slice(2);
-assert(scenarios.length && scenarios.every(value => ["completed", "interrupted", "cancellation", "parallel", "streaming", "startup-failure"].includes(value)), "supply one or more known acceptance scenarios");
+assert(scenarios.length && scenarios.every(value => ["completed", "interrupted", "cancellation", "parallel", "streaming", "startup-failure", "quota-recovery"].includes(value)), "supply one or more known acceptance scenarios");
+const quotaRecovery = scenarios.includes("quota-recovery");
+if (quotaRecovery) {
+  assert(bounded, "quota acceptance requires the bounded resource profile");
+  assert(isAbsolute(process.env.AGYN_KUBECONFIG ?? ""), "quota acceptance requires an explicit absolute kubeconfig");
+  const { parseQuotaBudget } = await import("../dist/live/quota-proof.js");
+  parseQuotaBudget(JSON.parse(process.env.AGYN_LIVE_QUOTA_HARD ?? "null"));
+} else assert(!process.env.AGYN_LIVE_QUOTA_HARD, "quota budget requires the quota-recovery scenario");
 if (scenarios.includes("startup-failure")) {
   assert(bounded, "startup-failure acceptance requires the bounded resource profile");
   assert(/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/.test(process.env.AGYN_LIVE_PLATFORM_MODEL_ID ?? ""),
@@ -47,7 +54,10 @@ const targets = [
   return { ...target, original, previous, attempted: false };
 });
 const assertIdle = message => assert.equal(JSON.parse(k(["get", "pods", "-n", "agyn-workloads", "-o", "json"])).items.length, 0, message);
+const assertNoQuotas = () => assert.equal(JSON.parse(k(["get", "resourcequotas", "-n", "agyn-workloads", "-o", "json"])).items.length, 0,
+  "quota state is not empty; refusing deployment changes until operator reconciliation");
 assertIdle("refusing a global image change while workloads exist");
+if (quotaRecovery) assertNoQuotas();
 mkdirSync(resolve(".state"), { recursive: true, mode: 0o700 });
 const directory = mkdtempSync(resolve(".state/agyn-lifecycle-deploy-"));
 writeFileSync(join(directory, "before.json"), JSON.stringify({ deployments: targets.map(target => ({ name: target.name,
@@ -74,6 +84,7 @@ const sameManaged = (target, left, right) => left && right && left.image === rig
 try {
   for (const target of targets) {
     assertIdle("workloads appeared during deployment setup; refusing further changes");
+    if (quotaRecovery) assertNoQuotas();
     const current = deployment(target.name);
     assert(sameManaged(target, container(current, target.name), target.previous), `${target.name} managed settings changed during setup`);
     target.attempted = true;
@@ -90,6 +101,7 @@ try {
   }
 } finally {
   assertIdle("workload cleanup unconfirmed; retaining integration deployments for reconciliation");
+  if (quotaRecovery) assertNoQuotas();
   const errors = [];
   for (const target of [...targets].reverse().filter(target => target.attempted)) {
     try {

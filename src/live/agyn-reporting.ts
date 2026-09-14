@@ -6,9 +6,9 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { createServer } from "node:net";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { resolve, join } from "node:path";
+import { isAbsolute, resolve, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { KubeConfig, KubernetesObjectApi } from "@kubernetes/client-node";
+import { CoreV1Api, KubeConfig, KubernetesObjectApi } from "@kubernetes/client-node";
 import { SendMessageRequest, StreamResponse, SubscribeToTaskRequest, Task, TaskState } from "@a2a-js/sdk";
 import { ClientFactory, JsonRpcTransportFactory } from "@a2a-js/sdk/client";
 import { AgynClient } from "../agyn-client.js";
@@ -20,17 +20,26 @@ import { observeA2aStream, assertStreamMatchesDurable, type StreamProbe } from "
 import { serviceCard } from "../service/card.js";
 import { claudeNativeProbe, liveAgentProfileSchema, nativeIdentities, persistentAgentEnv } from "./agent-profile.js";
 import { assertConfirmedWorkloads } from "./removal-proof.js";
+import { parseQuotaBudget, quotaFixture, QuotaFixture } from "./quota-proof.js";
+import { runQuotaRejectedTurn } from "./agyn-quota.js";
 
 if (process.env.AGYN_LIVE_ACCEPTANCE !== "trusted-local") throw new Error("Set AGYN_LIVE_ACCEPTANCE=trusted-local to run real-model tests");
 const interrupted = process.env.AGYN_LIVE_SCENARIO === "interrupted";
 const cancellation = process.env.AGYN_LIVE_SCENARIO === "cancellation";
 const parallel = process.env.AGYN_LIVE_SCENARIO === "parallel";
 const streaming = process.env.AGYN_LIVE_SCENARIO === "streaming";
-if (process.env.AGYN_LIVE_SCENARIO && !interrupted && !cancellation && !parallel && !streaming) throw new Error("Unknown live scenario");
+const quotaRecovery = process.env.AGYN_LIVE_SCENARIO === "quota-recovery";
+if (process.env.AGYN_LIVE_SCENARIO && !interrupted && !cancellation && !parallel && !streaming && !quotaRecovery) throw new Error("Unknown live scenario");
 if (parallel) assert(process.env.AGYN_LIVE_RUNNER_CHART, "parallel acceptance requires explicit workload network policies");
-const scenario = interrupted ? "interrupted" : cancellation ? "cancellation" : parallel ? "parallel" : streaming ? "streaming" : "completed";
+const scenario = interrupted ? "interrupted" : cancellation ? "cancellation" : parallel ? "parallel" : streaming ? "streaming" : quotaRecovery ? "quota-recovery" : "completed";
 const bounded = process.env.AGYN_LIVE_COMPUTE_RESOURCES === "true";
 assert(!process.env.AGYN_LIVE_COMPUTE_RESOURCES || bounded, "invalid compute resource opt-in");
+if (quotaRecovery) assert(bounded && process.env.AGYN_LIVE_RUNNER_CHART, "quota acceptance requires the bounded resource/network profile");
+if (quotaRecovery) assert(isAbsolute(process.env.AGYN_KUBECONFIG ?? ""), "quota acceptance requires an explicit absolute kubeconfig");
+const quotaBudget = quotaRecovery ? parseQuotaBudget(JSON.parse(process.env.AGYN_LIVE_QUOTA_HARD ?? "null")) : undefined;
+const quotaRun = randomUUID();
+const quotaEvidence: any = { enabled: quotaRecovery, samples: [], turns: [] };
+let quotaOperator: QuotaFixture | undefined;
 const resourceEvidence: any = { enabled: bounded, pods: {} };
 const protocolEvidence: Record<string, unknown> = { enabled: streaming };
 const streamProbes: StreamProbe[] = [];
@@ -52,6 +61,11 @@ const networkTemplate = process.env.AGYN_LIVE_RUNNER_CHART ? execFileSync("helm"
   resolve(process.env.AGYN_LIVE_RUNNER_CHART), "--set", "workloadIngressNetworkPolicy.enabled=true",
   "--set", "workloadNamespace=agyn-workloads", "--show-only", "templates/workload-ingress-networkpolicy.yaml"],
 { encoding: "utf8", timeout: 30_000 }) : undefined;
+const quotaTemplate = quotaRecovery ? execFileSync("helm", ["template", "a2a-quota-proof", resolve(process.env.AGYN_LIVE_RUNNER_CHART!),
+  "-f", "-", "--show-only", "templates/workload-resourcequota.yaml"], { encoding: "utf8", timeout: 30_000, input: JSON.stringify({
+    workloadNamespace: "agyn-workloads", env: [{ name: "KUBE_NAMESPACE", value: "agyn-workloads" }],
+    workloadResourceQuota: { enabled: true, name: `a2a-quota-${quotaRun}`, hard: quotaBudget }
+  }) }) : undefined;
 const deployment = JSON.parse(execFileSync("kubectl", ["--kubeconfig", kubeconfig, "get", "deployment", "agents-orchestrator", "-n", "agyn-platform", "-o", "json"], { encoding: "utf8" }));
 assert(deployment.spec.template.spec.containers.some((container: any) => container.env.some((env: any) => env.name === "AGYND_CLI_INIT_IMAGE" && env.value === expectedImage)), "expected integration image is not deployed");
 const orchestrator = deployment.spec.template.spec.containers.find((container: any) => container.name === "agents-orchestrator");
@@ -334,24 +348,29 @@ const runSingleTask = async () => {
     const first = await rpc("SendMessage", firstInput); taskId = first.task.id; tasks.push(taskId);
   }
   console.log(JSON.stringify({ kind: "live.task", taskId, directory }));
-  const waitTurn = async (turn: number) => {
+  const waitTurn = async (turn: number, executionNumber = turn) => {
     let last = "";
     for (let attempt = 0; attempt < 300; attempt++) {
       const page = await fetch(`${base}/tasks/${taskId}/events`, { headers }).then(r => r.json()) as any;
       const events = page.events as any[];
-      const executionId = events.filter(event => event.kind === "execution.queued")[turn - 1]?.executionId;
+      const executionId = events.filter(event => event.kind === "execution.queued")[executionNumber - 1]?.executionId;
       if (events.some(event => event.executionId === executionId && event.kind === "execution.uncertain")) throw new Error("live execution quarantined; inspect retained task events");
       const newest = events.at(-1)?.kind;
       const binding = events.find(event => event.kind === "runtime.bound")?.payload;
       if (binding && events.some(event => event.executionId === executionId && event.kind === "agent.artifact") && !snapshots[turn]?.length) {
         snapshots[turn] = inspectInstance(binding.instanceId);
+        if (quotaOperator && snapshots[turn]?.length) {
+          const quota = await quotaOperator.observe(false);
+          assert.equal(quota.status?.used?.["count/pods"], "1", "native turn was not counted by the quota");
+          quotaEvidence.turns.push({ turn, executionId, podUid: snapshots[turn][0].uid, quota });
+        }
       }
       if (newest && newest !== last) { last = newest; console.log(JSON.stringify({ kind: "live.event", turn, event: newest })); }
-      if (events.filter(event => event.kind === "runtime.stopped").length >= turn) {
+      if (events.some(event => event.executionId === executionId && event.kind === "runtime.stopped")) {
         assertInstanceAbsent(kubeconfig, binding.instanceId);
         const task = await rpc("GetTask", { id: taskId });
         const workloads = await confirmedWorkloads(binding.instanceId, executionId, events, snapshots[turn] ?? []);
-        evidence.push({ turn, task, events, workloads, snapshots: snapshots[turn] ?? [] });
+        evidence.push({ turn, executionNumber, task, events, workloads, snapshots: snapshots[turn] ?? [] });
         assert.equal(task.status.state, streaming && turn === 2 ? "TASK_STATE_COMPLETED" : "TASK_STATE_INPUT_REQUIRED", "unexpected state after releasing compute");
         assert(!task.metadata?.recoveryRequired, "turn was quarantined");
         assert(events.filter(event => event.kind === "agent.outcome" && event.payload.outcome === "turn_done").length >= turn - (interrupted ? 1 : 0), "missing real MCP outcome");
@@ -415,6 +434,19 @@ const runSingleTask = async () => {
       assert.equal(response.status, 200, "explicit reconciliation failed");
       console.log(JSON.stringify({ kind: "live.interruption-reconciled", taskId, executionId }));
     } else await waitTurn(1);
+    let rejectedTurn: { executionId: string; requestId: string } | undefined;
+    if (quotaRecovery) {
+      const config = new KubeConfig(); config.loadFromFile(kubeconfig);
+      rejectedTurn = await runQuotaRejectedTurn({ taskId, suffix, first: evidence[0], gateway, core: config.makeApiClient(CoreV1Api),
+        quota: quotaOperator!, rpc, events: async () => {
+          const response = await fetch(`${base}/tasks/${taskId}/events?limit=1000`, { headers, signal: AbortSignal.timeout(10_000) });
+          assert.equal(response.status, 200); return ((await response.json()) as any).events;
+        }, reconcile: async (executionId, reason) => {
+          const response = await fetch(`${base}/tasks/${taskId}/executions/${executionId}/reconcile`, { method: "POST", headers,
+            body: JSON.stringify({ resolution: "continue", reason }), signal: AbortSignal.timeout(10_000) });
+          assert.equal(response.status, 200, "explicit quota reconciliation failed");
+        }, record: sample => { quotaEvidence.samples.push(sample); writeFileSync(join(directory, "quota.json"), JSON.stringify(quotaEvidence, null, 2), { mode: 0o600 }); } });
+    }
     if (blocking) {
       const result = await blocking;
       assert.equal(result.status?.state, TaskState.TASK_STATE_INPUT_REQUIRED);
@@ -426,13 +458,19 @@ const runSingleTask = async () => {
     await rpc("SendMessage", { message: { taskId, messageId: randomUUID(), role: "ROLE_USER", parts: [{ text:
       "Read /workspace/reporting-proof.txt. Publish its exact existing contents as an artifact. Do not create or rewrite it. Run sleep 3 to leave an inspection window, then report turn_done." }],
       ...(streaming ? { metadata: { endTask: true } } : {}) }, configuration: { returnImmediately: true } });
-    await waitTurn(2);
+    await waitTurn(2, quotaRecovery ? 3 : 2);
     assert(snapshots[1]?.length && snapshots[2]?.length, "native session evidence was not captured");
     assert.notEqual(snapshots[1][0].uid, snapshots[2][0].uid, "follow-up must run in a recreated pod");
     assert.deepEqual(snapshots[1][0].pvc, snapshots[2][0].pvc, "task PVC changed");
     assert.deepEqual(snapshots[1][0].native, snapshots[2][0].native, "native session identity changed");
     assert.equal(snapshots[2][0].marker, interrupted ? `${suffix}\n` : suffix, "follow-up repeated a side effect or changed the file");
     if (interrupted) assert.equal(snapshots[2][0].journal.find((record: any) => record.message_id === snapshots[1][0].journal[0].message_id)?.state, "ack_only", "old inbox request was not retired explicitly");
+    if (rejectedTurn) {
+      assert.equal(snapshots[2][0].journal.find((record: any) => record.message_id === rejectedTurn.requestId)?.state, "ack_only", "quota-rejected inbox request was not retired without execution");
+      assert.equal(quotaEvidence.turns.length, 2, "both native turns must be observed under quota");
+      await quotaOperator!.observe(false, true);
+      Object.assign(quotaEvidence, { rejectedTurn, passed: true });
+    }
     if (streaming) {
       const page = await fetch(`${base}/tasks/${taskId}/events?limit=1000`, { headers }).then(r => r.json()) as any;
       for (const probe of streamProbes) {
@@ -450,6 +488,13 @@ const runSingleTask = async () => {
   }
 };
 try {
+  if (quotaTemplate) {
+    const config = new KubeConfig(); config.loadFromFile(kubeconfig);
+    quotaOperator = new QuotaFixture(KubernetesObjectApi.makeApiClient(config), quotaFixture(quotaTemplate, quotaRun, quotaBudget!), sample => {
+      quotaEvidence.samples.push(sample); writeFileSync(join(directory, "quota.json"), JSON.stringify(quotaEvidence, null, 2), { mode: 0o600 });
+    });
+    await quotaOperator.create();
+  }
   if (networkTemplate) {
     const config = new KubeConfig(); config.loadFromFile(kubeconfig);
     const run = randomUUID().slice(0, 8);
@@ -497,10 +542,16 @@ try {
     const timer = setTimeout(() => child.kill("SIGKILL"), 5000);
     await exited; clearTimeout(timer);
     try {
-      if (networkFixtures && workloadsReleased) { await networkFixtures.close(); networkEvidence.cleanedUp = true; }
-      else if (networkFixtures) networkEvidence.retained = "Workload cleanup was not confirmed; keep isolation policies until operator reconciliation";
+      const errors: unknown[] = [];
+      if (quotaOperator && workloadsReleased) {
+        try { await quotaOperator.close(); quotaEvidence.cleanedUp = true; } catch (error) { errors.push(error); }
+      } else if (quotaOperator) quotaEvidence.retained = "Workload cleanup was not confirmed; keep quota until operator reconciliation";
+      if (networkFixtures && workloadsReleased) {
+        try { await networkFixtures.close(); networkEvidence.cleanedUp = true; } catch (error) { errors.push(error); }
+      } else if (networkFixtures) networkEvidence.retained = "Workload cleanup was not confirmed; keep isolation policies until operator reconciliation";
+      if (errors.length) throw new AggregateError(errors, "quota/network cleanup requires operator reconciliation");
     } finally {
-      writeFileSync(join(directory, "evidence.json"), JSON.stringify({ environmentId, agentId, agentProfile, tasks, scenario, snapshots, evidence, network: networkEvidence, resources: resourceEvidence, protocol: protocolEvidence }, null, 2), { mode: 0o600 });
+      writeFileSync(join(directory, "evidence.json"), JSON.stringify({ environmentId, agentId, agentProfile, tasks, scenario, snapshots, evidence, network: networkEvidence, resources: resourceEvidence, protocol: protocolEvidence, quota: quotaEvidence }, null, 2), { mode: 0o600 });
     }
   }
 }

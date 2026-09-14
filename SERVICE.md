@@ -36,8 +36,11 @@ on the old stack expecting them to settle with this driver.
 
 The separate [volume retention/inventory fixes](AGYN-VOLUME-SAFETY.md) now pass
 source and native Kubernetes checks, including the combined patch stack. They
-are not deployed to the stock services. Name-based deletion, authoritative
-garbage collection and infrastructure fencing still need work; retained disks
+are not deployed to the stock services. The proposed
+[checked-volume API/registry/runner implementation](AGYN-CHECKED-VOLUMES.md) now
+passes source and native acceptance, but orchestrator/sandbox callers are not
+migrated and no deployment changed. End-to-end deletion, authoritative garbage
+collection and infrastructure fencing still need work; retained disks
 must not be treated as disposable just because one registry scan omits them.
 
 The service requires `A2A_SERVICE_CONFIG_FILE`, an operator-owned JSON file:

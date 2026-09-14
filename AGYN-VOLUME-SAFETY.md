@@ -5,6 +5,10 @@ combined lifecycle/resource/ownership stack. These fixes are pushed, but are not
 deployed to the stock platform. Safe deletion, production garbage collection
 and infrastructure fencing remain release gates.
 
+Subsequent [checked-volume API, registry and runner work](AGYN-CHECKED-VOLUMES.md)
+now passes source, PostgreSQL and native Kubernetes tests. It is separate from
+the fixes below and still lacks orchestrator/sandbox integration and rollout.
+
 ## Findings
 
 The orchestrator previously compared a scoped active-volume registry snapshot

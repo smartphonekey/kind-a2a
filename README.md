@@ -44,8 +44,11 @@ required.
 [Volume retention and inventory fixes](AGYN-VOLUME-SAFETY.md) now prevent
 orphan deletion inferred from stale/scoped registry snapshots and reject incomplete
 runner inventories. Independent and combined native checks pass, with all
-existing task PVCs preserved. These fixes are not permanently deployed;
-incarnation-bound deletion and production garbage collection remain open.
+existing task PVCs preserved. The next [checked-volume contract](AGYN-CHECKED-VOLUMES.md)
+now passes API, registry and native runner acceptance, including real Kubernetes
+stale-delete rejection. Orchestrator/sandbox caller migration, production garbage
+collection and coordinated rollout remain open; these fixes are not permanently
+deployed.
 
 The new [durable execution service](SERVICE.md) adds authenticated A2A routing,
 transactional queued turns, reporting MCP, bounded outcome checks and a recoverable

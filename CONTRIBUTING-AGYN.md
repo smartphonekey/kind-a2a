@@ -204,6 +204,27 @@ opt-in live tests gated off in those suites are not counted as rerun. The native
 fixture uses real runner RPCs and Kubernetes with fake registry/Agents clients;
 no deployed database or A2A lifecycle acceptance is implied.
 
+## Checked Volume Lifecycle
+
+Three additional focused branches implement a proposed coordinated contract:
+
+| Repository | Branch / commit | Review boundary |
+| --- | --- | --- |
+| `spk-ai/api` | `feat/checked-volume-removal`, `83fd4c8` | Distinct checked RPCs, lifecycle revision, bound physical identity and durable removal intent. Base: upstream `50ef648`. |
+| `spk-ai/runners` | `feat/checked-volume-removal`, `bd7137f` | Registry state machine/CAS, additive database migration and old-writer guards. Based on the separate owner-reopen fix `5638dce`. |
+| `spk-ai/k8s-runner` | `feat/checked-volume-removal`, `b073bcc` | Conditional native deletion and fail-closed legacy removal. Based on complete inventory `40b35ce`. |
+
+[Acceptance and scope](AGYN-CHECKED-VOLUMES.md) record focused/combined race suites,
+real PostgreSQL lifecycle/contention and native Kubernetes deletion races.
+Existing repository licenses are preserved; branches are pushed, with no upstream
+PR or published API release. Generate from the reviewed API proposal to test
+these branches. Native fixture and combined-stack commits are separate lab
+integration artifacts, not part of a bundled upstream change.
+
+Orchestrator/sandbox callers and deployment are still pending. Review the API
+contract and dependency/rollout plan with maintainers before proposing activation;
+do not deploy a runner that rejects legacy deletion while its callers still use it.
+
 ## Runner Ingress Isolation
 
 A separate chart-only contribution adds opt-in workload ingress denial without

@@ -3,9 +3,10 @@
 # Prepared Workload Acceptance
 
 Status: native API/runner implementation and isolated real Kubernetes acceptance
-verified on 2026-09-14. Registry binding storage, both controller migrations and
-coordinated A2A rollout are **not implemented by this change**. Installed platform
-services remain stock. This is not a production-ready deployment.
+verified on 2026-09-14. [Registry binding storage and guards are now verified
+separately](AGYN-PREPARED-REGISTRY.md). Both controller migrations, combined
+prepared-lifecycle acceptance and coordinated A2A rollout remain open. Installed
+platform services remain stock. This is not a production-ready deployment.
 
 ## Why Two Phases
 
@@ -99,8 +100,8 @@ deletion or rollout. No installed service, task data or database was changed.
 
 ## Required Next
 
-- Persist immutable native workload bindings before activation; add registry
-  admission/CAS and old-writer guards. Migrate both agent and sandbox controllers,
+- Integrate the separately verified immutable binding storage and registry
+  admission/CAS guards. Migrate both agent and sandbox controllers,
   including cancellation, uncertain prepare replies and crash recovery.
 - Reconcile late gated creates, delayed hold writes and interrupted startup
   Secret ownership. A late activation cannot create a Pod; late preparation can

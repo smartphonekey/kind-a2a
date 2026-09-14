@@ -364,8 +364,13 @@ ordinary native race entries, 1,060 repeated prepared entries, build and vet
 pass; real Kubernetes execution/resume and replacement-race checks pass too.
 
 These branches are based on acceptance combinations, not standalone upstream
-bases. Registry workload-binding persistence, both controller migrations and
-full A2A rollout remain pending. Keep their original licenses and review the
+bases. Both controller migrations and full A2A rollout remain pending.
+[Two more dependent registry branches](AGYN-PREPARED-REGISTRY.md), API `4f957e5`
+and Runners `e7c42f4` on `feat/prepared-workload-registry`, now add immutable
+bindings, state/revision CAS, owner/backend pins and database old-writer guards.
+All 538 registry race tests, 2,320 repeated entries, build and vet pass against
+disposable PostgreSQL; native observations and authorization are fixtures, not
+combined native/A2A acceptance. Keep their original licenses and review the
 contract with maintainers before declaring it an Agyn API. Do not bundle them
 into the independent transport proposal below. No upstream PR was opened.
 

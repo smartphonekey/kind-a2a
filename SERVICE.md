@@ -128,9 +128,12 @@ The separate [native quota acceptance](AGYN-RESOURCES.md#native-namespace-quota-
 proves controlled runner/Kubernetes admission. The coordinated local
 [A2A quota-recovery scenario](AGYN-RESOURCES.md#a2a-quota-recovery) now also verifies
 retained inbox/workspace state and explicit reconciliation after a rejected
-follow-up, without changing this scheduler. First-provision rejection, whole-task
-CPU/RAM accounting, production quota rollout, storage/PID/IO limits, fairness and
-sustained-load sizing remain separate production work.
+follow-up, without changing this scheduler. The independent
+[runner startup-secret fix](AGYN-RESOURCES.md#native-first-provision-failures)
+also passes native first-provision quota rejection and partial-PVC retention,
+but is not yet in the coordinated A2A images. First-provision A2A recovery,
+whole-task CPU/RAM accounting, production quota rollout, storage/PID/IO limits,
+fairness and sustained-load sizing remain separate production work.
 
 ## Client Authentication
 

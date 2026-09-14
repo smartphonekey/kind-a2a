@@ -2,6 +2,28 @@
 
 Evidence below spans the preserved `kind-aira-a2a-lab` baseline and the new self-hosted Agyn backend. Each section identifies its environment; fake-agent tests and live-model evidence are deliberately separated.
 
+## Startup Secret Cleanup (2026-09-14)
+
+Focused runner fix `fcd7cf6` passes published API generation, build and the full
+race suite: **146 tests including subtests** (101 top-level), with 12 new focused
+tests. Its separate real Kubernetes test passed all seven first-provision quota
+cases in **32.77s**, with zero Pod admission and no leaked startup secrets.
+Partially created PVCs survived rejection; an explicit eighth request retained
+the first PVC's UID/spec while creating the second. Only synthetic secrets and
+unbound fixture claims were used. No agent ran.
+
+The fixture namespace was confirmed deleted. An independent audit verified all
+49 existing workspace PVC UIDs/specs/phases, all four stock deployment
+UIDs/specs/generations and the original network policy unchanged, with zero
+workload Pods/Services/quotas. The patch is pushed as an independent runner
+contribution, not deployed into the coordinated A2A stack.
+
+[Evidence, reproduction and remaining boundaries](AGYN-RESOURCES.md#native-first-provision-failures)
+distinguish this from first-provision A2A recovery, named-PVC ownership checks,
+crash-orphan reconciliation and infrastructure fencing. The standalone A2A
+controller, worker and driver were not changed; its 205-test baseline remains
+separate from these runner tests.
+
 ## A2A Quota Recovery (2026-09-14)
 
 Build and all **205 tests** pass (186 top-level), including six new quota-proof

@@ -263,8 +263,39 @@ That scenario retains the existing task/PVC/session and explicitly retires a
 rejected inbox request without changing the controller, worker, driver or any
 Agyn binary. Six proof tests and nine wrapper cases bring the lab suite to 205
 tests. Those operator fixtures remain AGPL-3.0-only; keep them, the local image
-and acceptance evidence out of the focused chart proposal. First-provision
-rejection, production quota bootstrap and mandatory profiles remain open.
+and acceptance evidence out of the focused chart proposal. First-provision A2A
+recovery, production quota bootstrap and mandatory profiles remain open; the
+independent runner startup fix below has its own native acceptance.
+
+## Startup Secret Cleanup
+
+A nineteenth focused branch fixes resource handling discovered while tracing
+first-provision failures. It has no dependency on the resource/quota chart,
+additive removal API, A2A controller, workflow or agent runtime:
+
+- Fork: [spk-ai/k8s-runner](https://github.com/spk-ai/k8s-runner).
+- Branch: `fix/startup-secret-cleanup`, commit `fcd7cf6`, based on `baadc75`.
+- Compare: <https://github.com/agynio/k8s-runner/compare/main...spk-ai:k8s-runner:fix/startup-secret-cleanup>.
+- Attempt-scoped cleanup covers PVC and partial-Secret failures, preserves
+  durable claims, and retains credentials after uncertain Pod creation.
+- Cleanup checks ownership/content and UIDs, uses conditional deletion, observes
+  absence and remains bounded after caller cancellation. It never adopts a
+  conflicting Secret or removes a finalizer. Unconfirmed cleanup is diagnostic,
+  not authorization to retry a workload.
+- Published `buf generate`, `go build ./...` and the full race suite pass
+  (146 tests including subtests; 101 top-level). The 12 new unit tests cover 34
+  cases including subtests, separate from seven real native quota scenarios.
+- The opt-in credential-free test passed in 32.77s, including partial-PVC
+  retention/reuse and confirmed cleanup. No Pod/agent ran and all 49 existing
+  task PVCs and four stock deployments remained unchanged.
+
+[Exact evidence and reproduction](AGYN-RESOURCES.md#native-first-provision-failures)
+are recorded separately from A2A recovery. The test uses the existing Kubernetes
+SDK and native quota controller, not new resource accounting or a fake API. Its
+explicit kubeconfig loader adds only the client's existing indirect dependencies.
+Keep crash-orphan reconciliation, PVC ownership enforcement, Stop/Remove changes
+and coordinated A2A deployment in separate review units. The fork retains its
+existing AGPL license; the branch is pushed and no upstream PR has been opened.
 
 ## Claude SDK Session Selection
 

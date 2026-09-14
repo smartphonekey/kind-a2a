@@ -35,8 +35,10 @@ native sessions on the same agent, queued follow-ups after pod removal, and
 cross-pod TCP/UDP denial. The opt-in [bounded profile](AGYN-RESOURCES.md) now also
 passes those scenarios with explicit per-container CPU/memory bounds; aggregate
 task admission and [native quota recovery](AGYN-RESOURCES.md#a2a-quota-recovery)
-now have separate acceptance. Mandatory production profiles, sizing and sandbox
-hardening remain required.
+now have separate acceptance. A focused [startup-secret fix](AGYN-RESOURCES.md#native-first-provision-failures)
+also passes real first-provision quota tests, but is not yet in the coordinated
+A2A images. Mandatory production profiles, sizing and sandbox hardening remain
+required.
 
 The new [durable execution service](SERVICE.md) adds authenticated A2A routing,
 transactional queued turns, reporting MCP, bounded outcome checks and a recoverable

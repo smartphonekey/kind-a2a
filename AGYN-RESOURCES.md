@@ -11,9 +11,11 @@ local multi-process and delayed-release tests on 2026-09-14. A separate real
 runner/Kubernetes quota test now passes, including supporting-container usage,
 concurrent admission and release. The coordinated local A2A quota-recovery
 scenario also passes with an existing task workspace and native Codex session.
-Whole-task accounting, initial-provision rejection, production quota rollout,
-sizing and adversarial hardening remain release gates; an execution count is
-not a CPU/RAM or physical-container budget.
+A separate runner fix now passes native first-provision rejection and startup
+secret cleanup, including preservation of a partially created PVC. It is not yet
+in the coordinated A2A images. Whole-task accounting, first-provision A2A
+recovery, production quota rollout, sizing and adversarial hardening remain
+release gates; an execution count is not a CPU/RAM or physical-container budget.
 
 The resource measurements remain valid, but these historical lifecycle images
 do not implement the new [removal-confirmation contract](AGYN-REMOVAL.md).
@@ -212,8 +214,10 @@ and [sidecar accounting](https://v1-33.docs.kubernetes.io/docs/concepts/workload
 The stock Agyn runner has no permanently installed workload quota. This
 PVC-free test does not prove A2A recovery; the separate native scenario below
 now covers a rejected follow-up with an existing workspace. The current runner
-creates supporting resources before Pod creation; rejection on first provision
-still needs acceptance. The chart does not fix orchestrator whole-task cost reporting,
+creates supporting resources before Pod creation; the separate
+[first-provision runner fix](#native-first-provision-failures) below now has
+controlled acceptance, but coordinated A2A recovery is still required.
+The chart does not fix orchestrator whole-task cost reporting,
 add typed quota errors/retries, enforce producer bootstrap or mandatory profiles,
 or establish agent OOM recovery, tenant fairness, storage/PID/IO bounds or node
 partition fencing. UID 1000 in this fixture is not a hardened production agent
@@ -303,6 +307,95 @@ No private evidence is committed. This proves healthy-runner recovery of an
 existing task, not first-provision PVC/secret rejection, quota-controller outage,
 node partition fencing, full Claude lifecycle or mandatory production-profile
 enforcement. Those and the other production gates remain open.
+
+## Native First-Provision Failures
+
+On 2026-09-14, focused runner commit
+[`fcd7cf66d068b38ba65273a837bee7215836e64c`](https://github.com/spk-ai/k8s-runner/commit/fcd7cf66d068b38ba65273a837bee7215836e64c)
+passed real Kubernetes startup acceptance in **32.77 seconds** with the race
+detector enabled. The complete Go invocation took 35.217 seconds, from
+02:18:35.830Z to 02:19:11.047Z. This independent branch is based on upstream
+`baadc75`, not the combined resource/quota integration stack. Published API
+generation, `go build ./...` and the full `go test -race ./...` suite pass:
+**146 tests including subtests**, 101 top-level. Its 12 new focused unit tests
+account for 34 of those passes. The live test is skipped by ordinary runs and
+passed separately with all seven subcases.
+
+Regression tests first reproduced three defects: PVC provisioning failures left
+pull secrets behind; a lost inline-secret create acknowledgement leaked that
+secret; and an uncertain Pod-create response deleted credentials even if the Pod
+had been accepted. The fix gives startup secrets an attempt identifier, tracks
+creation intent and recorded UIDs, and centralizes failure cleanup. It uses a
+fresh five-second context, checks Pod absence and secret identity/content,
+deletes with UID/resource-version preconditions and observes absence. Durable
+PVCs are not part of rollback. Unknown Pod-create outcomes retain credentials;
+neither a timeout nor a subsequent NotFound authorizes cleanup or execution retry.
+
+The real test uses loopback RunnerService gRPC against the selected Kubernetes
+API, with synthetic credentials, a new owned namespace, a unique absent
+StorageClass and a zero-Pod quota throughout. No agent, image pull, production
+deployment, provider login, paid API, existing PVC or real workspace content is
+involved. Native quota rejection is asserted only in this controlled fixture;
+the production cleanup code uses Kubernetes API status reasons, not quota-text
+parsing.
+
+| Rejected stage | Temporary secrets after failure | Retained test PVCs |
+| --- | --- | --- |
+| First pull Secret | 0 | 0 |
+| Second pull Secret after the first was created | 0 | 0 |
+| First PVC by object-count quota | 0 | 0 |
+| First PVC by requested-storage quota | 0 | 0 |
+| Second PVC after the first was created | 0 | 1 |
+| Inline-file Secret after pull Secret/PVC creation | 0 | 1 |
+| Pod after both PVCs and both Secrets were created | 0 | 2 |
+
+All starts returned native `PermissionDenied` with the expected quota key; no
+Pod was admitted. A separate, explicitly issued eighth request after raising
+PVC capacity reused `pvc-second-0` with UID
+`bb1183eb-a53f-4558-a94a-655ea27f3d5a` and unchanged spec, created the second PVC,
+then hit the still-zero Pod quota. Its secrets were also removed while both
+claims survived. This is a native provisioning continuation, not an A2A inbox
+or agent-session recovery test. The fixture then explicitly deleted only its
+own unbound test claims and observed zero quota usage.
+
+Namespace `runner-startup-f9dba485-12d`, UID
+`3dbfe822-dfe3-4849-81cb-ff2c44824f3d`, was confirmed absent at 02:19:10.002Z.
+The independent post-audit verified all **49** prior workspace PVC UIDs/specs/
+phases, the original network-policy UID/spec, and all four stock deployment
+UIDs/specs/generations unchanged. Their generations remain Runners 14, Gateway
+19, runner 28 and orchestrator 50; all four were ready. There were zero workload
+Pods, Services or quotas and no retained startup-test namespace. No stock image
+was replaced or restored during this test.
+
+The unit-only failure matrix additionally covers caller cancellation, ambiguous
+creates, lost create/delete acknowledgements, duplicate-start contention,
+foreign/replaced/edited secrets, read failures, deletion denial and a held
+finalizer. It verifies conditional deletion, bounded cleanup and diagnostics
+without credential payloads. These simulated failures are not claims of live
+node-partition or crash recovery.
+
+```sh
+cd /home/alex/work/agyn-contrib/k8s-runner-startup
+buf generate
+go build ./...
+go test -race ./... -count=1 -timeout=3m
+RUNNER_LIVE_STARTUP_TEST=trusted-local \
+  RUNNER_LIVE_KUBECONFIG=/home/alex/work/aira-a2a-lab/.state/agyn-kubeconfig \
+  go test -race -v ./internal/server -run '^TestLiveStartupSecretCleanup$' -count=1 -timeout=5m
+```
+
+Private evidence is in `.state/agyn-startup-acceptance-gzD71Q/`:
+`before.json`, `run.json`, `go-test.jsonl`, `post-audit.json`, `unit-run.json` and
+`unit-test.jsonl`. It remains untracked. The focused branch is pushed with the
+runner repository's AGPL license unchanged; no upstream PR has been submitted.
+
+The deployed runner and coordinated A2A image recipe do **not** yet contain this
+fix. First-provision A2A recovery, crash-orphan reconciliation, late-create
+fencing and post-success Stop/Remove cleanup still need implementation or
+acceptance. Existing named-PVC lookup also still accepts a name without
+verifying the stable `volume_key`; enforcing that identity needs a separate
+compatibility review and tests. None of these remaining gates is closed by this
+credential-free provisioning test.
 
 ## Bounded Agent Profile
 

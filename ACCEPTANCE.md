@@ -2,6 +2,28 @@
 
 Evidence below spans the preserved `kind-aira-a2a-lab` baseline and the new self-hosted Agyn backend. Each section identifies its environment; fake-agent tests and live-model evidence are deliberately separated.
 
+## Combined Runtime Regression (2026-09-13)
+
+SDK `54490e0` and daemon `7ed299f` combine the focused Claude session and
+diagnostic contributions without changing the A2A controller/workflows. Full
+SDK race, ordinary daemon and focused daemon/bridge/journal race checks pass;
+the lab build and all 166 tests also pass. The existing broader daemon race
+failure remains disclosed. Three fake-client cases verify failed results cannot
+become completed or replayed after session recovery. The isolated native HTTP
+401 probe passes after correcting an empty-path fixture incompatibility, not
+relaxing production validation.
+
+The new init image has digest-pinned bases and its daemon hash was independently
+checked inside a live Agyn Pod. Real Codex completed-turn and interrupted-turn
+regressions both pass on that image: the same session/PVC is retained, the old
+interrupted request is retired only after explicit reconciliation, and its
+single append is not repeated. Stock deployment UIDs/images/settings/readiness
+are restored; zero workload Pods/Services remain, all 46 previous PVCs are
+unchanged and both new PVCs are retained. All five new workload confirmations
+survived restoration in PostgreSQL. See [exact evidence and remaining gates](AGYN-PORTABILITY.md#combined-runtime).
+Claude provider tests still need refreshed subscription authentication and do
+not pass merely because these Codex regressions or the model-free probe pass.
+
 ## Native Error Diagnostics (2026-09-13)
 
 The build and all 166 local tests pass (155 top-level), including nine new
@@ -12,8 +34,9 @@ Threads reply or inbox ACK. Its diagnostic Pod/policy were removed with UID
 preconditions and observed absence; all 46 PVCs and stock deployments remained
 unchanged. [Exact evidence and limits](AGYN-PORTABILITY.md#native-failure-diagnostics)
 include the earlier failed attempts. This is not a Claude A2A lifecycle pass or
-an explanation of the historical provider errors. The combined integration
-image does not yet contain the new diagnostic patches.
+an explanation of the historical provider errors. At that checkpoint the
+combined integration image did not yet contain the new diagnostic patches;
+the later combined-runtime evidence is recorded above.
 
 ## Removal Contract Correction (2026-09-13)
 

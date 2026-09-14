@@ -97,7 +97,7 @@ Two focused contributions preserve error metadata without logging message bodies
   [official SDK result schema](https://github.com/anthropics/claude-agent-sdk-python/blob/main/src/claude_agent_sdk/types.py).
   Full SDK race tests pass, including legacy/unknown values and malformed status
   rejection. This branch is independent of session selection and retains MIT.
-- Daemon `fix/claude-error-diagnostics`, `b884d27`, stacked on
+- Daemon `fix/claude-error-diagnostics`, now `2afdfc1` after `b884d27`, stacked on
   `fix/claude-error-results`: allowlist diagnostic names and HTTP 400-599, keep
   the terminal error sentinel, and do not publish or ACK failed turns. Bodies,
   arbitrary stop reasons and native session identifiers are not logged. Ordinary
@@ -154,9 +154,75 @@ under `.state`. All owned Pods/policies were removed and PVCs retained.
 The final controlled, explicitly non-retryable response does not establish
 general provider retry behavior or explain either historical native error.
 
-The current combined daemon/init image `beb1f23` does not contain these new
-diagnostics. Combine the separate SDK session/metadata patches, update the
-integration daemon pin and rebuild before rerunning real Claude lifecycle tests.
+### Combined Runtime
+
+The lab-only SDK branch `lab/session-diagnostics-integration` (`54490e0`) now
+combines the two focused SDK patches. Daemon `lab/claude-diagnostics-integration`
+(`7ed299f`, after merge `e103e3f`) pins that version and preserves the session,
+required-init and durable inbox guards. These are acceptance branches, not
+bundled upstream proposals. Both are pushed. Full SDK race tests, ordinary
+daemon tests and focused session/Claude/journal/init race tests pass; broader
+daemon race limitations are unchanged. Three combined fake-client cases verify
+that API errors, nil results and wrong-session results leave the inbox pending,
+with no reply/ACK or second SDK call after selecting the same retained session.
+
+The combined native HTTP 401 probe also passes:
+`.state/agyn-claude-diagnostic-live-nW8G5U/evidence.json`, Pod UID
+`967078b2-d4a6-4b66-b744-cf490c984692`. Claude `2.1.225` reported the same safe
+metadata and zero replies/ACKs; its test took 1.75 seconds. The same nonroot,
+network-denied, model-free constraints apply. Cleanup removed its Pod/policy
+and retained all 46 PVCs. A fresh CNI preflight passed 92 checks in
+`.state/agyn-network-live-yjibD7/evidence.json`.
+
+The first combined probe (`agyn-claude-diagnostic-live-Bkx6vY` under `.state`)
+failed before native startup because the fixture explicitly set an empty
+`CLAUDE_CONFIG_DIR`. The persistence adapter rejects empty configured paths.
+Focused follow-up `2afdfc1` unsets that optional variable while preserving test
+environment restoration; no production validation was weakened. The failed
+probe was cleaned up without changing PVCs. This fixture error does not explain
+the historical provider failures below.
+
+The replacement init image is
+`docker.io/library/a2a-agynd-reporting-init@sha256:97dee776b0866e3324da20d3ac511239928dd73971af45e6748b9f9b98f18b70`,
+locally tagged `a2a-agynd-reporting-init:7ed299f`. Its Dockerfile now pins both
+the Node and upstream init bases by digest; this does not harden the agent
+profile. Build provenance, source/compiler versions and hashes are retained in
+`.state/agyn-claude-integration-build-9ETYpY/build.json`. Independent inspection
+of a live Agyn Pod verified the init digest and daemon binary hash; see
+`runtime-binary.json` in that directory. The A2A controller/workflows were not
+changed for the combination. Use this image instead of `beb1f23` for subsequent
+coordinated acceptance; the older resource-only rollout is still insufficient.
+
+Completed and interrupted Codex A2A regressions then passed on that exact image,
+using the existing ChatGPT subscription reference and no new provider credential:
+
+- Completed: `.state/agyn-reporting-live-LioGJ7/evidence.json`, task
+  `da803c2e-bd2c-4c30-ae48-19f57af732b7`. Two Pods retained native session
+  `01a09d2f-2112-7613-bdda-eaa303f668d2` and PVC
+  `pv-a044956c-1ac-8831b288-183`. The real Stop reminder elicited an MCP outcome.
+- Interrupted: `.state/agyn-reporting-live-FznliS/evidence.json`, task
+  `890ab0ed-afe7-469d-b5b9-44f3f10eb6cf`. Controller loss and replacement required
+  explicit reconciliation. Native session `01a09d30-7744-7681-b24e-4e93c4e0806c`
+  and PVC `pv-f47d3cf0-57e-999ebd83-9ef` survived three Pods; the unconditional
+  append stayed exactly one line, and the old journal entry became `ack_only`
+  without another SDK turn for that request.
+- All five Pods' container specs and main cgroups matched the selected bounds. All five
+  workload confirmations were verified in PostgreSQL after stock restoration.
+  The independent audit in `.state/agyn-lifecycle-deploy-JWbEw3/post-restore.json`
+  verified original deployment UIDs, images, managed settings and readiness,
+  zero workload Pods/Services, only the original policy and 48 retained PVCs,
+  including all 46 prior UIDs/phases unchanged. `retention.json` also verifies
+  both new instances paused with persistent workspace definitions and no TTL.
+
+These are Codex regressions, not the outstanding Claude lifecycle sweep. Agyn
+had no Claude subscription reference, and the host Max access token expired at
+23:40 UTC on 2026-09-13; the expiry was checked without exporting its value.
+A refreshed Claude subscription login was requested. No stale token was bound,
+no paid API fallback was selected, and host credentials were not changed.
+For unattended operation, credential provisioning/rotation needs an explicit
+operator policy: [Claude documents a subscription setup token](https://code.claude.com/docs/en/authentication#generate-a-long-lived-token),
+while [Agyn subscriptions reference managed secrets](https://github.com/agynio/architecture/blob/main/architecture/agyn-cli.md#subscription-commands).
+The fixture refresh prerequisite is not proof of a production rotation policy.
 
 ## Remaining Integration
 

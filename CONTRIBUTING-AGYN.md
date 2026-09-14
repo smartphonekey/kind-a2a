@@ -282,7 +282,7 @@ Two additional focused review units improve observability, not retry behavior:
   `go test -race ./...` passes. This keeps MIT and does not include the separate
   session-selection contribution.
 - Daemon [fix/claude-error-diagnostics](https://github.com/spk-ai/agynd-cli/tree/fix/claude-error-diagnostics),
-  `b884d27`, stacked on `fix/claude-error-results` (`1b1dd62`): format only
+  `2afdfc1` after `b884d27`, stacked on `fix/claude-error-results` (`1b1dd62`): format only
   allowlisted metadata while preserving the terminal failure/no reply/no ACK
   contract. It keeps the existing daemon license. Ordinary Go tests and focused
   `go test -race ./internal/daemon -run 'ClaudeError|ClaudeDiagnostic' -count=1`
@@ -297,7 +297,19 @@ backend. [Evidence and limitations](AGYN-PORTABILITY.md#native-failure-diagnosti
 separate that diagnostic proof from the still-unexplained provider failures.
 The lab's operator/Dockerfile/subprocess tests are separate AGPL-3.0-only code;
 do not include Kubernetes or A2A wiring in the proposed SDK/daemon changes.
-The current combined integration init image has not yet adopted these patches.
+The lab-only SDK combination `lab/session-diagnostics-integration` (`54490e0`)
+and daemon `lab/claude-diagnostics-integration` (`7ed299f`) are pushed, with a
+rebuilt digest-pinned init image. The combination passes ordinary daemon and
+focused race tests, three fake-client durable failure cases, and the isolated
+native HTTP 401 probe. The first combined native probe caught an empty-path
+fixture incompatibility; `2afdfc1` fixes the test without relaxing production
+configuration checks. [Combined evidence](AGYN-PORTABILITY.md#combined-runtime)
+records the exact scope. Keep these integration merges and the combined-only
+test out of the focused upstream proposals.
+Completed and interrupted Codex task recovery also pass on that exact image,
+with independently verified binary identity, all five durable workload-removal
+confirmations, restored stock deployments and 48 retained PVCs. These regressions
+do not replace the still-required Claude provider/lifecycle acceptance.
 
 ## Proposed Subsequent Contributions
 

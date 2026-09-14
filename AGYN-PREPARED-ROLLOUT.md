@@ -377,6 +377,12 @@ protocol acceptance, not production ingress, sustained load or failover testing.
 
 ## Final Retained Verification
 
+This section records the Codex snapshot. The later
+[prepared-stack Claude report](AGYN-PREPARED-CLAUDE.md) verifies four Claude
+scenarios, records three failed parallel attempts and revalidates the same
+retained services, with 83 task claims and zero task Pods/unconfirmed removals
+after cleanup. It does not supersede the Codex passes or close production gates.
+
 All five Codex scenarios pass on the readiness-corrected service and the same
 retained image set; all fixture processes have exited and cleanup is complete.
 

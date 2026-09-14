@@ -92,9 +92,13 @@ retirement, and the follow-up resumes the same native session without replay.
 That investigation fixed a terminal-readiness race by waiting for published
 running main-container inventory before the single ticket request. All five
 Codex lifecycle scenarios now pass on the final corrected service and retained
-stack. Prepared-stack Claude acceptance and sustained startup reliability remain open.
+stack. [Prepared-stack Claude acceptance](AGYN-PREPARED-CLAUDE.md) now passes
+completed/interrupted recovery, cancellation and streaming; three parallel
+attempts fail with native 401. Request-path diagnostics narrow the investigation
+but do not establish the authentication failure's cause. Sustained reliability
+and the production gates remain open.
 [Scoped runner RBAC](AGYN-RUNNER-RBAC.md) passes 57 allow/deny probes. The latest
-service build and all 437 tests pass, with no skipped tests.
+service build and all 444 tests pass, with no skipped tests.
 
 The new [durable execution service](SERVICE.md) adds authenticated A2A routing,
 transactional queued turns, reporting MCP, bounded outcome checks and a recoverable

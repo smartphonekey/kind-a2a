@@ -6,6 +6,13 @@ durable store are wired together by `src/service/main.ts`. It is not yet a
 production deployment. See [PRODUCTION.md](PRODUCTION.md) for release gates and
 [CONTRIBUTING-AGYN.md](CONTRIBUTING-AGYN.md) for upstream review boundaries.
 
+The current local installation uses the retained prepared stack through registry
+migration `0022`, not the stock services restored by historical fixtures below.
+All five Codex scenarios and four Claude scenarios have passing evidence on it;
+Claude parallel attempts still fail with native 401. See the current
+[Codex rollout](AGYN-PREPARED-ROLLOUT.md#final-retained-verification) and
+[Claude report](AGYN-PREPARED-CLAUDE.md) before operating or upgrading the lab.
+
 ## Run Requirements
 
 Select the pinned Node runtime with `nvm use` (`nvm install` if necessary), then

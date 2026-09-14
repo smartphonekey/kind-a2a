@@ -728,16 +728,16 @@ do not replace the still-required Claude provider/lifecycle acceptance.
 ## Native Proxy Refusal Diagnostics
 
 - Fork: <https://github.com/spk-ai/llm-proxy>.
-- Branch: `feat/native-refusal-diagnostics`, `8abd410`, based on deployed
+- Branch: `feat/native-refusal-diagnostics`, now `17c0f0f` after `8abd410`, based on deployed
   upstream `v0.14.0` (`dd1a3fb`). This deliberately does not bundle the newer
   unrelated platform-path raw-body logging commit.
-- Scope: bounded, allowlisted native non-2xx diagnostics, correlated with
+- Scope: bounded, allowlisted native non-2xx and Anthropic SSE error diagnostics, correlated with
   existing metering. It does not change credentials, paths, bodies, status,
   headers, subscription resolution or retry policy.
 - Model-free evidence: 30 new tests including subtests cover hostile/oversized
   content, UUID/header projection, streaming delivery, read/write failure,
   exact response forwarding and failed-metering correlation. Build passes.
-- Race run: 103 tests including subtests pass with the existing
+- Race run: 118 tests including subtests pass with the existing
   `TestStreamToClientCannotRelayGzip` excluded. Its substring assertion fails
   identically on untouched upstream with Go 1.27.1; it remains unchanged and
   the full unfiltered suite is not claimed to pass.
@@ -749,7 +749,7 @@ A separate `fix/gzip-relay-test` branch, `c8f2c51`, fixes only the existing test
 compression-dependent assertion. Default and explicitly uncompressed DEFLATE
 blocks must both preserve the encoded wire bytes without producing parsed SSE
 usage. The full race suite passes 76 tests including subtests. The combined
-`lab/native-refusal-integration`, `c59786d`, passes build and all 106 race tests
+initial `lab/native-refusal-integration`, `c59786d`, passed build and all 106 race tests
 (79 top-level) without exclusions; it differs from diagnostic source `8abd410`
 only in that test file. Both branches are pushed and neither has an upstream
 PR. Keep the independent test correction separate from the native diagnostics
@@ -761,6 +761,33 @@ hash, diagnostics were projected before Pod removal, and the stock proxy was
 restored. No 401 occurred in that bounded capture; this is not a fix or root
 cause for the earlier native authentication failures. See
 [the live evidence](AGYN-PORTABILITY.md#fresh-lifecycle-sweep).
+
+The subsequent SSE addition `17c0f0f` observes only the first declared Anthropic
+`event: error` from unencoded SSE, with the existing 8 KiB diagnostic bound and
+allowlists. It retains the actual HTTP status (including 200), relays original
+bytes incrementally and does not change retry, metering or agent outcomes.
+Combined `c47f0e5` passes all 121 race entries with the separate gzip correction.
+Existing parser buffering and HTTP-200 error-stream metering remain separate
+hardening work. No captured live SSE error has explained the native 401.
+
+A dependent review unit is pushed as `feat/native-request-diagnostics`,
+`f4ddd0f`. `NATIVE_REQUEST_DIAGNOSTICS=true` explicitly enables fixed metadata
+before forwarding and when headers or a transport failure arrive; it defaults
+off. Only validated binding/call UUIDs, endpoint/method/content-type categories,
+stream and credential-presence booleans, and the actual status are logged. No
+raw URLs, queries, headers, models, body keys/values or credentials are recorded.
+Build/vet and 136 selected race entries pass, again excluding only the known
+gzip test. The current combined branch `ab57552` passes all 139 race entries
+without test exclusions; its only difference from `f4ddd0f` is the separate
+gzip test correction. Both branches are pushed; no upstream PR is open.
+
+The [prepared-stack Claude report](AGYN-PREPARED-CLAUDE.md) records the failed
+parallel attempt under each diagnostic generation and the passing streaming
+fixture. The latest failed instance has no recorded Messages request while its
+peer has four successful proxied Messages calls. This narrows the investigation;
+it is not a credential fix or proof of reliable parallel execution. All temporary
+proxy overlays and subscription credentials are removed afterward. Main's
+bounded diagnostic projections and existing regressions pass all 444 tests.
 
 ## Proposed Subsequent Contributions
 

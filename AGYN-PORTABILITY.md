@@ -1,11 +1,12 @@
 # Agent Portability
 
-Status: completed-turn and explicit interrupted-turn Claude A2A/Pod recovery
-have passing fixtures; the full portability gate remains open. The A2A
+Status: completed-turn recovery, explicit interrupted-turn recovery, streaming,
+cancellation and parallel/FIFO Claude fixtures pass across separate reviewed
+local runs. The reliability/production gate remains open. The A2A
 controller and workflows are unchanged. Claude has a
 reporting adapter, focused daemon patches and an operator-selected live profile.
-The evidence below separates successful recovery fixtures from failures and
-the still-required streaming/concurrent lifecycle scenarios.
+The evidence below separates successful lifecycle fixtures from unresolved
+native authentication and earlier unclassified failures.
 
 An earlier interrupted-turn test failed before fault injection and
 exposed an independent [workload-removal contract bug](AGYN-REMOVAL.md).
@@ -13,8 +14,9 @@ The historical successful profile below is no longer sufficient for the current
 driver. Coordinated local rollout, model-free failed-Pod acceptance and all five
 Codex lifecycle regressions now pass. Refreshed Claude completed-turn recovery
 and a fresh interrupted-turn recovery also pass, as distinguished below from
-the failed interruption sweep. Native error investigation and the remaining
-Claude scenarios are still required.
+the failed interruption sweep. The fresh lifecycle sweep below also passes
+streaming, cancellation and parallel isolation. Native error investigation is
+still required; those successes do not classify or repair earlier failures.
 An isolated native HTTP 401 diagnostic now passes without provider credentials
 or a model backend. It verifies the proposed diagnostic path, not the cause of
 the historical failures or another Claude A2A lifecycle scenario.
@@ -340,6 +342,57 @@ not diagnoses of the earlier unexplained native failure. Missing log reads are
 counted rather than treated as proof of success. This is acceptance diagnostics,
 not a production runtime-error storage/export implementation.
 
+### Fresh Lifecycle Sweep
+
+On 2026-09-14, 06:52:34-06:59:30 UTC, a fresh sweep passed streaming,
+cancellation and parallel/FIFO acceptance. Evidence:
+`.state/agyn-claude-proxy-HlTcIe/`, service source `9eed23d`. The agent profile
+remained Claude Code `2.1.225` / `claude-sonnet-5`, with the reviewed daemon,
+Runners, Gateway, orchestrator and bounded runner images from the preceding
+failed sweep. Only the native proxy diagnostic image was added; A2A controller,
+workflow and agent runtime code were unchanged.
+
+- Streaming: task `20cf10fc-90c7-406a-aab5-cc89ed2e4bb9`, evidence
+  `.state/agyn-reporting-live-Hj7r5o/`. The blocking duplicate waited 82.288s;
+  both streams remained open for about 111.645s, including an idle interval
+  with no task Pod. Replacement Pod UIDs retained instance
+  `81e1fe08-1d5d-4ca8-a6d5-82a17aa6fd22`, native session
+  `ae92f954-2c13-41bc-aecc-4309f5635f31`, the same PVC and unchanged marker.
+  Real Stop/MCP outcome delivery and both confirmed removals passed.
+- Cancellation: task `49fdb1f1-4811-4195-b965-68e3f310a351`, evidence
+  `.state/agyn-reporting-live-Yv9Y5z/`. Settlement took 8.568s and followed
+  observed Pod deletion. The retained workspace showed the deliberate SIGTERM
+  trap, a stopped heartbeat and no late-write marker. A canceled task could
+  not be resumed.
+- Parallel: tasks `f622e09a-5015-4356-9fe7-6000696356bc` and
+  `77a6ac09-e163-4857-a348-0d9459d9a38c`, evidence
+  `.state/agyn-reporting-live-R2bkd0/parallel.json`. Two instances/PVCs/native
+  sessions advanced concurrently. The earlier queued A follow-up ran only
+  after A's old Pod was removed, retaining A's session/workspace while B kept
+  advancing. Cross-Pod TCP/UDP and reporter-to-owner API checks passed. All
+  three turns settled with confirmed removal and idle compute release.
+
+Credential-free preflight `43fa73bc` passed 92 checks and removed its fixtures.
+The three runtime observers all finished; parallel capture recorded one failed
+inventory poll, so it is not evidence of uninterrupted observation. None
+captured a native Claude error result. The exact running proxy binary SHA-256
+matched the reviewed build, as recorded in
+`.state/agyn-native-proxy-build-PW8Lu8/binary-audit.json`.
+The bounded proxy snapshot in `.state/agyn-lifecycle-deploy-ZZPd1F/` captured
+six HTTP 404 and two HTTP 304 responses, but no 401. These non-2xx responses did
+not imply a failed agent turn; diagnostic logs are not task outcomes. A fresh
+pass and a bounded snapshot without 401 do not explain the earlier failures.
+
+Independent post-restoration PostgreSQL/Gateway checks verified six retained
+removal confirmations, four paused instances and four active persistent/no-TTL
+workspaces. All 56 prior PVC UIDs/specs/phases and 16 older Secret identities
+were unchanged; 60 workspace PVCs remain. All five stock deployments were
+restored with original UIDs/settings and observed readiness, temporary RBAC
+was removed, and no task Pods/Services/quotas remained. The temporary
+subscription, managed credential and three attachments were deleted with
+absence checks. The host credential file was unchanged and 29 fixture/evidence
+files passed the cleanup credential scan.
+
 ### Native Proxy Refusal Diagnostics
 
 The focused LLM proxy branch `feat/native-refusal-diagnostics`, `8abd410`, adds
@@ -354,8 +407,14 @@ reported reason is not an independently established credential failure cause.
 The model-free Go race run passes 103 tests including subtests (78 top-level)
 with `TestStreamToClientCannotRelayGzip` explicitly excluded. That existing test
 also fails on untouched `v0.14.0` with Go 1.27.1: compressed data can contain its
-searched plaintext substring. It is unchanged, not a passing full proxy suite.
-The proxy build passes. The service build and all 244 tests pass, including 11
+searched plaintext substring. It is unchanged on the focused diagnostic branch.
+The separate `fix/gzip-relay-test` branch, `c8f2c51`, checks exact encoded bytes
+with default and stored-block compression; its full race suite passes 76 tests
+including subtests. Combined `lab/native-refusal-integration`, `c59786d`, passes
+the build and all 106 race tests (79 top-level), with no exclusions. Only that
+test file differs from the deployed diagnostic source; no runtime behavior is
+added by the combination. All branches are pushed; no upstream PR is open.
+The service build and all 244 tests pass, including 11
 new rollout cases and three safe-projection tests.
 
 `AGYN_LIVE_LLM_PROXY_IMAGE` opts the trusted-local lifecycle wrapper into a
@@ -371,9 +430,10 @@ an authoritative agent outcome channel.
 
 ## Remaining Integration
 
-Streaming, parallel isolation and cancellation still need passing acceptance
-through Claude. Fresh completed-turn and explicit interrupted-turn recovery
-verify the same instance, task PVC and native session across changed Pod UIDs.
+All five Claude lifecycle scenarios now have passing local fixtures across
+separate reviewed runs. These are not sustained reliability or production
+rollout acceptance. Recovery keeps the same instance, task PVC and native
+session across changed Pod UIDs.
 Explain the captured 401 and earlier unclassified failures; a passing fresh
 fixture alone does not establish reliable recovery or resolve those incidents.
 

@@ -230,9 +230,10 @@ Streamable HTTP; no new A2A or MCP wire format is introduced.
 
 The runtime's operator-provided `/agyn/config.json` selects the reporting config
 adapter. Codex uses system TOML; Claude uses its settings and user MCP JSON
-files. Unknown runtimes fail setup. Claude completed-turn A2A/Pod recovery now
-passes with the focused daemon patches and an explicit subscription binding;
-the remaining lifecycle scenarios and native errors are still open. See
+files. Unknown runtimes fail setup. Claude completed/interrupted recovery,
+streaming, cancellation and parallel/FIFO fixtures now pass in separate reviewed
+local runs with the focused daemon patches and an explicit subscription binding.
+Earlier native authentication failures remain unexplained. See
 [AGYN-PORTABILITY.md](AGYN-PORTABILITY.md).
 
 The gate also installs a trusted inbox control file authorizing only the current

@@ -490,6 +490,23 @@ do not replace the still-required Claude provider/lifecycle acceptance.
   has been opened. The lab's image/rollout/evidence code is a separate
   AGPL-3.0-only integration, not part of the proxy proposal.
 
+A separate `fix/gzip-relay-test` branch, `c8f2c51`, fixes only the existing test's
+compression-dependent assertion. Default and explicitly uncompressed DEFLATE
+blocks must both preserve the encoded wire bytes without producing parsed SSE
+usage. The full race suite passes 76 tests including subtests. The combined
+`lab/native-refusal-integration`, `c59786d`, passes build and all 106 race tests
+(79 top-level) without exclusions; it differs from diagnostic source `8abd410`
+only in that test file. Both branches are pushed and neither has an upstream
+PR. Keep the independent test correction separate from the native diagnostics
+proposal.
+
+The actual `8abd410` diagnostic image also ran during the successful fresh
+Claude streaming/cancellation/parallel sweep. Its running binary was checked by
+hash, diagnostics were projected before Pod removal, and the stock proxy was
+restored. No 401 occurred in that bounded capture; this is not a fix or root
+cause for the earlier native authentication failures. See
+[the live evidence](AGYN-PORTABILITY.md#fresh-lifecycle-sweep).
+
 ## Proposed Subsequent Contributions
 
 | Review unit | Suggested home | Boundary |

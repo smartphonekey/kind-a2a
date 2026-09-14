@@ -3,6 +3,7 @@
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
 import type { CoreV1Api } from "@kubernetes/client-node";
+import { PromiseMiddlewareWrapper } from "@kubernetes/client-node/dist/gen/middleware.js";
 import { restoreQuotaAndReconcile } from "./agyn-quota.js";
 import { assertQuotaRejection } from "./quota-proof.js";
 
@@ -15,8 +16,15 @@ export async function provisioningInventory(core: CoreV1Api) {
     assert(claim.metadata?.name && claim.metadata.uid && !claim.metadata.deletionTimestamp);
     return { name: claim.metadata.name, uid: claim.metadata.uid, spec: wire(claim.spec), phase: claim.status?.phase };
   });
-  // Persist identities only; credential payloads must never enter acceptance evidence.
-  const secrets = (await core.listNamespacedSecret({ namespace })).items.map(secret => {
+  // Negotiate metadata at the API, not by fetching and then discarding credentials.
+  const metadataOnly = new PromiseMiddlewareWrapper({ pre: async context => {
+    context.setHeaderParam("Accept", "application/json;as=PartialObjectMetadataList;g=meta.k8s.io;v=v1"); return context;
+  }, post: async context => context });
+  const secretList = await core.listNamespacedSecret({ namespace }, { middleware: [metadataOnly], middlewareMergeStrategy: "append" })
+    .catch((error: unknown) => { throw new Error(`Secret metadata request failed (${Number((error as { code?: number })?.code) || "unknown"})`); });
+  assert.equal(secretList.kind, "PartialObjectMetadataList", "API did not honor metadata-only negotiation");
+  const secrets = secretList.items.map(secret => {
+    assert(secret.data === undefined && secret.stringData === undefined, "unexpected credential payload in metadata response");
     assert(secret.metadata?.name && secret.metadata.uid && !secret.metadata.deletionTimestamp);
     return { name: secret.metadata.name, uid: secret.metadata.uid };
   });

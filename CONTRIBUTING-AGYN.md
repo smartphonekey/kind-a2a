@@ -364,7 +364,8 @@ ordinary native race entries, 1,060 repeated prepared entries, build and vet
 pass; real Kubernetes execution/resume and replacement-race checks pass too.
 
 These branches are based on acceptance combinations, not standalone upstream
-bases. Combined prepared-lifecycle acceptance and full A2A rollout remain pending.
+bases. The combined execution follow-up below is not full A2A acceptance or a
+production rollout.
 [Two more dependent registry branches](AGYN-PREPARED-REGISTRY.md), API `4f957e5`
 and Runners `e7c42f4` on `feat/prepared-workload-registry`, now add immutable
 bindings, state/revision CAS, owner/backend pins and database old-writer guards.
@@ -381,8 +382,21 @@ use the shared prepared lifecycle; exact-binding inspection never activates or
 repairs a Pod. All 597 ordinary controller entries, 596 selected race entries
 and 2,360 repeated entries pass. Native inspection passes 493 ordinary race
 entries and separate real Kubernetes scenarios. Existing unfiltered controller
-race/vet limits remain disclosed. This is not combined registry/controller/A2A
-acceptance, an installed upgrade or upstream approval.
+race/vet limits remain disclosed. Those earlier component tests alone did not
+establish combined execution.
+
+Follow-up `754e935` on the same orchestrator branch is pushed and adds real
+PostgreSQL/registry/controller-method subprocess/native Kubernetes execution
+acceptance: 22 scenarios plus three parent/group entries, with 16 joined SIGKILLs.
+Both owner kinds cover parallel execution, durable follow-up, cancellation,
+lost activation ACK and removal crashes. Independent SQL reads check persisted
+bindings, confirmations and owner/backend pins. The final selected race suite
+passes 625 entries with all three live fixtures enabled; ordinary tests pass 597.
+The known unfiltered race/vet failures remain. All 68 prior PVCs, 52 deployments
+and 170 cluster RBAC objects are unchanged. Unknown preparation is quarantined,
+not recovered. This is model-free execution, not full A2A/daemon/session or
+production authentication acceptance. No installed upgrade or upstream PR was
+made. See [the exact scope](AGYN-PREPARED-CONTROLLERS.md#combined-execution-acceptance).
 
 ## Runner Control Transport
 

@@ -9,26 +9,38 @@ const authReasons = new Set(["unknown", "invalid_bearer_token", "invalid_api_key
 // This is a projection, not a redactor: unknown fields and all raw log text are
 // discarded. Proxy logs are diagnostics, not authoritative agent outcomes.
 export function nativeProxyRefusals(logs: string): Record<string, string | number | boolean>[] {
+  return projectNativeDiagnostics(logs, false);
+}
+
+export function nativeProxyStreamErrors(logs: string): Record<string, string | number | boolean>[] {
+  return projectNativeDiagnostics(logs, true);
+}
+
+function projectNativeDiagnostics(logs: string, stream: boolean): Record<string, string | number | boolean>[] {
   if (Buffer.byteLength(logs) > 64 * 1024) throw new Error("proxy log capture exceeded its bound");
   const records: Record<string, string | number | boolean>[] = [];
   for (const line of logs.split("\n")) {
-    const marker = "native: upstream refused ";
+    const marker = stream ? "native: upstream stream error " : "native: upstream refused ";
     const start = line.indexOf(marker);
     if (start < 0 || line.length > 4096) continue;
     let value: Record<string, unknown>;
     try { value = JSON.parse(line.slice(start + marker.length)); } catch { continue; }
     if (!value || Array.isArray(value) || !Number.isInteger(value.status) || Number(value.status) < 100 || Number(value.status) > 599 ||
-      (Number(value.status) >= 200 && Number(value.status) < 300) || typeof value.vendor !== "string" || !["anthropic", "openai", "unknown"].includes(value.vendor) ||
+      (stream ? Number(value.status) < 200 || Number(value.status) >= 300 : Number(value.status) >= 200 && Number(value.status) < 300) ||
+      typeof value.vendor !== "string" || !["anthropic", "openai", "unknown"].includes(value.vendor) ||
       typeof value.body_state !== "string" || !bodyStates.has(value.body_state) || typeof value.error_type !== "string" || !errorTypes.has(value.error_type) ||
       typeof value.credential_present !== "boolean" || typeof value.anthropic_oauth_beta !== "boolean") continue;
+    if (stream && (value.vendor !== "anthropic" || value.event_type !== "error")) continue;
     if (identifiers.some(key => value[key] !== undefined && (typeof value[key] !== "string" || !uuid.test(value[key]) || value[key] === "00000000-0000-0000-0000-000000000000"))) continue;
-    if (value.auth_reason !== undefined && (typeof value.auth_reason !== "string" || !authReasons.has(value.auth_reason) || ![401, 403].includes(Number(value.status)))) continue;
+    if (value.auth_reason !== undefined && (typeof value.auth_reason !== "string" || !authReasons.has(value.auth_reason) ||
+      (stream ? value.body_state !== "complete" || !["authentication_error", "permission_error"].includes(String(value.error_type)) : ![401, 403].includes(Number(value.status))))) continue;
     const record: Record<string, string | number | boolean> = {
       status: Number(value.status), vendor: String(value.vendor), body_state: String(value.body_state), error_type: String(value.error_type),
       credential_present: value.credential_present, anthropic_oauth_beta: value.anthropic_oauth_beta
     };
     for (const key of identifiers) if (typeof value[key] === "string") record[key] = value[key];
     if (typeof value.auth_reason === "string") record.auth_reason = value.auth_reason;
+    if (stream) record.event_type = "error";
     records.push(record);
     if (records.length === 128) break;
   }

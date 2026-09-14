@@ -45,6 +45,8 @@ if(args.includes('exec')) {
   assert(args.includes('--limit-bytes=65536')&&args.includes('--tail=200')&&args.some(x=>x.startsWith('--since-time=')));
   console.log('private-token');console.log('native: upstream refused '+JSON.stringify({status:401,vendor:'anthropic',body_state:'complete',
     error_type:'authentication_error',auth_reason:'invalid_bearer_token',credential_present:true,anthropic_oauth_beta:true,message:'private-token'}));
+  console.log('native: upstream stream error '+JSON.stringify({status:200,vendor:'anthropic',event_type:'error',body_state:'complete',
+    error_type:'authentication_error',auth_reason:'invalid_bearer_token',credential_present:true,anthropic_oauth_beta:true,message:'private-token'}));
 } else if(args.includes("patch")) {
   if(mode==="patch-failure"&&name==='agents-orchestrator'){console.error("fixture patch failure");process.exit(2);}
   if(mode==='proxy-patch-failure'&&name==='llm-proxy'){console.error('fixture proxy patch failure');process.exit(2);}
@@ -134,7 +136,11 @@ process.exit(["child-failure","proxy-child-failure"].includes(process.env.FAKE_M
           assert(!raw.includes("private-token"));
           const report = JSON.parse(raw);
           assert.equal(report.captured, !["proxy-patch-failure", "proxy-log-failure", "proxy-managed-edit", "proxy-pod-replaced", "proxy-restarted"].includes(mode));
-          if (report.captured) assert.equal(report.refusals[0].auth_reason, "invalid_bearer_token");
+          if (report.captured) {
+            assert.equal(report.refusals[0].auth_reason, "invalid_bearer_token");
+            assert.equal(report.streamErrors[0].status, 200);
+            assert.equal(report.streamErrors[0].auth_reason, "invalid_bearer_token");
+          }
         }
       }
     }

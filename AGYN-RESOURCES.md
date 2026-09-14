@@ -389,6 +389,17 @@ Private evidence is in `.state/agyn-startup-acceptance-gzD71Q/`:
 `unit-test.jsonl`. It remains untracked. The focused branch is pushed with the
 runner repository's AGPL license unchanged; no upstream PR has been submitted.
 
+### Combined Source Validation
+
+On 2026-09-14, lab-only runner commit
+[`74faf0e9d247cffdac58a3b219639328d65a1093`](https://github.com/spk-ai/k8s-runner/commit/74faf0e9d247cffdac58a3b219639328d65a1093)
+integrated the focused fix onto quota/resource commit `e6e83e7`. API generation
+against local combined API source `3c84a6a`, `go build ./...` and the full
+`go test -race ./...` suite pass. Resource validation remains ahead of startup
+Secret/PVC writes. The independent branch and its existing license are intact.
+This run did not deploy an image or enable the opt-in Kubernetes tests; the live
+matrix above is evidence for the focused revision only.
+
 The deployed runner and coordinated A2A image recipe do **not** yet contain this
 fix. First-provision A2A recovery, crash-orphan reconciliation, late-create
 fencing and post-success Stop/Remove cleanup still need implementation or

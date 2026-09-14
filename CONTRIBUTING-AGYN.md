@@ -297,6 +297,14 @@ Keep crash-orphan reconciliation, PVC ownership enforcement, Stop/Remove changes
 and coordinated A2A deployment in separate review units. The fork retains its
 existing AGPL license; the branch is pushed and no upstream PR has been opened.
 
+The separate [`lab/startup-integration`](https://github.com/spk-ai/k8s-runner/tree/lab/startup-integration)
+branch at `74faf0e` combines this fix with `lab/quota-integration` (`e6e83e7`).
+Generation against the combined API source `3c84a6a`, `go build ./...` and the
+full `go test -race ./...` suite pass. Compute-resource validation still occurs
+before any startup Secret or PVC write. Only the README needed manual conflict
+resolution; the focused contribution remains unchanged. This is source-level
+integration evidence, not a deployed A2A first-provision recovery result.
+
 ## Claude SDK Session Selection
 
 A separate SDK-only contribution adds `Options.SessionID` and `Options.Resume`

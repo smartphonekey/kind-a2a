@@ -1,0 +1,36 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+const uuid = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
+const identifiers = ["call_id", "organization_id", "subscription_id", "agent_id", "agent_instance_id", "environment_id", "workload_id"] as const;
+const errorTypes = new Set(["unknown", "authentication_error", "permission_error", "rate_limit_error", "invalid_request_error",
+  "not_found_error", "api_error", "overloaded_error", "request_too_large", "server_error", "insufficient_quota"]);
+const bodyStates = new Set(["complete", "incomplete", "oversized", "encoded", "invalid_json"]);
+const authReasons = new Set(["unknown", "invalid_bearer_token", "invalid_api_key"]);
+
+// This is a projection, not a redactor: unknown fields and all raw log text are
+// discarded. Proxy logs are diagnostics, not authoritative agent outcomes.
+export function nativeProxyRefusals(logs: string): Record<string, string | number | boolean>[] {
+  if (Buffer.byteLength(logs) > 64 * 1024) throw new Error("proxy log capture exceeded its bound");
+  const records: Record<string, string | number | boolean>[] = [];
+  for (const line of logs.split("\n")) {
+    const marker = "native: upstream refused ";
+    const start = line.indexOf(marker);
+    if (start < 0 || line.length > 4096) continue;
+    let value: Record<string, unknown>;
+    try { value = JSON.parse(line.slice(start + marker.length)); } catch { continue; }
+    if (!value || Array.isArray(value) || !Number.isInteger(value.status) || Number(value.status) < 100 || Number(value.status) > 599 ||
+      (Number(value.status) >= 200 && Number(value.status) < 300) || typeof value.vendor !== "string" || !["anthropic", "openai", "unknown"].includes(value.vendor) ||
+      typeof value.body_state !== "string" || !bodyStates.has(value.body_state) || typeof value.error_type !== "string" || !errorTypes.has(value.error_type) ||
+      typeof value.credential_present !== "boolean" || typeof value.anthropic_oauth_beta !== "boolean") continue;
+    if (identifiers.some(key => value[key] !== undefined && (typeof value[key] !== "string" || !uuid.test(value[key]) || value[key] === "00000000-0000-0000-0000-000000000000"))) continue;
+    if (value.auth_reason !== undefined && (typeof value.auth_reason !== "string" || !authReasons.has(value.auth_reason) || ![401, 403].includes(Number(value.status)))) continue;
+    const record: Record<string, string | number | boolean> = {
+      status: Number(value.status), vendor: String(value.vendor), body_state: String(value.body_state), error_type: String(value.error_type),
+      credential_present: value.credential_present, anthropic_oauth_beta: value.anthropic_oauth_beta
+    };
+    for (const key of identifiers) if (typeof value[key] === "string") record[key] = value[key];
+    if (typeof value.auth_reason === "string") record.auth_reason = value.auth_reason;
+    records.push(record);
+    if (records.length === 128) break;
+  }
+  return records;
+}

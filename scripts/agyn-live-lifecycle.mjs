@@ -12,6 +12,8 @@ assert(image && initImage, "explicit reviewed orchestrator and daemon integratio
 const runnersImage = process.env.AGYN_LIVE_RUNNERS_IMAGE;
 const gatewayImage = process.env.AGYN_LIVE_GATEWAY_IMAGE;
 assert(runnersImage && gatewayImage, "explicit reviewed Runners and Gateway removal-confirmation images are required");
+const llmProxyImage = process.env.AGYN_LIVE_LLM_PROXY_IMAGE;
+if (llmProxyImage) assert(/^\S+@sha256:[a-f0-9]{64}$/.test(llmProxyImage), "proxy diagnostics require a reviewed digest-pinned image");
 const bounded = process.env.AGYN_LIVE_COMPUTE_RESOURCES === "true";
 assert(!process.env.AGYN_LIVE_COMPUTE_RESOURCES || bounded, "AGYN_LIVE_COMPUTE_RESOURCES must be true when set");
 const runnerImage = process.env.AGYN_LIVE_RUNNER_IMAGE;
@@ -50,6 +52,7 @@ const targets = [
   { name: "runners", image: runnersImage, managed: new Map() },
   { name: "gateway", image: gatewayImage, managed: new Map() },
   ...(bounded ? [{ name: "k8s-runner", image: runnerImage, managed: new Map([["SUPPORTING_CONTAINER_RESOURCES", supportingResources]]) }] : []),
+  ...(llmProxyImage ? [{ name: "llm-proxy", image: llmProxyImage, managed: new Map() }] : []),
   { name: "agents-orchestrator", image, managed: new Map([["AGYND_CLI_INIT_IMAGE", initImage], ["STOP_INACTIVE_INSTANCES", "true"], ["STOP_TIMEOUT_SEC", "5"]]) }
 ].map(target => {
   const original = deployment(target.name), previous = container(original, target.name);
@@ -94,6 +97,37 @@ const patch = (target, current, targetImage, replacements) => {
   finally { rmSync(patchFile, { force: true }); }
 };
 const rollout = name => k(["rollout", "status", `deployment/${name}`, "-n", "agyn-platform", "--timeout=80s"]);
+const proxyStartedAt = new Date().toISOString();
+let proxyPod;
+const selectProxyPod = () => {
+  const target = targets.find(item => item.name === "llm-proxy");
+  const labels = target.original.spec.selector.matchLabels;
+  assert(labels && Object.keys(labels).length && !target.original.spec.selector.matchExpressions?.length, "unsupported proxy selector");
+  const pods = JSON.parse(k(["get", "pods", "-n", "agyn-platform", "-l", Object.entries(labels).map(([key, value]) => `${key}=${value}`).join(","), "-o", "json"])).items;
+  const candidates = pods.filter(pod => !pod.metadata.deletionTimestamp && pod.spec.containers.some(c => c.name === "llm-proxy" && c.image === llmProxyImage));
+  assert.equal(candidates.length, 1, "expected one diagnostic proxy Pod");
+  const pod = candidates[0];
+  assert(/^[a-z0-9-]+$/.test(pod.metadata.name) && /^[a-f0-9-]{36}$/.test(pod.metadata.uid));
+  assert.equal(pod.status.containerStatuses.find(c => c.name === "llm-proxy").restartCount, 0, "proxy restarted before capture");
+  proxyPod = { name: pod.metadata.name, uid: pod.metadata.uid };
+};
+const captureProxy = async () => {
+  const report = { image: llmProxyImage, pod: proxyPod, since: proxyStartedAt, observedAt: new Date().toISOString(),
+    rawLogsStored: false, captured: false, refusals: [] };
+  try {
+    assert(proxyPod, "diagnostic proxy identity was not observed");
+    const current = JSON.parse(k(["get", "pod", proxyPod.name, "-n", "agyn-platform", "-o", "json"]));
+    assert.equal(current.metadata.uid, proxyPod.uid, "proxy Pod was replaced");
+    assert.equal(current.spec.containers.find(c => c.name === "llm-proxy").image, llmProxyImage, "proxy image changed during acceptance");
+    assert.equal(current.status.containerStatuses.find(c => c.name === "llm-proxy").restartCount, 0, "proxy restarted during acceptance");
+    const { nativeProxyRefusals } = await import("../dist/live/proxy-diagnostics.js");
+    const logs = k(["logs", proxyPod.name, "-n", "agyn-platform", "-c", "llm-proxy", "--timestamps=true",
+      `--since-time=${proxyStartedAt}`, "--tail=200", "--limit-bytes=65536"]);
+    report.refusals = nativeProxyRefusals(logs); report.captured = true;
+  } finally {
+    writeFileSync(join(directory, "proxy-diagnostics.json"), JSON.stringify(report, null, 2), { mode: 0o600 });
+  }
+};
 const sameManaged = (target, left, right) => left && right && left.image === right.image && [...target.managed.keys()].every(name =>
   JSON.stringify(left.env?.find(entry => entry.name === name)) === JSON.stringify(right.env?.find(entry => entry.name === name)));
 try {
@@ -107,8 +141,9 @@ try {
     target.attempted = true;
     patch(target, current, target.image, [...target.managed].map(([name, value]) => ({ name, value })));
     rollout(target.name);
+    if (target.name === "llm-proxy") selectProxyPod();
   }
-  console.log(JSON.stringify({ kind: "live.deployed", image, initImage, runnerImage, runnersImage, gatewayImage, bounded, directory }));
+  console.log(JSON.stringify({ kind: "live.deployed", image, initImage, runnerImage, runnersImage, gatewayImage, llmProxyImage, bounded, directory }));
   for (const scenario of scenarios) {
     const child = spawn(process.execPath, [scenario === "startup-failure" ? "dist/live/agyn-removal.js" : "dist/live/agyn-reporting.js"], { stdio: "inherit", env: {
       ...process.env, AGYN_LIVE_SCENARIO: scenario === "completed" ? "" : scenario
@@ -117,9 +152,10 @@ try {
     if (code !== 0) throw new Error(`${scenario} acceptance failed (${code})`);
   }
 } finally {
+  const errors = [];
+  if (llmProxyImage) try { await captureProxy(); } catch { errors.push(new Error("bounded proxy diagnostic capture failed")); }
   assertIdle("workload cleanup unconfirmed; retaining integration deployments for reconciliation");
   if (quotaRecovery) assertNoQuotas();
-  const errors = [];
   for (const target of [...targets].reverse().filter(target => target.attempted)) {
     try {
       const current = deployment(target.name), ours = container(current, target.name), previous = target.previous;

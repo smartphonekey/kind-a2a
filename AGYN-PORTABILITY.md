@@ -340,6 +340,35 @@ not diagnoses of the earlier unexplained native failure. Missing log reads are
 counted rather than treated as proof of success. This is acceptance diagnostics,
 not a production runtime-error storage/export implementation.
 
+### Native Proxy Refusal Diagnostics
+
+The focused LLM proxy branch `feat/native-refusal-diagnostics`, `8abd410`, adds
+native-path diagnostics on top of the deployed `v0.14.0` source, without taking
+the newer platform-path raw error-body logging. Non-2xx responses retain their
+status, headers and body; no request retry is added. An 8 KiB bounded capture
+produces only validated UUID bindings, status, credential/OAuth-beta presence
+booleans and allowlisted error categories. Unknown, encoded, oversized and
+interrupted bodies are not classified from a partial prefix. The provider's
+reported reason is not an independently established credential failure cause.
+
+The model-free Go race run passes 103 tests including subtests (78 top-level)
+with `TestStreamToClientCannotRelayGzip` explicitly excluded. That existing test
+also fails on untouched `v0.14.0` with Go 1.27.1: compressed data can contain its
+searched plaintext substring. It is unchanged, not a passing full proxy suite.
+The proxy build passes. The service build and all 244 tests pass, including 11
+new rollout cases and three safe-projection tests.
+
+`AGYN_LIVE_LLM_PROXY_IMAGE` opts the trusted-local lifecycle wrapper into a
+digest-pinned fifth deployment. Idle, deployment UID, optimistic patch and
+restoration guards still apply. Before restoring the stock proxy, it reads a
+bounded log snapshot from the exact observed Pod and stores only a validated
+projection in `proxy-diagnostics.json`. Pod replacement, restart, image drift
+or a failed capture fails acceptance without suppressing restoration of fields
+still owned by the run. Raw log text is not stored. The snapshot is limited to
+200 lines / 64 KiB; an empty result does not prove that no earlier refusal
+occurred. This is operator acceptance evidence, not production error storage or
+an authoritative agent outcome channel.
+
 ## Remaining Integration
 
 Streaming, parallel isolation and cancellation still need passing acceptance

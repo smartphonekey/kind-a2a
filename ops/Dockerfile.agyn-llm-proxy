@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Trusted-local refusal diagnostics; require the deployed runtime base by digest.
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+COPY --chown=65532:65532 llm-proxy /app/llm-proxy

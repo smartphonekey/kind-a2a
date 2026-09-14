@@ -470,6 +470,26 @@ with independently verified binary identity, all five durable workload-removal
 confirmations, restored stock deployments and 48 retained PVCs. These regressions
 do not replace the still-required Claude provider/lifecycle acceptance.
 
+## Native Proxy Refusal Diagnostics
+
+- Fork: <https://github.com/spk-ai/llm-proxy>.
+- Branch: `feat/native-refusal-diagnostics`, `8abd410`, based on deployed
+  upstream `v0.14.0` (`dd1a3fb`). This deliberately does not bundle the newer
+  unrelated platform-path raw-body logging commit.
+- Scope: bounded, allowlisted native non-2xx diagnostics, correlated with
+  existing metering. It does not change credentials, paths, bodies, status,
+  headers, subscription resolution or retry policy.
+- Model-free evidence: 30 new tests including subtests cover hostile/oversized
+  content, UUID/header projection, streaming delivery, read/write failure,
+  exact response forwarding and failed-metering correlation. Build passes.
+- Race run: 103 tests including subtests pass with the existing
+  `TestStreamToClientCannotRelayGzip` excluded. Its substring assertion fails
+  identically on untouched upstream with Go 1.27.1; it remains unchanged and
+  the full unfiltered suite is not claimed to pass.
+- Existing AGPL licensing is retained. The branch is pushed; no upstream PR
+  has been opened. The lab's image/rollout/evidence code is a separate
+  AGPL-3.0-only integration, not part of the proxy proposal.
+
 ## Proposed Subsequent Contributions
 
 | Review unit | Suggested home | Boundary |

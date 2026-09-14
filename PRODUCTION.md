@@ -25,7 +25,7 @@ agent profile must not change the A2A controller or workflow implementation.
 
 | Gate | Status | Required evidence |
 | --- | --- | --- |
-| Existing behavior | Baseline preserved | Build and all 230 tests including subtests pass on 2026-09-14, including the 10 baseline tests, on pinned Node 24.21.0 / SQLite 3.53.4. |
+| Existing behavior | Baseline preserved | Build and all 244 tests including subtests pass on 2026-09-14, including the 10 baseline tests, on pinned Node 24.21.0 / SQLite 3.53.4. |
 | Durable task ownership and execution | Module/process and live restart verified | Transactional submissions, scoped idempotency, FIFO turns, fenced leases and six-process contention pass. Live controller SIGKILL plus pod replacement recovers a pinned execution without redispatch. Remaining failover/storage boundaries need verification. |
 | Authenticated protocol boundary | HTTP/SSE tests verified; deployment pending | Unauthorized and cross-owner send/get/list/cancel/events checks, disconnect/reconnect and subscription credential revocation pass. TLS deployment acceptance remains. |
 | Protocol conformance | Blocking/stream lifetime and real agent continuation verified; full audit pending | [Protocol acceptance](A2A-PROTOCOL.md) now also passes on the coordinated removal stack: a 79.403-second blocking duplicate and two approximately 118-second streams across idle compute release and Pod replacement. Store-driven tests cover races, large snapshots, heartbeat/proxy behavior, bounded slow-reader cleanup, error envelopes and eight-reader fan-out. Error/validation conformance, production ingress, crash recovery and sustained load acceptance remain. |

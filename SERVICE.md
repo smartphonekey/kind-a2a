@@ -38,11 +38,12 @@ The separate [volume retention/inventory fixes](AGYN-VOLUME-SAFETY.md) now pass
 source and native Kubernetes checks, including the combined patch stack. They
 are not deployed to the stock services. The proposed
 [checked-volume API/registry/runner implementation](AGYN-CHECKED-VOLUMES.md) now
-passes source and native acceptance, but orchestrator/sandbox callers are not
-migrated and no deployment changed. A dependent Runners admission guard now
+passes source and native acceptance. The dependent orchestrator/sandbox caller
+migration also passes component tests and real runner/Kubernetes cleanup with a
+fake registry; no deployment changed. A dependent Runners admission guard now
 passes real PostgreSQL contention and upgrade tests; coordinated rollout must
 also include migration `0019`, not just the original checked-volume API.
-End-to-end deletion, authoritative garbage
+Combined end-to-end deletion, authoritative garbage
 collection and infrastructure fencing still need work; retained disks
 must not be treated as disposable just because one registry scan omits them.
 

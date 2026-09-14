@@ -48,9 +48,11 @@ existing task PVCs preserved. The next [checked-volume contract](AGYN-CHECKED-VO
 now passes API, registry and native runner acceptance, including real Kubernetes
 stale-delete rejection. A dependent registry admission guard also passes real
 PostgreSQL concurrency and migration tests, preventing follow-up admission from
-racing checked deletion. Orchestrator/sandbox caller migration, production garbage
-collection and coordinated rollout remain open; these fixes are not permanently
-deployed.
+racing checked deletion. The dependent [orchestrator/sandbox caller migration](AGYN-CHECKED-VOLUMES.md#controller-migration)
+now passes ordinary tests and a selected race suite with real runner/Kubernetes
+agent and sandbox cleanup. Its registry is a fake; combined end-to-end acceptance,
+production garbage collection and coordinated rollout remain open. These fixes
+are not permanently deployed.
 
 The new [durable execution service](SERVICE.md) adds authenticated A2A routing,
 transactional queued turns, reporting MCP, bounded outcome checks and a recoverable

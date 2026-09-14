@@ -221,7 +221,7 @@ PR or published API release. Generate from the reviewed API proposal to test
 these branches. Native fixture and combined-stack commits are separate lab
 integration artifacts, not part of a bundled upstream change.
 
-Orchestrator/sandbox callers and deployment are still pending. Review the API
+The dependent caller migration below is now tested; deployment is still pending. Review the API
 contract and dependency/rollout plan with maintainers before proposing activation;
 do not deploy a runner that rejects legacy deletion while its callers still use it.
 
@@ -246,6 +246,29 @@ checked volume removal:
 The branch is pushed and the existing license is unchanged. No upstream PR has
 been submitted. This is not controller integration, native backend fencing or a
 production rollout; it requires the coordinated contract and all-writer audit.
+
+## Checked Volume Controller
+
+The next dependent review unit migrates orchestrator and sandbox volume writers:
+
+- Fork/branch: `spk-ai/agents-orchestrator`, `feat/checked-volume-lifecycle`, commit `eebf4cf`.
+- Explicit base: combined orchestrator `f65a9f6`; required API `ec2bfed`, native
+  runner `3c461c5` and Runners owner-admission guard `f05b479`.
+- [Review the incremental diff](https://github.com/spk-ai/agents-orchestrator/compare/f65a9f6...eebf4cf).
+  Rebase onto accepted prerequisites before submitting an upstream PR.
+- Scope: checked creation/reuse/reopen, immutable binding, owned-revision failure
+  compensation, persisted deletion intents, physical confirmation and sandbox
+  finalization. Malformed listings/replies fail closed; legacy callers are not
+  used as fallback. No A2A controller/workflow or generated API changes.
+- Evidence: build and 488 ordinary tests pass; a selected 488-test race suite
+  passes with real runner/Kubernetes agent and sandbox cleanup. Exactly the
+  known group-consumer race test is excluded. The unchanged self-assignment also
+  prevents an unfiltered vet pass. See [the precise acceptance scope](AGYN-CHECKED-VOLUMES.md#controller-migration).
+
+The branch is pushed, with the existing license unchanged and no upstream PR.
+The native fixture's registry/Agents clients are fakes. Coordinated real database,
+controller, runner and A2A acceptance, legacy-record audit, all-writer rollout,
+backend authorization/incarnation binding and infrastructure fencing remain open.
 
 ## Runner Ingress Isolation
 

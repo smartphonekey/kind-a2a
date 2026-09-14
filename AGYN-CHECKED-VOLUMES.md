@@ -2,10 +2,11 @@
 
 # Checked Volume Removal
 
-Status: proposed API, registry implementation and native runner checks pass
-focused and combined acceptance. The branches are pushed. The orchestrator and
-sandbox callers are not migrated, no platform deployment changed, and this is
-not production-ready end-to-end deletion.
+Status: proposed API, registry implementation, native runner checks and the
+dependent orchestrator/sandbox migration pass their documented component
+acceptance. The branches are pushed. No platform deployment changed, and the
+combined registry/controller/runner/A2A rollout is still unverified. This is not
+production-ready end-to-end deletion.
 
 A subsequent [workload-admission guard](#workload-admission) now passes real
 PostgreSQL contention and upgrade tests on a dependent Runners branch. The
@@ -158,19 +159,74 @@ PostgreSQL databases have no remaining fixture schemas; container removal and
 temporary credential cleanup are recorded separately.
 
 This is registry/database acceptance, not a new runner/controller/A2A lifecycle
-sweep. Controller and sandbox callers remain unmigrated. Require migration
+sweep. The subsequent caller migration is recorded below. Require migration
 `0019` in the coordinated image/database rollout; the original checked RPCs or
 `checked_lifecycle` flag alone do not prove admission protection. Owner-wide
 admission requires explicit reopen of closed checked volumes. Guard rows need
 retention handling, and the mechanism does not fence delayed/replayed backend
 Start calls, authenticate removal evidence or resolve node/storage partitions.
 
+## Controller Migration
+
+Orchestrator branch
+[`feat/checked-volume-lifecycle`](https://github.com/spk-ai/agents-orchestrator/tree/feat/checked-volume-lifecycle),
+commit `eebf4cf`, migrates all agent-instance and sandbox volume mutation call
+sites. Its explicit base is combined orchestrator `f65a9f6`; review the
+[incremental diff](https://github.com/spk-ai/agents-orchestrator/compare/f65a9f6...eebf4cf),
+then rebase onto accepted prerequisites for an upstream proposal. It requires
+combined API `ec2bfed`, checked runner `3c461c5`, and Runners guard `f05b479` with
+migrations `0017`-`0019`. Generated LLM API churn is excluded. No upstream PR or
+permanent image rollout was submitted.
+
+Creation/reuse validates checked metadata and full logical ownership. Closed
+generations require explicit CAS reopen; compensation holds only the revision
+returned to the creating/reopening attempt. Bind pins name, UID and persistent
+labels, with an additional sandbox-user lookup. Begin-removal must return a
+validated durable intent before native deletion. Pending or unknown native
+results never finalize a record; only checked absence followed by the matching
+registry confirmation does. A fresh reconciler resumes the stored target,
+including after lost begin/native/confirm replies. No legacy RPC fallback or
+fresh-read compensation is allowed.
+
+Sandbox cleanup includes failed, deleting and historical volume rows, and keeps
+failed/stopped workloads reserved until explicit removal confirmation. It checks
+the complete owner-scoped listing before stopping duplicate workloads. A
+terminated sandbox remains discoverable while disk deletion is pending and is
+finally deleted only after checked cleanup. Unbound/legacy volumes, unreachable
+runners and unknown disks remain retained for explicit reconciliation. This does
+not add permission to replay an interrupted A2A turn.
+
+Private evidence: `.state/agyn-volume-controller-QeClur/`, 2026-09-14:
+
+| Scope | Result |
+| --- | --- |
+| Reproduced gaps | New tests failed for a size-changing deletion reply, 12 malformed/duplicate/cyclic registry page cases, and two sandbox plans that performed cleanup before validating later ownership. These now pass. Earlier fixture/generation failures remain separate evidence, not business regressions. |
+| Full ordinary Go suite | Build and 488 tests including subtests pass (`controller-final-ordinary.jsonl`); the opt-in native test is gated off in this run. |
+| Selected race suite with native gate | 488 tests, 248 top-level, pass (`controller-final-scoped-race-native.jsonl`). Exactly `TestGroupMembershipConsumerLoopRetriesWithoutBlocking` is excluded; the native test is enabled. This is not an unfiltered full-race pass. |
+| Remaining source checks | The unfiltered race run fails only in the unchanged group-consumer fake subscription. `go vet ./...` fails on the unchanged `ctx = ctx` in `start_decision.go:186`, also present at base `f65a9f6`; `go vet -assign=false ./...` passes. Neither baseline limitation is hidden or bundled into this contribution. |
+| Native agent cleanup | Real runner gRPC and Kubernetes retain foreign/closed/untracked/late-created claims and reject ambiguous inventory. Delete acknowledgement leaves the row pending; a fresh reconciler confirms the original UID-bound intent after observed absence. |
+| Native sandbox cleanup | The same fixture binds an unbound sandbox workspace from actual inventory with user ownership validation, retains the sandbox on pending deletion, then confirms the original target and finalizes it from a fresh reconciler. Registry and Agents services are fakes, not a deployed database. |
+
+The final native run used namespace `orchestrator-volumes-ff9a9264-fe3`, UID
+`ac82f70f-36ab-4928-83ac-e88527ca9ebc`. Seven empty 1 MiB claims used an absent
+storage class, quota prohibited Pods, and the impersonated fixture account was
+limited to its namespace's PVC inspection/deletion. The test removed only its
+tracked agent and sandbox claims; five other fixture claims remained unchanged
+until ownership-checked namespace cleanup confirmed absence. No backing disk,
+model, provider credential or PostgreSQL container was used. These are new
+reconciler objects over explicit fake registry state, not process/DB failover.
+
+The 11:01:07 UTC audit confirms all 60 pre-existing task PVC UIDs/specs/phases
+and labels unchanged, every platform deployment's UID/generation/images/readiness
+unchanged, zero task Pods/Services/quotas and zero remaining fixture namespaces.
+The stock deployments are still in place. No new A2A lifecycle sweep ran.
+
 ## Remaining Work
 
-- Migrate every orchestrator/TTL/sandbox volume creation, activation, failure,
-  removal and missing-volume path to the checked APIs. Do not finalize from an
-  incomplete scan or fall back to a name-only RPC. Validate returned revisions,
-  intent identity and backend states; retry only the persisted target.
+- Run the migrated controller with the real guarded registry and native runner,
+  including concurrent admission/deletion and controller process replacement,
+  then repeat the A2A lifecycle acceptance. The component fixtures above are
+  not a substitute for this combined proof.
 - Audit legacy records and all writers, including already-issued old deletions.
   Pin compatible API/client dependencies and migrations `0017`-`0019`, drain and
   roll out the coordinated stack, then run real registry/runner/controller/A2A

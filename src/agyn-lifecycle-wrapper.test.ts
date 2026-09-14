@@ -9,6 +9,7 @@ import test from "node:test";
 
 const wrapper = fileURLToPath(new URL("../scripts/agyn-live-lifecycle.mjs", import.meta.url));
 for (const mode of ["success", "parallel", "streaming", "parallel-no-network", "child-failure", "patch-failure", "unmanaged-edit", "managed-edit", "busy",
+  "schema-already-prepared", "schema-after-registry", "schema-before-restoration",
   "proxy-success", "proxy-child-failure", "proxy-patch-failure", "proxy-managed-edit", "proxy-uid-change", "proxy-unmanaged-edit", "proxy-unpinned", "proxy-busy", "proxy-log-failure", "proxy-pod-replaced", "proxy-restarted"]) {
   test(`deployment wrapper: ${mode}`, t => {
     const directory = mkdtempSync(join(tmpdir(), "a2a-deployment-test-"));
@@ -33,7 +34,10 @@ const target=name==='agents-orchestrator'?state:state.dependencies[name];
 const proxyPod={metadata:{name:'llm-proxy-fixture',uid:state.proxyPodReplaced?'22222222-2222-4222-8222-222222222222':'11111111-1111-4111-8111-111111111111'},
 spec:{containers:[{name:'llm-proxy',image:state.dependencies['llm-proxy'].spec.template.spec.containers[0].image}]},
 status:{containerStatuses:[{name:'llm-proxy',restartCount:state.proxyRestarted?1:0}]}};
-if(args.includes("get")) {
+if(args.includes('exec')) {
+  const sql=fs.readFileSync(0,'utf8');assert(sql.includes('READ ONLY')&&args.includes('ON_ERROR_STOP=1'));
+  console.log(JSON.stringify({database:'runners',readOnly:'on',migrations:[mode==='schema-already-prepared'||state.preparedSchema?'0022_prepared_workloads.sql':'0017_workload_removal_confirmation.sql']}));
+} else if(args.includes("get")) {
   console.log(JSON.stringify(args.includes("deployment")?target:args.includes('agyn-platform')?
     (args.includes('pod')?proxyPod:{items:[proxyPod]}):{items:["busy","proxy-busy"].includes(mode)?[{metadata:{name:"existing-user-workload"}}]:[]}));
 } else if(args.includes('logs')) {
@@ -55,6 +59,7 @@ if(args.includes("get")) {
     target.spec.template.spec.containers[0].env=patch[2].value;
   } else assert.equal(patch.length,2,'unmanaged dependency environment was patched');
   target.spec.template.spec.containers[0].image=patch[1].value;
+  if(mode==='schema-after-registry'&&name==='runners')state.preparedSchema=true;
   target.metadata.resourceVersion=String(Number(target.metadata.resourceVersion)+1);
   fs.writeFileSync(file,JSON.stringify(state));
 } else if(!args.includes("rollout")) {throw Error("unexpected kubectl operation");}
@@ -62,6 +67,7 @@ if(args.includes("get")) {
     chmodSync(kubectl, 0o700);
     writeFileSync(join(directory, "dist/live/agyn-reporting.js"), `const fs=require("node:fs"),assert=require("node:assert/strict");
 const file=process.env.FAKE_DEPLOYMENT,state=JSON.parse(fs.readFileSync(file,"utf8")),c=state.spec.template.spec.containers[0];
+if(process.env.FAKE_MODE==='schema-before-restoration')state.preparedSchema=true;
 assert.equal(c.image,"reviewed:1");assert.equal(c.env.find(e=>e.name==="STOP_INACTIVE_INSTANCES").value,"true");
 for(const name of ['runners','gateway'])assert.equal(state.dependencies[name].spec.template.spec.containers[0].image,'reviewed-'+name+':1');
 if(["parallel","streaming"].includes(process.env.FAKE_MODE))assert.equal(process.env.AGYN_LIVE_SCENARIO,process.env.FAKE_MODE);
@@ -90,6 +96,13 @@ process.exit(["child-failure","proxy-child-failure"].includes(process.env.FAKE_M
     assert(!(result.stdout + result.stderr).includes("do-not-log-this-fixture"), "private settings reached output");
     const current = JSON.parse(readFileSync(stateFile, "utf8")).spec.template.spec.containers[0];
     const dependencies = JSON.parse(readFileSync(stateFile, "utf8")).dependencies;
+    if (mode.startsWith("schema-")) {
+      assert.match(result.stderr, /checked\/prepared registry requires coordinated retain-mode rollout/);
+      assert.equal(dependencies.runners.spec.template.spec.containers[0].image, mode === "schema-already-prepared" ? "stock-runners:1" : "reviewed-runners:1");
+      assert.equal(dependencies.gateway.spec.template.spec.containers[0].image, mode === "schema-before-restoration" ? "reviewed-gateway:1" : "stock-gateway:1");
+      assert.equal(current.image, mode === "schema-before-restoration" ? "reviewed:1" : "stock:1");
+      return;
+    }
     for (const name of ["runners", "gateway"]) assert.deepEqual(dependencies[name].spec, original.dependencies[name].spec, `${name} was not restored`);
     if (mode === "proxy-managed-edit") assert.equal(dependencies["llm-proxy"].spec.template.spec.containers[0].image, "external:1");
     else if (mode === "proxy-uid-change") {

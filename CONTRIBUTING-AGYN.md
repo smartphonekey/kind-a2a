@@ -398,6 +398,20 @@ not recovered. This is model-free execution, not full A2A/daemon/session or
 production authentication acceptance. No installed upgrade or upstream PR was
 made. See [the exact scope](AGYN-PREPARED-CONTROLLERS.md#combined-execution-acceptance).
 
+An eighth dependent prepared branch is now pushed in the Gateway fork:
+[`test/prepared-workload-forwarding`, `127e007`](https://github.com/spk-ai/gateway/tree/test/prepared-workload-forwarding),
+based on `6d7d432`, generated against API `24b73ca`. It adds no production route
+or handler behavior. All 276 Gateway race-test entries, build and vet pass;
+70 Connect HTTP/gRPC round trips preserve complete prepared responses and exact
+64-bit JSON revisions for agent and sandbox owners. Backend/authentication are
+fixtures, not production authorization evidence. Keep the matching API-generation
+requirement explicit. No upstream PR is open.
+
+The separate [local rollout/backup/proof tools](AGYN-PREPARED-ROLLOUT.md) belong
+in this AGPL service repository, not in that Gateway contribution. Offline
+restoration and migration of installed registry data pass, but do not constitute
+a deployed prepared-stack A2A acceptance or whole-platform disaster recovery.
+
 ## Runner Control Transport
 
 - Fork/branch: [`spk-ai/k8s-runner`, `fix/ziti-control-listener`](https://github.com/spk-ai/k8s-runner/tree/fix/ziti-control-listener),

@@ -24,6 +24,8 @@ import { parseQuotaBudget, quotaFixture, QuotaFixture } from "./quota-proof.js";
 import { runQuotaRejectedTurn } from "./agyn-quota.js";
 import { assertProvisioningInventory, assertReopenedVolume, provisioningInventory, runProvisioningRejectedTurn } from "./agyn-provisioning.js";
 import { startRuntimeDiagnostics } from "./runtime-diagnostics.js";
+import { assertPreparedSchema, collectPreparedUpgradeState } from "./prepared-upgrade.js";
+import { assertPreparedRemoval, capturePreparedPod, type PreparedPodProof } from "./prepared-proof.js";
 
 if (process.env.AGYN_LIVE_ACCEPTANCE !== "trusted-local") throw new Error("Set AGYN_LIVE_ACCEPTANCE=trusted-local to run real-model tests");
 const interrupted = process.env.AGYN_LIVE_SCENARIO === "interrupted";
@@ -39,6 +41,10 @@ if (parallel) assert(process.env.AGYN_LIVE_RUNNER_CHART, "parallel acceptance re
 const scenario = process.env.AGYN_LIVE_SCENARIO || "completed";
 const bounded = process.env.AGYN_LIVE_COMPUTE_RESOURCES === "true";
 assert(!process.env.AGYN_LIVE_COMPUTE_RESOURCES || bounded, "invalid compute resource opt-in");
+const prepared = process.env.AGYN_LIVE_PREPARED_WORKLOADS === "true";
+assert(!process.env.AGYN_LIVE_PREPARED_WORKLOADS || prepared, "invalid prepared workload opt-in");
+if (prepared) assert(bounded, "prepared acceptance requires bounded execution");
+const preparedEvidence: { enabled: boolean; pods: Record<string, PreparedPodProof>; confirmed: Record<string, unknown> } = { enabled: prepared, pods: {}, confirmed: {} };
 if (quotaEnabled) assert(bounded && process.env.AGYN_LIVE_RUNNER_CHART, "quota acceptance requires the bounded resource/network profile");
 if (quotaEnabled) assert(isAbsolute(process.env.AGYN_KUBECONFIG ?? ""), "quota acceptance requires an explicit absolute kubeconfig");
 const quotaBudget = quotaEnabled ? parseQuotaBudget(JSON.parse(process.env.AGYN_LIVE_QUOTA_HARD ?? "null"), deniedResource) : undefined;
@@ -56,6 +62,10 @@ if (cancellation) assert(inspectorImage && /@sha256:[a-f0-9]{64}$/.test(inspecto
 const expectedImage = process.env.AGYN_LIVE_INIT_IMAGE;
 if (!expectedImage) throw new Error("AGYN_LIVE_INIT_IMAGE must identify the reviewed required-init/session-persistence integration image");
 const kubeconfig = resolve(process.env.AGYN_KUBECONFIG ?? ".state/agyn-kubeconfig");
+const preparedScope = prepared ? { postgresPod: process.env.AGYN_AUDIT_POSTGRES_POD ?? "", postgresPodUid: process.env.AGYN_AUDIT_POSTGRES_UID ?? "",
+  postgresUser: process.env.AGYN_AUDIT_POSTGRES_USER ?? "", runnerId: process.env.AGYN_AUDIT_RUNNER_ID ?? "", namespaceUid: process.env.AGYN_AUDIT_NAMESPACE_UID ?? "" } : undefined;
+if (preparedScope) assertPreparedSchema(collectPreparedUpgradeState((args, input) => execFileSync("kubectl", ["--kubeconfig", kubeconfig, ...args],
+  { input, encoding: "utf8", timeout: 30_000, stdio: ["pipe", "pipe", "pipe"] }), preparedScope));
 for (const [name, variable] of [["runners", "AGYN_LIVE_RUNNERS_IMAGE"], ["gateway", "AGYN_LIVE_GATEWAY_IMAGE"]]) {
   const image = process.env[variable];
   assert(image, `${variable} must identify the reviewed removal-confirmation API image; older stacks cannot run this acceptance`);
@@ -94,6 +104,7 @@ const bundle = readFileSync(new URL("../reporting/runtime.mjs", import.meta.url)
 const gate = readFileSync(new URL("../../scripts/agyn-execution-gate.cjs", import.meta.url), "utf8");
 const templateId = process.env.AGYN_LIVE_TEMPLATE_ENVIRONMENT ?? "618e9cec-45a5-4b9d-8c28-91d40f053b65";
 const { environment: template } = await call("AgentsGateway", "GetEnvironment", { id: templateId });
+if (preparedScope) assert.equal(template.runnerId, preparedScope.runnerId, "prepared fixture template selects another runner");
 const templateAttachments = await call("LLMGateway", "ListSubscriptionAttachments", { organizationId: who.organization, environmentId: templateId });
 const agentProfile = liveAgentProfileSchema.parse(process.env.AGYN_LIVE_AGENT_PROFILE_FILE
   ? JSON.parse(readFileSync(resolve(process.env.AGYN_LIVE_AGENT_PROFILE_FILE), "utf8"))
@@ -246,10 +257,28 @@ const inspectInstance = (instanceId: string): any[] => {
       assertCgroupComputeBounds(state.cgroup, mainBounds!);
       resourceEvidence.pods[pod.metadata.uid] = { instanceId, name: pod.metadata.name, observedAt: new Date().toISOString(), bounds, cgroup: state.cgroup };
     }
+    if (preparedScope && state.mapping.length) {
+      const claims = pod.spec.volumes.filter((v: any) => v.persistentVolumeClaim).map((v: any) => JSON.parse(execFileSync("kubectl", ["--kubeconfig", kubeconfig,
+        "get", "pvc", v.persistentVolumeClaim.claimName, "-n", "agyn-workloads", "-o", "json"], { encoding: "utf8", timeout: 10_000, stdio: ["pipe", "pipe", "pipe"] })));
+      const proof = capturePreparedPod(pod, claims, instanceId, agentId, `kubernetes-namespace/v1/agyn-workloads/${preparedScope.namespaceUid}`);
+      const old = preparedEvidence.pods[proof.binding.workloadId];
+      if (old) assert.deepEqual(proof, old, "same workload identity changed its executed Pod or mounted workspace");
+      preparedEvidence.pods[proof.binding.workloadId] = proof;
+    }
     if (state.mapping.length) found.push({ name: pod.metadata.name, uid: pod.metadata.uid, labels: pod.metadata.labels,
       pvc: pod.spec.volumes.filter((v: any) => v.persistentVolumeClaim).map((v: any) => v.persistentVolumeClaim.claimName), ...state });
   }
   return found;
+};
+const verifyPreparedReleased = (instanceId: string, workloads: unknown[], ids: string[]) => {
+  if (!preparedScope) return;
+  for (const id of new Set(ids)) {
+    const observed = preparedEvidence.pods[id];
+    assert(observed && observed.instanceId === instanceId, "prepared workload was not independently observed executing");
+    const matches = workloads.filter((w: any) => w.meta?.id === id);
+    assert.equal(matches.length, 1, "prepared removal evidence missing or duplicated");
+    preparedEvidence.confirmed[id] = assertPreparedRemoval(matches[0], observed, preparedScope.runnerId);
+  }
 };
 const confirmedWorkloads = async (instanceId: string, executionId: string, events: any[], pods: any[]) => {
   const pins = events.filter(event => event.executionId === executionId && event.kind === "execution.provider_receipt" && event.payload.workloadId)
@@ -258,6 +287,7 @@ const confirmedWorkloads = async (instanceId: string, executionId: string, event
   assert(pods.some(pod => pod.labels?.workload_key === pins[0]), "acknowledged workload was not independently inspected");
   const workloads = await gateway.workloads(instanceId);
   assertConfirmedWorkloads(instanceId, workloads, [...pins, ...pods.map(pod => pod.labels.workload_key)]);
+  verifyPreparedReleased(instanceId, workloads, [...pins, ...pods.map(pod => pod.labels.workload_key)]);
   return workloads;
 };
 const cancelRunningTurn = async (taskId: string) => {
@@ -567,7 +597,7 @@ try {
     console.log(JSON.stringify({ kind: "live.network-configured", agentId, policyNames: networkEvidence.policies.map((p: any) => p.metadata.name) }));
   }
   await waitService();
-  if (parallel) await runParallelAcceptance({ kubeconfig, directory, agentId, suffix, gateway, tasks, rpc, inspect: inspectInstance,
+  if (parallel) await runParallelAcceptance({ kubeconfig, directory, agentId, suffix, gateway, tasks, rpc, inspect: inspectInstance, verifyReleased: verifyPreparedReleased,
     events: async taskId => {
       const response = await fetch(`${base}/tasks/${taskId}/events`, { headers, signal: AbortSignal.timeout(10_000) });
       assert.equal(response.status, 200);
@@ -612,7 +642,7 @@ try {
         try { await diagnostics?.stop(); }
         finally {
           writeFileSync(join(directory, "evidence.json"), JSON.stringify({ environmentId, agentId, agentProfile, tasks, scenario, snapshots, evidence,
-            network: networkEvidence, resources: resourceEvidence, protocol: protocolEvidence, quota: quotaEvidence,
+            network: networkEvidence, resources: resourceEvidence, protocol: protocolEvidence, quota: quotaEvidence, prepared: preparedEvidence,
             runtimeDiagnosticsFile: diagnostics?.file }, null, 2), { mode: 0o600 });
         }
       }

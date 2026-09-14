@@ -38,7 +38,10 @@ assert.equal(args[0],'--kubeconfig');assert.equal(args[1],'/fixture/config');
 const file=process.env.FAKE_DEPLOYMENT,mode=process.env.FAKE_MODE,state=JSON.parse(fs.readFileSync(file,'utf8'));
 const save=()=>fs.writeFileSync(file,JSON.stringify(state));
 const fail=()=>{state.failed=true;save();process.exit(2)};
-if(args.includes('auth')) {
+if(args.includes('exec')) {
+  const sql=fs.readFileSync(0,'utf8');assert(sql.includes('READ ONLY')&&args.includes('ON_ERROR_STOP=1'));
+  console.log(JSON.stringify({database:'runners',readOnly:'on',migrations:['0017_workload_removal_confirmation.sql']}));
+} else if(args.includes('auth')) {
   assert(args.includes('get')&&args.includes('secrets')&&args.includes('--as=system:serviceaccount:agyn-platform:default'));
   console.log(mode==='provisioning-no-secret-get'?'no':'yes');
 } else if(args.includes('get')) {

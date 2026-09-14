@@ -75,8 +75,12 @@ backend pinning, authentication/fencing and coordinated rollout remain open.
 The next [prepared-workload proposal](AGYN-PREPARED-WORKLOADS.md) adds gated Pod
 creation and exact-identity activation with claim deletion protection. Native
 race tests and real Kubernetes execution/resume and replacement-race tests pass.
-Immutable workload-binding storage and controller migration are still required;
-the installed A2A path does not use these new RPCs yet.
+[Registry persistence](AGYN-PREPARED-REGISTRY.md), [controller migration and combined
+model-free execution/crash acceptance](AGYN-PREPARED-CONTROLLERS.md) also pass.
+[Gateway wire checks, guarded rollout tooling and an offline restore/migration
+rehearsal](AGYN-PREPARED-ROLLOUT.md) now cover the next integration prerequisites.
+The installed A2A path still does not use these new RPCs; full real-agent
+acceptance and permanent rollout remain pending.
 
 The new [durable execution service](SERVICE.md) adds authenticated A2A routing,
 transactional queued turns, reporting MCP, bounded outcome checks and a recoverable

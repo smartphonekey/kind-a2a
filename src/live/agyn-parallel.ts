@@ -15,6 +15,7 @@ type Context = {
   kubeconfig: string; directory: string; agentId: string; suffix: string; gateway: AgynClient;
   tasks: string[]; rpc: (method: string, params: unknown) => Promise<any>;
   events: (taskId: string) => Promise<any[]>; inspect: (instanceId: string) => any[];
+  verifyReleased?: (instanceId: string, workloads: unknown[], ids: string[]) => void;
 };
 
 export async function runParallelAcceptance(context: Context): Promise<void> {
@@ -107,6 +108,7 @@ export async function runParallelAcceptance(context: Context): Promise<void> {
         assert(!instancePods(kubeconfig, snapshot.instanceId).some(pod => pod.metadata.uid === snapshot.uid), "settlement preceded old Pod removal");
         const workloads = await gateway.workloads(snapshot.instanceId);
         assert(workloads.find(workload => workload.meta.id === snapshot.labels["workload_key"])?.removalConfirmedAt, "old workload has no confirmed removal");
+        context.verifyReleased?.(snapshot.instanceId, workloads, [snapshot.labels["workload_key"]]);
         if (!anotherTurnQueued) {
           assertInstanceAbsent(kubeconfig, snapshot.instanceId);
           const task = await rpc("GetTask", { id: turn.taskId });

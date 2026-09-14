@@ -145,6 +145,11 @@ It does not close durable post-confirmation credential cleanup either.
 
 ## Next
 
+The [Gateway and rollout follow-up](AGYN-PREPARED-ROLLOUT.md) now verifies wire
+compatibility, explicit retain-mode upgrade guards and offline restoration/
+migration of installed registry data. It does not change the full A2A acceptance
+or remaining production requirements below.
+
 1. Run the full A2A lifecycle on the prepared stack with Codex and Claude,
    cancellation and process-crash windows. The model-free combined pass is not
    a substitute for that acceptance.

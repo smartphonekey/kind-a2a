@@ -497,11 +497,126 @@ and explicit cleanup in `.state/agyn-provisioning-acceptance-bd1dJV/`.
 
 This closes the controlled first-PVC rejection/recovery check, not the full
 production lifecycle gate. Crash-orphan reconciliation, late-create/node fencing,
-post-success Stop/Remove cleanup, named-PVC identity enforcement and ownership
-validation when reopening closed volume records remain separate work. A first
+post-success Stop/Remove cleanup and named-PVC identity enforcement remain
+separate work. Closed-record ownership validation is covered below. A first
 allocation has no prior native session to restore; the two successful turns
 establish subsequent session continuity. Completed-turn and interrupted-turn
 recovery evidence elsewhere must not be conflated with this provisioning case.
+
+## Closed Volume Ownership
+
+Tracing first-provision recovery exposed a separate Runners bug: after a create
+collided with a failed/deleted volume ID, the reopen update overwrote its
+identity without checking the old owner. Against unchanged upstream `f76154d`,
+real PostgreSQL tests reproduced **22 identity-changing writes**, plus a race
+in which a different owner won the slot. These were isolated disposable records,
+not mutations of the deployed platform's volumes.
+
+The independent Runners branch
+[`fix/volume-owner-reopen`](https://github.com/spk-ai/runners/tree/fix/volume-owner-reopen)
+at `5638dce` keeps identity out of the update and atomically matches owner kind,
+owner ID, organization, runner, volume definition, thread and agent class.
+Nullable sandbox thread/class values use null-safe equality. A mismatch returns
+the existing `AlreadyExists` error with the entire stored row unchanged. An
+already-open row retains the existing conflict behavior.
+
+Legitimate same-owner reopening still clears the previous backing instance and
+removal timestamp, restarts metering, retains creation time and accepts the
+existing size/status inputs. Canonical/deprecated fields and unspecified owner
+kind keep their existing interpretation. No API, migration, A2A controller,
+workflow or agent-profile change is required.
+
+- Published BSR generation, `go build ./...` and the full race suite pass:
+  **169 tests including subtests, 114 top-level, no skips**.
+- The real PostgreSQL fixture contributes 45 passing test entries. Twenty
+  repetitions pass with 900 entries and no skips. Its contention test holds a
+  row lock until at least four legitimate contenders are blocked in PostgreSQL,
+  alongside four different-owner requests; exactly one legitimate reopen wins.
+- CI supplies disposable PostgreSQL and runs the race-enabled suite with the
+  database test enabled. `actionlint` and `git diff --check` pass locally.
+- The separate `lab/volume-owner-integration` branch at `5f66067` combines the
+  fix with removal-confirmation commit `890f759`. Generation against API
+  `3c84a6a`, the build and **177 race-enabled tests** (117 top-level, no skips)
+  pass with both PostgreSQL fixtures enabled.
+
+The fixture uses existing pgx and real repository migrations. It requires
+`AGYN_RUNNERS_VOLUME_TEST_DSN` to name the disposable
+`runners_volume_acceptance` database on `127.0.0.1`, creates a unique schema,
+and drops only that schema. The local PostgreSQL 16.6 container and its test
+volume were removed after confirming both acceptance databases had no fixture
+schemas left. Private evidence is in `.state/agyn-volume-owner-yd1b26/`:
+`before-fix.jsonl`, `after-fix.jsonl`, `repeat.jsonl`, `combined.jsonl`,
+`service-tests.log`, and `cleanup.json`. All 221 unchanged A2A service tests also
+pass on pinned Node 24.21.0.
+
+### Deployed recovery regression
+
+On 2026-09-14, the unchanged A2A `provisioning-recovery` scenario passed in
+**255.850 seconds** with Runners `5f66067`, combined API `3c84a6a`, and the
+previously reviewed Gateway/orchestrator/runner/daemon images. The Runners image
+is `a2a-agyn-runners:5f66067-api3c84a6a`, OCI index
+`sha256:80fada4999ed41b1d88a9d3b28908aad7e92ce7438bc890fa642701a15122854`.
+The running Pod's `/app/runners` SHA-256 matched the local build byte-for-byte;
+build metadata identifies the clean combined commit. No A2A or workflow change
+was made. Credential-free network preflight `9cc99d68` passed 92 checks and
+cleaned up before deployment.
+
+The test started with 50 retained claims and a budget of 51, then denied the
+initial additional PVC slot. **Three Agyn provisioning attempts** received the
+same native PVC quota denial before the single A2A execution was quarantined.
+No Pod, agent execution, new PVC or leaked Secret resulted. These infrastructure
+retries are distinct from prompt replay; this is not a one-attempt guarantee.
+All three failed workloads received explicit removal confirmation.
+
+Capacity restoration alone did not dispatch a new execution. Explicit owner
+reconciliation at `03:58:05.205Z` retired request
+`cb7ed933-99c2-44b7-9560-c4b06c0c1f1c` without executing it. Two real native Codex
+turns then completed with MCP outcomes, including the first-turn Stop reminder.
+They used different Pod UIDs, the same PVC UID/spec, the same native session and
+the unchanged marker. The rejected request stayed `ack_only`; its unconditional
+append file was absent in both Pod inspections.
+
+| Identity | Value |
+| --- | --- |
+| A2A task | `83d8422d-3f11-47d6-ae4f-c6d5b03b6824` |
+| Agyn instance | `785d3928-4313-49fe-be7b-6ace1e2d9dc6` |
+| Native Codex session | `01a09e10-e431-7c50-9d81-e376d3d38fc1` |
+| Volume record | `beac0725-47ab-575d-816c-c5dd21ec2532` |
+| PVC | `pv-785d3928-431-16e22283-af4` |
+| PVC UID | `5b295d3d-a5ab-4c3e-98b4-c2f2b319ba9a` |
+
+Post-run audits verified all 50 previous PVC UIDs/specs/phases and all 16 older
+Secret identities unchanged, **51 retained claims**, and zero workload Pods,
+Services, quotas, Roles or RoleBindings. CPU/memory usage returned to zero.
+Stock deployment images, UIDs, settings and readiness were restored; generations
+are Runners 20, Gateway 25, k8s-runner 34 and orchestrator 56. The temporary
+namespace-scoped Secret-read grant was conditionally deleted and the original
+ClusterRole was unchanged. Secret listing and platform-namespace Secret reads
+were never granted. A read-only PostgreSQL audit after image restoration
+confirmed five retained workload-removal timestamps and the same active volume
+identity. Gateway confirmed the instance is paused with a persistent,
+no-TTL `/workspace` definition.
+
+Private evidence: `.state/agyn-volume-recovery-gGgV9L/` contains `run.json`,
+`before.json`, `post-audit.json`, `rbac.json`, `deployed-binary.json`,
+`database-audit.json` and `gateway-audit.json`;
+`.state/agyn-reporting-live-OapfDm/{evidence,quota}.json` records the task;
+`.state/agyn-volume-image-VnGzee/build.json` identifies the image;
+`.state/agyn-network-live-eyeEsN/evidence.json` records the network preflight.
+Reproduction uses the existing first-provision recipe with this Runners image,
+the reviewed temporary read permission and a current-baseline-plus-one PVC
+budget. The next run would need 52, not 51; never remove retained workspaces to
+reuse an earlier budget.
+
+This fixes the closed-row create path, not authentication, SQL administrator
+writes, physical-PVC ownership or fencing against old workloads. Open-record
+reuse callers must still validate identity; the sandbox orchestrator's current
+`ensureOpenVolumeRecord` checks only status. Runner `ensurePVC` still accepts a
+matching claim name without checking ownership. Those paths need independent
+review. All Runners writers must be upgraded before relying on the new check;
+an old binary can still execute the previous unconstrained update.
+The stock services are restored, so this local acceptance is not a permanent
+rollout of the fix. It also does not rerun interrupted-turn side-effect recovery.
 
 ## Bounded Agent Profile
 

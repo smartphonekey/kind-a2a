@@ -316,6 +316,43 @@ Pod replacement, zero idle compute and preserved storage. The failed image-only
 run, targeted cleanup and stock/RBAC restoration are recorded separately. The
 operator fixtures are AGPL-3.0-only and stay out of the focused runner proposal.
 
+## Closed Volume Ownership
+
+A twentieth focused branch fixes an ownership overwrite in Runners' closed
+volume reopening. It is independent of the additive API, removal confirmation,
+runner startup cleanup and A2A implementation:
+
+- Fork: [spk-ai/runners](https://github.com/spk-ai/runners).
+- Branch: `fix/volume-owner-reopen`, commit `5638dce`, based on `f76154d`.
+- Compare: <https://github.com/agynio/runners/compare/main...spk-ai:runners:fix/volume-owner-reopen>.
+- A conditional SQL update matches the complete existing volume identity and
+  never assigns a new owner. Null-safe sandbox fields preserve same-owner
+  recovery; conflicts keep the existing `AlreadyExists` contract and leave all
+  stored fields unchanged. No schema or public API change is required.
+- Tests first reproduced 22 mismatched-owner/identity writes and a foreign-owner
+  race against unchanged upstream. The fixed full race suite passes 169 tests
+  including subtests, with no skips; the real PostgreSQL matrix passes twenty
+  repeated runs. CI now enables it using a disposable PostgreSQL service.
+- Published BSR generation, build, workflow lint and diff checks pass. Existing
+  repository AGPL licensing is retained. The branch is pushed; no upstream PR
+  has been submitted.
+
+The separate `lab/volume-owner-integration` branch at `5f66067` combines it with
+`890f759` and passes 177 race-enabled tests with both real PostgreSQL fixtures
+enabled, generated against the combined API `3c84a6a`. Both branches are pushed.
+[Acceptance evidence and limits](AGYN-RESOURCES.md#closed-volume-ownership) stay
+in this lab. The combined binary was verified in a running Pod, then passed the
+unchanged first-provision A2A recovery scenario: rejected request retirement,
+same-owner reopening, two native turns across Pod replacement, zero idle compute
+and preserved workspace/session identity. All 50 prior claims and 16 older
+Secret identities survived, stock services/RBAC were restored, and the five
+workload-removal confirmations remained in PostgreSQL. This is a tested local
+integration, not an upstream release or permanent deployment.
+
+Physical-PVC reuse, sandbox open-record validation, fencing and
+authentication remain separate review units; do not turn this targeted fix
+into a new A2A-specific storage API.
+
 ## Claude SDK Session Selection
 
 A separate SDK-only contribution adds `Options.SessionID` and `Options.Resume`

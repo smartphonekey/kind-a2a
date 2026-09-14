@@ -23,6 +23,7 @@ import { assertConfirmedWorkloads } from "./removal-proof.js";
 import { parseQuotaBudget, quotaFixture, QuotaFixture } from "./quota-proof.js";
 import { runQuotaRejectedTurn } from "./agyn-quota.js";
 import { assertProvisioningInventory, assertReopenedVolume, provisioningInventory, runProvisioningRejectedTurn } from "./agyn-provisioning.js";
+import { startRuntimeDiagnostics } from "./runtime-diagnostics.js";
 
 if (process.env.AGYN_LIVE_ACCEPTANCE !== "trusted-local") throw new Error("Set AGYN_LIVE_ACCEPTANCE=trusted-local to run real-model tests");
 const interrupted = process.env.AGYN_LIVE_SCENARIO === "interrupted";
@@ -539,7 +540,9 @@ const runSingleTask = async () => {
     console.log(JSON.stringify({ kind: "live.passed", taskId, turns: 2, scenario }));
   }
 };
+let diagnostics: Awaited<ReturnType<typeof startRuntimeDiagnostics>> | undefined;
 try {
+  diagnostics = await startRuntimeDiagnostics(agentId, kubeconfig, directory);
   if (quotaTemplate) {
     const config = new KubeConfig(); config.loadFromFile(kubeconfig);
     quotaOperator = new QuotaFixture(KubernetesObjectApi.makeApiClient(config), quotaFixture(quotaTemplate, quotaRun, quotaBudget!, deniedResource), sample => {
@@ -586,25 +589,33 @@ try {
     workloadsReleased = true;
     console.log(JSON.stringify({ kind: "live.cleanup", directory, instances: instances.map(i => i.meta.id) }));
   } finally {
-    streamAbort.abort();
-    for (const probe of streamProbes) await probe.finished.catch(() => {});
-    if (streaming) protocolEvidence.streams = streamProbes.map(probe => ({ endedAt: probe.endedAt(), observations: probe.observations.map(item => ({
-      observedAt: item.observedAt, event: StreamResponse.toJSON(item.event)
-    })) }));
-    child.kill("SIGTERM");
-    const timer = setTimeout(() => child.kill("SIGKILL"), 5000);
-    await exited; clearTimeout(timer);
     try {
-      const errors: unknown[] = [];
-      if (quotaOperator && workloadsReleased) {
-        try { await quotaOperator.close(); quotaEvidence.cleanedUp = true; } catch (error) { errors.push(error); }
-      } else if (quotaOperator) quotaEvidence.retained = "Workload cleanup was not confirmed; keep quota until operator reconciliation";
-      if (networkFixtures && workloadsReleased) {
-        try { await networkFixtures.close(); networkEvidence.cleanedUp = true; } catch (error) { errors.push(error); }
-      } else if (networkFixtures) networkEvidence.retained = "Workload cleanup was not confirmed; keep isolation policies until operator reconciliation";
-      if (errors.length) throw new AggregateError(errors, "quota/network cleanup requires operator reconciliation");
+      streamAbort.abort();
+      for (const probe of streamProbes) await probe.finished.catch(() => {});
+      if (streaming) protocolEvidence.streams = streamProbes.map(probe => ({ endedAt: probe.endedAt(), observations: probe.observations.map(item => ({
+        observedAt: item.observedAt, event: StreamResponse.toJSON(item.event)
+      })) }));
+      child.kill("SIGTERM");
+      const timer = setTimeout(() => child.kill("SIGKILL"), 5000);
+      try { await exited; } finally { clearTimeout(timer); }
     } finally {
-      writeFileSync(join(directory, "evidence.json"), JSON.stringify({ environmentId, agentId, agentProfile, tasks, scenario, snapshots, evidence, network: networkEvidence, resources: resourceEvidence, protocol: protocolEvidence, quota: quotaEvidence }, null, 2), { mode: 0o600 });
+      try {
+        const errors: unknown[] = [];
+        if (quotaOperator && workloadsReleased) {
+          try { await quotaOperator.close(); quotaEvidence.cleanedUp = true; } catch (error) { errors.push(error); }
+        } else if (quotaOperator) quotaEvidence.retained = "Workload cleanup was not confirmed; keep quota until operator reconciliation";
+        if (networkFixtures && workloadsReleased) {
+          try { await networkFixtures.close(); networkEvidence.cleanedUp = true; } catch (error) { errors.push(error); }
+        } else if (networkFixtures) networkEvidence.retained = "Workload cleanup was not confirmed; keep isolation policies until operator reconciliation";
+        if (errors.length) throw new AggregateError(errors, "quota/network cleanup requires operator reconciliation");
+      } finally {
+        try { await diagnostics?.stop(); }
+        finally {
+          writeFileSync(join(directory, "evidence.json"), JSON.stringify({ environmentId, agentId, agentProfile, tasks, scenario, snapshots, evidence,
+            network: networkEvidence, resources: resourceEvidence, protocol: protocolEvidence, quota: quotaEvidence,
+            runtimeDiagnosticsFile: diagnostics?.file }, null, 2), { mode: 0o600 });
+        }
+      }
     }
   }
 }

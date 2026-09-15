@@ -41,8 +41,16 @@ including four runner SIGKILL checkpoints and two late credential writes after
 Pod removal. It stages Secrets until the gated Pod exists and creates ownership
 atomically, then commits setup readiness separately. All 105 existing PVCs and
 52 deployment snapshots are unchanged. This dependent fix is **not installed**;
-unknown-prepare discovery/reconciliation, external credential revocation and
-coordinated writer upgrades still require implementation and acceptance.
+that fix alone does not implement unknown-prepare discovery/reconciliation.
+
+The next [lost preparation recovery proposal](AGYN-PREPARED-RECOVERY.md) now
+passes source, native Kubernetes and combined PostgreSQL/controller-process
+acceptance for present, verified gated Pods. Recovery persists removal intent,
+observes exact identities and uses existing checked binding/removal commands,
+without replaying preparation or activation. Initially absent/late Pod/PVC
+creates still retain admission and require fencing/reconciliation. These changes
+are **not installed**; external credential revocation, all-writer upgrades and
+the coordinated DNS-compatible real-agent rollout remain release work.
 
 The latest [checked-volume acceptance](AGYN-CHECKED-VOLUMES.md#combined-process-acceptance)
 now combines real PostgreSQL, registry RPCs, controller process replacement and
@@ -71,6 +79,7 @@ agent profile must not change the A2A controller or workflow implementation.
 
 | Gate | Status | Required evidence |
 | --- | --- | --- |
+| Lost preparation recovery | Source and combined process verification; not installed | [Dependent API/native/controller proposal](AGYN-PREPARED-RECOVERY.md) discovers only atomic-credential, gated, unexecuted Pods after durable removal intent. Full owner/volume validation and existing CAS persist exact bindings before removal. Native 551 race entries, controller 663 ordinary/662 selected race entries and 1,320 repeated recovery entries pass, with the documented gated skips and known broader race/vet limitations. Native SIGKILL and combined process recovery have separate evidence. Initially absent/late creates, durable credential cleanup, all-writer enforcement, backend authentication/fencing and coordinated deployment remain open. |
 | Prepared workload activation | Combined process and both local native-agent matrices verified; production gates pending | [Native and registry proposals](AGYN-PREPARED-WORKLOADS.md) persist gated execution and exact Pod/PVC bindings. [Combined acceptance](AGYN-PREPARED-CONTROLLERS.md#combined-execution-acceptance) passes 22 live scenarios plus three parent/group entries with real PostgreSQL, registry/native RPCs, controller-method subprocesses and Kubernetes execution. Sixteen SIGKILLs cover lost activation ACKs and removal boundaries without redispatch. The [DNS-fixed retained stack](AGYN-NATIVE-DNS.md) passes all five core lifecycle scenarios for both Codex and Claude with exact workspace/session/removal evidence. Its controller suite passes 601 ordinary and 600 selected race entries; five opt-in live/process entries skip, and known unrelated unfiltered race/vet failures remain. Unknown/late prepare recovery, durable credential cleanup, zero-volume placement pins, all-writer enforcement, authentication/fencing and production rollout remain open. |
 | Backend-bound volume identity | Source, database and isolated combined native acceptance verified; rollout pending | [Four dependent proposals](AGYN-VOLUME-BACKEND.md) persist namespace identity and use the distinct `RemoveVolumeBound` capability. Old-runner fallback, mixed inventory and mismatched absence are rejected. Migration `0021` refuses unidentified checked history without backfill. All 186 independent/409 combined native race tests, 423 registry race tests, 40 repeated controller test entries and 495 selected controller/native race tests pass. The selected suite excludes exactly the known group-consumer race; full vet retains its unrelated self-assignment failure. Actual overlay authorization, workload-start pinning, cloned-cluster identity, late operations, node fencing, all-writer adoption and A2A rollout remain required. |
 | Existing behavior | Baseline preserved | Build and all 449 tests including subtests pass on 2026-09-14, with zero failures/skips, on pinned Node 24.21.0 / SQLite 3.53.4. This includes the preserved baseline, volume audits, rollout/backup/proof guards, credential-safe setup/HTTP/SSE/request diagnostics, five native-DNS fixture admission checks, seven replacement-observation cases and terminal-readiness regression coverage. |

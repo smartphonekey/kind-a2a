@@ -107,9 +107,16 @@ A subsequent [prepared startup Secret fix](AGYN-PREPARED-SECRETS.md) creates
 credentials with atomic Pod ownership and keeps interrupted setup unactivatable.
 Its native race suite and isolated Kubernetes acceptance pass, including four
 real runner SIGKILL checkpoints and delayed credential creation after Pod
-removal. This dependent contribution is not installed; unknown-prepare recovery
-and durable credential revocation remain open. All existing storage and platform
-deployment snapshots are unchanged.
+removal. That dependent contribution is not installed and does not itself
+implement unknown-prepare recovery or durable credential revocation.
+
+The follow-up [lost preparation recovery](AGYN-PREPARED-RECOVERY.md) adds native
+read-only observation and checked controller retirement of a verified gated,
+unexecuted Pod after a lost prepare reply. Source, native Kubernetes and combined
+PostgreSQL/process-crash checks pass without prepare/activate replay. NotFound
+still retains admission; initially absent/late creates and credential revocation
+remain open. These focused contributions are not installed, and the retained
+prepared/DNS stack and existing workspaces remain unchanged.
 
 The new [durable execution service](SERVICE.md) adds authenticated A2A routing,
 transactional queued turns, reporting MCP, bounded outcome checks and a recoverable

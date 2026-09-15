@@ -5,7 +5,10 @@
 Status: source, race tests and isolated real Kubernetes/process acceptance
 verified on 2026-09-15. This dependent runner fix is pushed, **not installed**.
 The retained DNS-corrected prepared stack remains unchanged. Unknown-prepare
-recovery and the other [production gates](PRODUCTION.md) remain open.
+recovery was not part of this ownership-only fix. The separate
+[recovery follow-up](AGYN-PREPARED-RECOVERY.md) now covers present, verified
+unexecuted Pods; initially absent/late creates and the other
+[production gates](PRODUCTION.md) remain open.
 
 ## Failure And Fix
 
@@ -116,8 +119,10 @@ snapshots. Generated APIs and private operator files are not committed.
 
 ## Next Boundaries
 
-1. Add exact-identity observation and registry/controller reconciliation for a
-   lost prepare response, without repeating startup or authorizing execution.
+1. The separate [exact-identity recovery follow-up](AGYN-PREPARED-RECOVERY.md)
+   now implements and tests retirement after a lost prepare response for a
+   present, verified unexecuted Pod. It is not installed and does not authorize
+   replay or execution.
 2. Fence/reconcile delayed Pod/PVC creates, including an initially absent Pod.
    A single NotFound response is not evidence that an in-flight create is over.
 3. Track credential GC and external pull/Ziti credential revocation durably;

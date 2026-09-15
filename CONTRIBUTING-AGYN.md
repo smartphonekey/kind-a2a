@@ -104,6 +104,36 @@ registry/controller reconciliation and durable external credential revocation
 remain separate contracts; the fixture's operator-assisted cleanup does not
 implement them.
 
+## Lost Preparation Recovery
+
+The [dependent recovery follow-up](AGYN-PREPARED-RECOVERY.md) keeps three focused
+review boundaries:
+
+- API `feat/prepared-outcome-observation`, `d6449dd`, based on inspection API
+  `24b73ca`: read-only intent observation, with no safe-to-retry absence result.
+- k8s-runner `feat/prepared-outcome-observation`, `6fdcc41`, based on atomic-Secret
+  fix `1f33556`: versioned ownership marker, gated/unexecuted Pod and complete
+  claim validation, bounded identity output and GET-only observation.
+- agents-orchestrator `feat/prepared-outcome-recovery`, source/unit `5d8a9c8`
+  and process acceptance `c2bb0e5`,
+  based on `754e935`: validate durable owner/volume intent, bind through existing
+  CAS into REMOVING, and retire the exact Pod without prepare/activate replay.
+
+Registry `e7c42f4` and migration `0022` are unchanged. A2A workflow/controller
+code, Gateway handlers and RBAC grants do not change. Both owner paths have
+source, real PostgreSQL/Kubernetes and controller-process recovery evidence;
+the report distinguishes native fixtures from full A2A/native-agent acceptance.
+NotFound, unsupported/old writers and unverifiable ownership retain admission.
+
+All three focused branches are pushed. No upstream PR is submitted and nothing
+is installed. The focused controller
+branch omits the installed DNS correction; the separate
+`lab/prepared-recovery-native-dns` combination (`b3ec0e2`) passes 666 selected
+race entries and a seven-entry real process/Kubernetes recovery subset. It is
+not an upstream review unit or permission to replace the retained stack. Delayed
+Pod/PVC creation, durable credential cleanup, authentication and node/storage
+fencing remain separate requirements.
+
 ## Orchestrator Lifecycle Fixes
 
 The independent [workload DNS correction](AGYN-NATIVE-DNS.md) is pushed as

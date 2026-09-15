@@ -52,6 +52,14 @@ creates still retain admission and require fencing/reconciliation. These changes
 are **not installed**; external credential revocation, all-writer upgrades and
 the coordinated DNS-compatible real-agent rollout remain release work.
 
+The [native resource-anchor follow-up](AGYN-RESOURCE-ANCHORS.md) now passes
+ordinary/full race and isolated Kubernetes acceptance, including actual delayed
+Pod/PVC creation and both activation/revocation CAS orderings. It separates
+transient workload owners from persistent volume owners. Registry persistence,
+controller migration, checked anchored-volume retirement and all-writer rollout
+are **not implemented** by this native milestone. It is **not installed** and
+does not close the overall initially absent/late-create recovery gate.
+
 The latest [checked-volume acceptance](AGYN-CHECKED-VOLUMES.md#combined-process-acceptance)
 now combines real PostgreSQL, registry RPCs, controller process replacement and
 native Kubernetes deletion. It does not use the A2A driver or deployed Agents
@@ -79,6 +87,7 @@ agent profile must not change the A2A controller or workflow implementation.
 
 | Gate | Status | Required evidence |
 | --- | --- | --- |
+| Native resource anchors | Source and isolated native acceptance verified; integration incomplete | [Dependent API/native capability](AGYN-RESOURCE-ANCHORS.md) pins owner UIDs before gated resource creation and serializes Pod selection/activation with revocation on one ConfigMap. Both 610-entry ordinary/full race suites, 1,060 repeated anchor entries and 15 real Kubernetes scenarios plus parent pass. Registry persistence before creation, both controller paths, anchored-volume retirement, delayed holds/credential reconciliation, authenticated authority and coordinated A2A deployment remain required. Nothing is installed. |
 | Lost preparation recovery | Source and combined process verification; not installed | [Dependent API/native/controller proposal](AGYN-PREPARED-RECOVERY.md) discovers only atomic-credential, gated, unexecuted Pods after durable removal intent. Full owner/volume validation and existing CAS persist exact bindings before removal. Native 551 race entries, controller 663 ordinary/662 selected race entries and 1,320 repeated recovery entries pass, with the documented gated skips and known broader race/vet limitations. Native SIGKILL and combined process recovery have separate evidence. Initially absent/late creates, durable credential cleanup, all-writer enforcement, backend authentication/fencing and coordinated deployment remain open. |
 | Prepared workload activation | Combined process and both local native-agent matrices verified; production gates pending | [Native and registry proposals](AGYN-PREPARED-WORKLOADS.md) persist gated execution and exact Pod/PVC bindings. [Combined acceptance](AGYN-PREPARED-CONTROLLERS.md#combined-execution-acceptance) passes 22 live scenarios plus three parent/group entries with real PostgreSQL, registry/native RPCs, controller-method subprocesses and Kubernetes execution. Sixteen SIGKILLs cover lost activation ACKs and removal boundaries without redispatch. The [DNS-fixed retained stack](AGYN-NATIVE-DNS.md) passes all five core lifecycle scenarios for both Codex and Claude with exact workspace/session/removal evidence. Its controller suite passes 601 ordinary and 600 selected race entries; five opt-in live/process entries skip, and known unrelated unfiltered race/vet failures remain. Unknown/late prepare recovery, durable credential cleanup, zero-volume placement pins, all-writer enforcement, authentication/fencing and production rollout remain open. |
 | Backend-bound volume identity | Source, database and isolated combined native acceptance verified; rollout pending | [Four dependent proposals](AGYN-VOLUME-BACKEND.md) persist namespace identity and use the distinct `RemoveVolumeBound` capability. Old-runner fallback, mixed inventory and mismatched absence are rejected. Migration `0021` refuses unidentified checked history without backfill. All 186 independent/409 combined native race tests, 423 registry race tests, 40 repeated controller test entries and 495 selected controller/native race tests pass. The selected suite excludes exactly the known group-consumer race; full vet retains its unrelated self-assignment failure. Actual overlay authorization, workload-start pinning, cloned-cluster identity, late operations, node fencing, all-writer adoption and A2A rollout remain required. |
@@ -149,6 +158,7 @@ proof. Production runtime packaging, restore and migration acceptance remain.
 
 ## References
 
+- [Native resource anchors, delayed creates and pending registry/controller integration](AGYN-RESOURCE-ANCHORS.md)
 - [Prepared controller migration, native inspection and remaining combined acceptance](AGYN-PREPARED-CONTROLLERS.md)
 - [Backend-bound volume operations, wrong-runner acceptance and upgrade gates](AGYN-VOLUME-BACKEND.md)
 - [Native runner transport restriction and remaining authentication gates](AGYN-RUNNER-TRANSPORT.md)

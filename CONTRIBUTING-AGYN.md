@@ -134,6 +134,26 @@ not an upstream review unit or permission to replace the retained stack. Delayed
 Pod/PVC creation, durable credential cleanup, authentication and node/storage
 fencing remain separate requirements.
 
+## Native Resource Anchors
+
+The [dependent native ownership capability](AGYN-RESOURCE-ANCHORS.md) remains
+separate from its pending registry/controller integration:
+
+- API `feat/resource-anchors`, `3b25d03`, based on `d6449dd`: metadata reservation,
+  anchored preparation and workload-anchor retirement; bindings retain exact
+  owner UIDs. Anchor absence explicitly does not confirm child absence.
+- k8s-runner `feat/resource-anchors`, `72a1cc8`, based on `6fdcc41`: atomic Pod/PVC
+  ownership, separate persistent volume lifetime, one-Pod selection and an
+  activation claim contending with revocation on the same native object.
+
+Native ordinary/full race suites and real Kubernetes delayed-create/CAS/GC
+acceptance pass. The fixture includes no production registry or A2A agents.
+Both branches are dependent proposals, not independent upstream-base patches;
+fork licensing is unchanged. No upstream PR is submitted and nothing is
+installed. The registry must persist anchor UIDs before creation authority,
+both controller paths must migrate, and anchored-volume retirement/all-writer
+guards still need implementation. Do not deploy this runner alone.
+
 ## Orchestrator Lifecycle Fixes
 
 The independent [workload DNS correction](AGYN-NATIVE-DNS.md) is pushed as

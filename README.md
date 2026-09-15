@@ -103,6 +103,14 @@ removals. Sustained reliability and the production gates remain open.
 [Scoped runner RBAC](AGYN-RUNNER-RBAC.md) passes 57 allow/deny probes. The latest
 service build and all 449 tests pass, with no skipped tests.
 
+A subsequent [prepared startup Secret fix](AGYN-PREPARED-SECRETS.md) creates
+credentials with atomic Pod ownership and keeps interrupted setup unactivatable.
+Its native race suite and isolated Kubernetes acceptance pass, including four
+real runner SIGKILL checkpoints and delayed credential creation after Pod
+removal. This dependent contribution is not installed; unknown-prepare recovery
+and durable credential revocation remain open. All existing storage and platform
+deployment snapshots are unchanged.
+
 The new [durable execution service](SERVICE.md) adds authenticated A2A routing,
 transactional queued turns, reporting MCP, bounded outcome checks and a recoverable
 worker. It is a development implementation with explicit [production gates](PRODUCTION.md),

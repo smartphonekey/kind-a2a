@@ -87,6 +87,23 @@ changing runtime code or broadening rules. Independent and prepared-branch
 tests pass; the installed local permission matrix passes 57 checks. The local
 RBAC overlay is not a reconciled Helm platform release. No upstream PR is open.
 
+## Prepared Secret Ownership
+
+The [atomic prepared Secret ownership follow-up](AGYN-PREPARED-SECRETS.md) is
+pushed as `fix/prepared-secret-ownership` in `spk-ai/k8s-runner`, based on the
+prepared-inspection/RBAC proposal `73c3a20`. Implementation/unit commit `856d1b4`
+is separate from crash-fixture commit `1f33556`. Credentials are created only
+after their gated Pod, with exact Pod ownership in the CREATE; readiness commits
+after acknowledged credential setup. The A2A controller/workflow and API schema
+are unchanged. All 521 native race entries pass, and real Kubernetes tests cover
+four SIGKILL checkpoints plus delayed credential writes after owner removal.
+
+This is a dependent review proposal, not an independent upstream-base patch.
+It is not installed, and no upstream PR is submitted. Unknown prepare discovery,
+registry/controller reconciliation and durable external credential revocation
+remain separate contracts; the fixture's operator-assisted cleanup does not
+implement them.
+
 ## Orchestrator Lifecycle Fixes
 
 The independent [workload DNS correction](AGYN-NATIVE-DNS.md) is pushed as

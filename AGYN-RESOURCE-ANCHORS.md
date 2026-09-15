@@ -7,6 +7,10 @@ The API/native capability is implemented; registry/controller integration is
 not. Nothing is installed. The retained prepared/DNS stack, schema through
 `0022`, existing workspaces and provider bindings are unchanged.
 
+Subsequent [registry persistence and contention tests](AGYN-ANCHOR-REGISTRY.md)
+now pass in a separate dependent contribution. Both controller paths, cleanup
+contracts and the coordinated rollout are still unfinished.
+
 ## Problem And Contract
 
 The preceding [lost preparation recovery](AGYN-PREPARED-RECOVERY.md) can retire

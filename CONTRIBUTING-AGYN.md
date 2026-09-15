@@ -5,6 +5,12 @@ require maintainers to adopt this entire lab or change a runtime image's role.
 
 ## Ready For Focused Review
 
+The dependent [resource-anchor registry proposal](AGYN-ANCHOR-REGISTRY.md) now
+has source, PostgreSQL contention and historical-upgrade evidence. API and
+Runners branches remain separate from native runner/controller contributions.
+It is not installed and no upstream PR is submitted; both controller paths,
+anchored-volume retirement and coordinated rollout remain required.
+
 `agynio/agynd-cli`: honor `CODEX_HOME` for Codex config, authentication placeholders
 and native-session mappings, with unchanged legacy paths when unset.
 

@@ -121,8 +121,11 @@ prepared/DNS stack and existing workspaces remain unchanged.
 The next [native resource-anchor capability](AGYN-RESOURCE-ANCHORS.md) passes
 source and real Kubernetes tests for delayed Pod/PVC creation, owner replacement
 and activation/revocation races. Workload and volume ownership have separate
-lifetimes. Registry persistence, both controller paths, checked anchored-volume
-retirement and a coordinated rollout remain unfinished; nothing is installed.
+lifetimes. Dependent [registry persistence](AGYN-ANCHOR-REGISTRY.md) now passes
+source, real PostgreSQL contention and upgrade-preservation checks, including a
+fixed cancellation/replacement-reservation race. Both controller paths, checked
+anchored-volume retirement and a coordinated rollout remain unfinished; neither
+anchor contribution is installed.
 
 The new [durable execution service](SERVICE.md) adds authenticated A2A routing,
 transactional queued turns, reporting MCP, bounded outcome checks and a recoverable

@@ -145,6 +145,11 @@ It preserves original PVC ownership and does not change A2A routing or workflow
 code. These contributions are not installed; coordinated rollout, credential
 cleanup, authenticated fencing and production hardening remain open.
 
+The [anchored registry backup](AGYN-ANCHORED-BACKUP.md) now restores and rehearses
+the new ownership/recovery metadata offline, including pending histories and
+database guard definitions. The actual installed database and all workspaces
+remain unchanged. This is not an automatic workspace-adoption or rollout path.
+
 The new [durable execution service](SERVICE.md) adds authenticated A2A routing,
 transactional queued turns, reporting MCP, bounded outcome checks and a recoverable
 worker. It is a development implementation with explicit [production gates](PRODUCTION.md),

@@ -103,6 +103,11 @@ databases, database roles/grants or external identities. Do not restore this dum
 over the installed database after newer work has been admitted. Coordinated
 recovery of all durable state still needs its own verified protocol.
 
+The later [anchored backup contract](AGYN-ANCHORED-BACKUP.md) explicitly extends
+offline restore/rehearsal through `0026`, including complete recovery documents
+and schema-definition fingerprints. Its distinct receipt is not accepted by
+the existing rollout wrapper; the installed-schema ceiling remains `0022`.
+
 ## Prepared Acceptance
 
 Use `scripts/agyn-live-lifecycle.mjs` with the usual bounded/network fixture

@@ -19,10 +19,11 @@ const pins = z.object({ tablePresent: z.boolean(), total: count, prepared: count
 
 // Two JSON records in the same read-only transaction. psql's conditional keeps
 // this compatible with pre-0019 databases where the owner-guard table is absent.
-export const preparedUpgradeSQL = `
+export function registryUpgradeSQL(extension = ""): string { return `
 BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY;
 SET LOCAL statement_timeout = '10s';
 SET LOCAL lock_timeout = '2s';
+SET LOCAL search_path = pg_catalog, public;
 SELECT json_build_object(
   'database', current_database(), 'readOnly', current_setting('transaction_read_only'),
   'isolation', current_setting('transaction_isolation'),
@@ -62,20 +63,26 @@ FROM public.runtime_volume_admission_guards g;
 \\else
 SELECT json_build_object('tablePresent', false, 'total', 0, 'prepared', 0, 'fingerprint', md5('[]'));
 \\endif
+${extension}
 ROLLBACK;
-`;
+`; }
+export const preparedUpgradeSQL = registryUpgradeSQL();
 
-export function parsePreparedUpgradeState(output: string, scope: AuditScope) {
-  const records = output.trim().split(/\r?\n/);
-  assert.equal(records.length, 2, "incomplete prepared upgrade snapshot");
+export function parseRegistryUpgradeRecords(records: string[], scope: AuditScope) {
+  assert.equal(records.length, 2, "incomplete registry upgrade snapshot");
   const db = registry.parse(JSON.parse(records[0])), ownerPins = pins.parse(JSON.parse(records[1]));
   assert.equal(db.runner.id, scope.runnerId, "upgrade runner identity changed");
   assert.equal(new Set(db.migrations).size, db.migrations.length, "duplicate migration versions");
-  assert(db.migrations.every(version => Number(version.slice(0, 4)) <= 22), "unreviewed future database migration");
   assert(db.volumes.checked <= db.volumes.total && db.workloads.prepared <= db.workloads.total &&
     db.workloads.unconfirmed <= db.workloads.total && ownerPins.prepared <= ownerPins.total, "invalid upgrade counts");
   assert(ownerPins.tablePresent || ownerPins.total === 0 && ownerPins.prepared === 0, "missing owner-pin table has rows");
-  const state = { registry: db, pins: ownerPins };
+  return { registry: db, pins: ownerPins };
+}
+
+export function parsePreparedUpgradeState(output: string, scope: AuditScope) {
+  const state = parseRegistryUpgradeRecords(output.trim().split(/\r?\n/), scope);
+  const { registry: db, pins: ownerPins } = state;
+  assert(db.migrations.every(version => Number(version.slice(0, 4)) <= 22), "unreviewed future database migration");
   return { kind: "prepared-upgrade-state" as const, version: 1, scope, ...state,
     fingerprint: createHash("sha256").update(JSON.stringify(state)).digest("hex"),
     legacyRollbackForbidden: db.volumes.checked > 0 || db.workloads.prepared > 0 || ownerPins.prepared > 0 };
@@ -119,7 +126,7 @@ export function verifyPreparedBackup(file: string, state: PreparedUpgradeState):
   assert.equal(receipt.archiveSha256, createHash("sha256").update(readFileSync(join(dirname(file), "runners.dump"))).digest("hex"), "backup archive changed");
 }
 
-export function assertPreparedSchema(state: PreparedUpgradeState): void {
+export function assertPreparedSchema(state: Pick<PreparedUpgradeState, "registry" | "pins">): void {
   for (const migration of ["0017_workload_removal_confirmation.sql", "0018_checked_volume_lifecycle.sql", "0019_volume_workload_admission.sql",
     "0020_legacy_volume_adoption.sql", "0021_volume_backend_identity.sql", "0022_prepared_workloads.sql"]) {
     assert(state.registry.migrations.includes(migration), `missing required migration ${migration}`);
@@ -137,6 +144,11 @@ export function assertPreparedSchema(state: PreparedUpgradeState): void {
 }
 
 export function collectPreparedUpgradeState(read: AuditRead, scope: AuditScope): PreparedUpgradeState {
+  return collectRegistryUpgradeSnapshot(read, scope, preparedUpgradeSQL, parsePreparedUpgradeState);
+}
+
+export function collectRegistryUpgradeSnapshot<T>(read: AuditRead, scope: AuditScope, sql: string,
+  parse: (output: string, scope: AuditScope) => T): T {
   assert([scope.postgresPod, scope.postgresUser].every(value => /^[a-z][a-z0-9_-]{0,62}$/.test(value)), "invalid upgrade database selector");
   assert([scope.postgresPodUid, scope.namespaceUid, scope.runnerId].every(value => z.string().uuid().safeParse(value).success), "explicit upgrade scope UUIDs required");
   // Do not expose raw kubectl errors, Pod specifications or database output.
@@ -154,8 +166,8 @@ export function collectPreparedUpgradeState(read: AuditRead, scope: AuditScope):
     const before = boundary();
     const output = read(["exec", "-i", "-n", "agyn-platform", scope.postgresPod, "-c", "postgres", "--", "env",
       "PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout=10000 -c lock_timeout=2000", "psql", "-X", "-q", "-A", "-t",
-      "-v", "ON_ERROR_STOP=1", "-v", `audit_runner_id=${scope.runnerId}`, "-U", scope.postgresUser, "-d", "runners", "-f", "-"], preparedUpgradeSQL);
+      "-v", "ON_ERROR_STOP=1", "-v", `audit_runner_id=${scope.runnerId}`, "-U", scope.postgresUser, "-d", "runners", "-f", "-"], sql);
     assert.deepEqual(boundary(), before);
-    return parsePreparedUpgradeState(output, scope);
+    return parse(output, scope);
   } catch { throw new Error("prepared upgrade snapshot failed; database/boundary reconciliation required"); }
 }

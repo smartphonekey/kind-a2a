@@ -196,8 +196,9 @@ effects still require explicit reconciliation, even if its session is restored.
 Existing unanchored workspaces still require explicit owner adoption before
 this controller can resume them. The installed rollout verifier continues to
 reject schemas newer than `0022`; its guard has not been weakened to permit an
-unreviewed upgrade. Backup fingerprints and rehearsal must cover the new
-ownership/revocation data before a coordinated migration is authorized.
+unreviewed upgrade. The subsequent [anchored backup](AGYN-ANCHORED-BACKUP.md)
+now covers ownership/revocation metadata and offline restore/rehearsal. Its
+distinct receipt does not authorize coordinated migration or workspace adoption.
 
 Durable child/credential cleanup and receipt retention, authenticated all-writer
 and node/storage fencing, DNS-compatible all-writer rollout and both real-agent

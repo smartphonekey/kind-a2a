@@ -181,7 +181,8 @@ export class DurableTaskStore {
       const taskId = existing?.id ?? randomUUID();
       const contextId = existing?.contextId ?? (message.contextId || randomUUID());
       const normalized: Message = { ...message, taskId, contextId };
-      const task: Task = existing ?? { id: taskId, contextId, history: [], artifacts: [], metadata: { profileId },
+      const title = message.parts.flatMap(part => part.content?.$case === "text" ? [part.content.value] : []).join(" ").slice(0, 120);
+      const task: Task = existing ?? { id: taskId, contextId, history: [], artifacts: [], metadata: { profileId, title },
         status: { state: TaskState.TASK_STATE_SUBMITTED, timestamp: new Date(timestamp).toISOString(), message: undefined } };
       task.history = [...task.history, normalized];
       if (!existing) {

@@ -6,6 +6,10 @@ durable store are wired together by `src/service/main.ts`. It is not yet a
 production deployment. See [PRODUCTION.md](PRODUCTION.md) for release gates and
 [CONTRIBUTING-AGYN.md](CONTRIBUTING-AGYN.md) for upstream review boundaries.
 
+The optional [assistant-ui web workspace](WEB.md) adds authenticated browser
+chat at `/ui/`, using the same durable tasks and execution worker. Browser
+access is disabled unless explicitly configured.
+
 The current local installation uses the retained prepared stack through registry
 migration `0022`, not the stock services restored by historical fixtures below.
 The original stack passes all five Codex scenarios and four Claude scenarios;

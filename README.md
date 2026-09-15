@@ -2,6 +2,10 @@
 
 Trusted local proof of concept for isolated coding-agent tasks. The preferred backend now delegates execution lifecycle to self-hosted Agyn:
 
+The [assistant-ui web workspace](WEB.md) adds browser chat with agent selection,
+durable task history, streaming, artifacts and cancellation. Run `npm run start:web`
+after the documented setup; the local URL is `http://127.0.0.1:8083/ui/`.
+
 ```text
 A2A client -> A2A adapter -> Agyn Gateway -> one agent instance per A2A task
                                            |-- Codex runtime

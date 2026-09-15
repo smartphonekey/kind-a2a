@@ -4,6 +4,11 @@ The new execution service, reporting tools and their tests are licensed under
 AGPL-3.0-only. Covered files carry an SPDX header. The complete license is in
 [LICENSES/AGPL-3.0-only.txt](LICENSES/AGPL-3.0-only.txt).
 
+The new `web/` application code, tests, `WEB.md`, and `scripts/start-web.sh`
+are also AGPL-3.0-only. Third-party packages and the Agyn organization avatar
+at `web/public/agyn.png` retain their own terms; the avatar is not included in
+this license grant.
+
 This grant does not relicense the pre-existing lab, third-party dependencies,
 generated files or Agyn repositories. Those retain their existing terms.
 Contributions in the `agynd-cli` and `agents-orchestrator` forks remain under

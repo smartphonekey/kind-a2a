@@ -23,7 +23,8 @@ const schema = z.object({
   defaultProfile: z.string().min(1).max(128),
   profiles: z.array(z.object({ id: z.string().min(1).max(128), agentId: z.string().uuid() }).strict()).min(1).max(100),
   concurrency: z.number().int().min(1).max(32).default(2),
-  turnTimeoutMs: z.number().int().min(1000).max(43_200_000).default(600_000)
+  turnTimeoutMs: z.number().int().min(1000).max(43_200_000).default(600_000),
+  browser: z.object({ origin: z.string().url(), assetsPath: pathSchema }).strict().optional()
 }).strict();
 
 function required(name: string): string {
@@ -73,7 +74,8 @@ const stopping = new AbortController();
 const worker = new ExecutionWorker(store, driver, { concurrency: config.concurrency, leaseMs: 60_000, pollMs: 1000,
   turnTimeoutMs: config.turnTimeoutMs, onError: event => console.error(JSON.stringify({ kind: "worker.error", ...event })) });
 const server = createServer(createServiceApp({ store, card: serviceCard(config.publicUrl), profileId: config.defaultProfile,
-  authorize: fileAuthorizer(config.credentialsFile), signal: stopping.signal }));
+  authorize: fileAuthorizer(config.credentialsFile), signal: stopping.signal,
+  ...(config.browser ? { browser: { ...config.browser, profiles: config.profiles.map(({ id }) => ({ id })) } } : {}) }));
 server.requestTimeout = 30_000;
 server.headersTimeout = 10_000;
 server.maxHeadersCount = 100;

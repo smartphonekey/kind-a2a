@@ -1,0 +1,28 @@
+{
+  "name": "@aira/a2a-web",
+  "private": true,
+  "version": "0.1.0",
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit && vite build",
+    "dev": "vite build --watch",
+    "test": "playwright test"
+  },
+  "dependencies": {
+    "@assistant-ui/react": "0.15.19",
+    "@assistant-ui/react-a2a": "0.2.34",
+    "@assistant-ui/react-markdown": "0.14.15",
+    "lucide-react": "1.46.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@types/node": "22.15.3",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "typescript": "5.8.3",
+    "vite": "8.3.0"
+  }
+}

@@ -8,12 +8,14 @@ import { type Authorize, type Principal } from "./auth.js";
 import { DurableTaskStore, TaskStoreError } from "./task-store.js";
 import { reportingRouter } from "../reporting/http.js";
 import { SseWriter, type SseWriteOptions } from "./sse-writer.js";
+import { browserRouter, type BrowserOptions } from "./browser.js";
 
 export type HttpOptions = {
   store: DurableTaskStore; card: AgentCard; profileId: string; authorize: Authorize;
   signal: AbortSignal; pollMs?: number; maxRequestsPerOwner?: number;
   sse?: SseWriteOptions;
   ready?: () => boolean;
+  browser?: BrowserOptions;
 };
 const reconciliation = z.object({ resolution: z.enum(["continue", "fail"]), reason: z.string().trim().min(1).max(4096) }).strict();
 
@@ -35,6 +37,14 @@ export function createServiceApp(options: HttpOptions) {
   });
   app.get("/.well-known/agent-card.json", (_request, response) => response.json(AgentCard.toJSON(options.card)));
   app.use("/reporting", reportingRouter(options.store));
+  if (options.browser) {
+    const browser = browserRouter(options, options.browser);
+    app.use((request, response, next) => {
+      if (request.path === "/ui" || request.path.startsWith("/ui/") || request.path.startsWith("/web-api/")) {
+        browser(request, response, next);
+      } else next();
+    });
+  }
   app.use(async (request, response, next) => {
     if (options.signal.aborted) { response.sendStatus(503); return; }
     // This service is machine-to-machine; browser origins require a separately authenticated gateway.

@@ -137,6 +137,14 @@ Its full source race suite also passes after an independent test-only repair.
 Initially absent resource reconciliation, checked anchored-volume retirement and
 coordinated rollout remain unfinished; none of these anchor contributions is installed.
 
+The subsequent [preparation-revocation implementation](AGYN-PREPARATION-REVOCATION.md)
+adds durable native proof and separate registry cleanup confirmation for an
+initially absent, unbound preparation. Native, database and combined process
+acceptance pass, including late workspace discovery without execution replay.
+It preserves original PVC ownership and does not change A2A routing or workflow
+code. These contributions are not installed; coordinated rollout, credential
+cleanup, authenticated fencing and production hardening remain open.
+
 The new [durable execution service](SERVICE.md) adds authenticated A2A routing,
 transactional queued turns, reporting MCP, bounded outcome checks and a recoverable
 worker. It is a development implementation with explicit [production gates](PRODUCTION.md),

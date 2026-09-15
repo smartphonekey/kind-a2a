@@ -18,6 +18,33 @@ database, native GC and process-crash acceptance. Nothing is installed and no
 upstream PR is submitted; initially absent/late-prepare reconciliation, durable
 cleanup and coordinated rollout remain open.
 
+The subsequent [preparation-revocation work](AGYN-PREPARATION-REVOCATION.md)
+adds atomic native proof and separate registry cleanup confirmation for unknown
+first provisioning, preserving PVC identity without changing A2A workflows.
+API `23d3073`, native runner `3260fb4`, registry `302b7c8` and controller `0c414b8`
+(source `b08d43b`) are pushed on `feat/preparation-revocation`. The complete
+existing controller execution regression passes all 41 entries, with no
+failures/skips, alongside the new 19-entry revocation acceptance.
+These remain dependent proposals, not installed capabilities or submitted PRs.
+
+Gateway `af4dc71` on `test/resource-lifecycle-forwarding` adds exact anchored
+lifecycle gRPC/JSON compatibility tests and complete local-generation commands.
+Its 363 full race entries, build and unfiltered vet pass. Independent orchestrator
+`0035aff` removes the obsolete context self-assignment; together with the existing
+test-only race repair, the DNS-compatible recovery combination `e5d7a53` (source
+`6669c08`) passes 879 ordinary/full race entries with seven opt-in skips and
+unfiltered vet/build, without an exclusion. Its native revocation matrix passes
+19 entries; the existing 41-entry execution matrix ran on the focused branch.
+
+Independent daemon `2aac6e7` on `fix/shell-title-worker-lifetime` cancels and joins
+the title refresher on daemon exit, without stopping persistent tmux shells.
+The unchanged tests reproduced the worker/path-cleanup race. Fixed upstream
+ordinary/full race suites pass 383 entries each; the existing local daemon
+combination `03422b6` (source `0497e02`) passes 458 each with two gated native
+tests skipped. These focused branches are pushed; no init image was changed.
+Detailed boundaries and private evidence names are in the
+[recovery report](AGYN-PREPARATION-REVOCATION.md).
+
 `agynio/agynd-cli`: honor `CODEX_HOME` for Codex config, authentication placeholders
 and native-session mappings, with unchanged legacy paths when unset.
 

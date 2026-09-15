@@ -11,8 +11,12 @@ Runners branches remain separate from native runner/controller contributions.
 The dependent [controller integration](AGYN-ANCHOR-CONTROLLERS.md) now migrates
 both owner paths and corrects real inbox-thread persistence with additive
 registry migration `0024`. Source and final combined native acceptance pass.
-Nothing is installed and no upstream PR is submitted;
-anchored-volume retirement, durable cleanup and coordinated rollout remain open.
+The subsequent [anchored retirement contribution](AGYN-ANCHORED-RETIREMENT.md)
+adds a distinct checked PVC-and-owner retirement capability, migration `0025`
+and both controller paths. All four focused branches are pushed with source,
+database, native GC and process-crash acceptance. Nothing is installed and no
+upstream PR is submitted; initially absent/late-prepare reconciliation, durable
+cleanup and coordinated rollout remain open.
 
 `agynio/agynd-cli`: honor `CODEX_HOME` for Codex config, authentication placeholders
 and native-session mappings, with unchanged legacy paths when unset.

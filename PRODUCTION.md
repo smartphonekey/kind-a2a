@@ -75,6 +75,14 @@ with no failures/skips; its separate DNS-compatible subset passes seven entries.
 All 105 existing PVCs and 52 deployment snapshots are unchanged. None of these
 changes is installed.
 
+The dependent [anchored workspace retirement](AGYN-ANCHORED-RETIREMENT.md)
+now passes source, real PostgreSQL and combined native/process verification.
+Eight crash scenarios and two native late-PVC/owner-replacement scenarios pass;
+all 108 current PVCs and 52 deployment snapshots are preserved. The four focused
+branches are pushed but **not installed**. This closes the bound anchored-volume
+retirement implementation gap, not initially absent/late-prepare recovery,
+durable cleanup, authenticated fencing or coordinated production rollout.
+
 The latest [checked-volume acceptance](AGYN-CHECKED-VOLUMES.md#combined-process-acceptance)
 now combines real PostgreSQL, registry RPCs, controller process replacement and
 native Kubernetes deletion. It does not use the A2A driver or deployed Agents
@@ -102,6 +110,7 @@ agent profile must not change the A2A controller or workflow implementation.
 
 | Gate | Status | Required evidence |
 | --- | --- | --- |
+| Anchored workspace retirement | Source and combined native/process acceptance verified; not installed | [Four dependent contributions](AGYN-ANCHORED-RETIREMENT.md) persist exact intent and PVC/owner absence without old-API fallback, owner substitution or reopening. Registry ordinary/full race suites pass 752 entries each; native race passes 636 with seven gated skips; controller ordinary/selected race passes 789/788 with six gated skips and the known test-race exclusion. Eight real controller SIGKILL scenarios plus groups/parent pass 11 entries, and native late-child GC/replaced-owner cases pass three entries. All 108 prior claims and 52 deployments are unchanged. Unknown first provision, durable cleanup, authenticated future-write/node fencing and coordinated A2A rollout remain open. |
 | Resource anchor controllers | Source and combined process acceptance verified; not installed | [Both controller paths](AGYN-ANCHOR-CONTROLLERS.md) persist native workload/volume ownership before preparation, preserve exact reservation receipts, and require Pod removal plus workload-owner absence before confirmation. Real assembler identity and distinct inbox-thread regressions are fixed. Ordinary/selected race suites pass 761/760 entries, with five gated skips and the documented group-consumer race excluded; 1,920 repeated anchor entries pass. Final combined native/process acceptance passes 41 entries with no failures/skips. DNS-compatible source with separate test-only `fdf60f9` passes 765 ordinary/full race entries without test exclusion; five gated entries skip and the unrelated vet self-assignment remains. Its native subset passes seven entries with no failures/skips. Initially absent/late resources retain admission; anchored-volume retirement, durable cleanup, remaining clients and coordinated real-agent rollout remain open. |
 | Resource anchor registry | Source and disposable PostgreSQL acceptance verified; not installed | [Dependent registry/API contribution](AGYN-ANCHOR-REGISTRY.md) adds dual revisions, immutable workload/volume identities, exact reservation receipts and old-writer guards. The initial Read Committed cancellation/replacement race was reproduced and fixed. Initial 618 full race entries and 1,600 repeated focused entries pass; upgrade preserves 28 prepared workloads and 14 bound volume records. Follow-up `e1a3b7f` adds actual inbox-thread validation through additive migration `0024`; 620 ordinary/full race entries pass, preserving prior anchors. Native receipts in registry-only checks and authorization writes are fixtures; combined native checks are separate above. Remaining wire/client migration, initially absent/late-create recovery, checked anchored-volume retirement, durable cleanup and coordinated real-agent rollout remain open. |
 | Native resource anchors | Source and isolated native acceptance verified; integration incomplete | [Dependent API/native capability](AGYN-RESOURCE-ANCHORS.md) pins owner UIDs before gated resource creation and serializes Pod selection/activation with revocation on one ConfigMap. Both 610-entry ordinary/full race suites, 1,060 repeated anchor entries and 15 real Kubernetes scenarios plus parent pass. Registry and controller source have dependent evidence above; anchored-volume retirement, delayed holds/credential reconciliation, authenticated authority and coordinated A2A deployment remain required. Nothing is installed. |
@@ -175,6 +184,7 @@ proof. Production runtime packaging, restore and migration acceptance remain.
 
 ## References
 
+- [Checked anchored workspace retirement and crash/late-PVC acceptance](AGYN-ANCHORED-RETIREMENT.md)
 - [Resource-anchor controllers, combined native acceptance and remaining rollout](AGYN-ANCHOR-CONTROLLERS.md)
 - [Native resource anchors and delayed creates](AGYN-RESOURCE-ANCHORS.md)
 - [Prepared controller migration, native inspection and remaining combined acceptance](AGYN-PREPARED-CONTROLLERS.md)

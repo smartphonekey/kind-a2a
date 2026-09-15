@@ -135,6 +135,10 @@ installed prepared/DNS stack on its own.
 
 ## Still Required
 
+The later [anchored retirement contribution](AGYN-ANCHORED-RETIREMENT.md)
+implements and verifies bound PVC-and-owner retirement separately. It is not
+installed and does not change this report's historical acceptance scope.
+
 Initially absent/late-create reconciliation, checked anchored-volume retirement,
 durable child/credential cleanup and explicit legacy reconciliation remain open.
 So do remaining wire/client migration, a DNS-compatible all-writer rollout and

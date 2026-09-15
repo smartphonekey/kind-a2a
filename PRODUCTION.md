@@ -103,6 +103,15 @@ also restores pending recovery records and detects previously invisible document
 changes. Existing-workspace adoption, coordinated release and complete durable
 state backup/failover remain required; the rollout ceiling is still `0022`.
 
+The dependent [native existing-workspace adoption](AGYN-VOLUME-ANCHOR-ADOPTION.md)
+now passes 838 ordinary/full race entries each and 16 isolated Kubernetes
+scenarios plus parent, including 12 actual SIGKILL boundaries and owner-GC
+retention. It preserves original PVC identity/spec/content across migration
+and subsequent compute release. Both API/native branches are pushed, but
+**not installed**. Registry admission/persistence, the coordinator, complete
+durable-state restore and coordinated real-agent rollout remain required.
+All 108 prior PVCs/PVs and 52 deployments are unchanged.
+
 The latest [checked-volume acceptance](AGYN-CHECKED-VOLUMES.md#combined-process-acceptance)
 now combines real PostgreSQL, registry RPCs, controller process replacement and
 native Kubernetes deletion. It does not use the A2A driver or deployed Agents
@@ -126,10 +135,33 @@ running workload between turns. Follow-up messages retain the task's identity,
 runtime profile, agent session and workspace. Switching the operator-selected
 agent profile must not change the A2A controller or workflow implementation.
 
+## First Deployment Target
+
+The user selected **single-node self-hosted Kubernetes with tested backup and
+restore** on 2026-09-15. Multi-node high availability is not a requirement for
+this first deployment; the current trusted-local installation is not thereby
+promoted to production.
+
+The release must demonstrate recovery on a clean replacement node from an
+encrypted off-node backup, including Kubernetes/backend identity, all required
+Agyn databases and credentials, the A2A database/event history, and workspace
+and native-session contents. A registry-only SQL restore is insufficient.
+Record measured recovery time, the recoverable backup boundary, integrity
+checks and the treatment of interrupted side effects. Admission remains closed
+until those checks pass; restore must not automatically retry uncertain work.
+Fence the old node and isolate the restored stack before enabling any worker.
+Work queued at backup time could have executed afterward, so recovery uncertainty
+is not limited to records marked running in the backup.
+Per-task isolation, immutable agent/task ownership, parallel execution and
+compute release between turns remain required. The security gates below still
+apply to a single-node deployment.
+
 ## Gates
 
 | Gate | Status | Required evidence |
 | --- | --- | --- |
+| Existing workspace anchor adoption | Native source and isolated Kubernetes acceptance verified; registry/coordinator pending | [Two focused contributions](AGYN-VOLUME-ANCHOR-ADOPTION.md) retain the original checked PVC, exact adopting owner/journal and migration hold through six lost-write boundaries. Ordinary/full race each pass 838 entries with seven gated skips; the native matrix passes 16 scenarios plus parent, including 12 SIGKILLs and both owner-GC retention cases. All 108 prior PVCs/PVs and 52 deployments match. Nothing is installed. Durable owner-wide admission, distinct registry adoption records/SQL guards, coordinator, checked legacy reconciliation, extended backup contract, authenticated writer/node fencing and coordinated A2A rollout remain required. |
+| Single-node replacement recovery | First production target selected; whole-stack restore unverified | Release requires encrypted off-node backup and a clean replacement-node restore of all required Agyn databases/credentials, A2A state, workspace/session contents and native/backend identities. Measure recovery point/time and verify integrity. Fence the old node, isolate the restore and hold admission closed; queued-at-backup work may also have executed after the snapshot. Registry-only rehearsal does not meet this gate. |
 | Anchored registry restore | Installed-source and populated-history offline restore verified; no deployment | [Versioned backup](AGYN-ANCHORED-BACKUP.md) fingerprints complete recovery documents and lifecycle schema definitions. The actual installed `0022` registry restores and rehearses four migrations offline, preserving 191 workloads and 101 volumes. Ten new-format histories restore pending work, mixed inventory and retired storage; previously invisible document changes and same-name weakened guards are detected. All 516 service test entries pass with the real PostgreSQL fixture enabled, with no failures/skips. All 108 PVCs and 52 deployments are unchanged. The distinct receipt does not bypass the `0022` rollout ceiling. Existing-workspace adoption, coordinated release, complete durable-state backup, off-machine retention and disaster recovery remain required. |
 | Unbound preparation revocation | Source and native/process acceptance verified; not installed | [Distinct native proof and two-step registry cleanup](AGYN-PREPARATION-REVOCATION.md) preserve workspace identity without fabricating a Pod binding or replaying execution. Native 15-entry and combined 19-entry fixtures pass; registry full race passes 838 entries with real PostgreSQL. The focused controller passes the complete 41-entry execution regression. Its separate DNS-compatible combination passes 879 ordinary/full race entries with seven gated skips, unfiltered vet/build and the 19-entry revocation matrix; Gateway compatibility passes 363 full race entries. All dependent branches are pushed. Existing-workspace adoption, DNS-compatible coordinated rollout, durable credential/receipt cleanup, accepted-request-without-workload recovery, authenticated fencing and hardening remain required; new-metadata backup evidence is recorded above. |
 | Anchored workspace retirement | Source and combined native/process acceptance verified; not installed | [Four dependent contributions](AGYN-ANCHORED-RETIREMENT.md) persist exact intent and PVC/owner absence without old-API fallback, owner substitution or reopening. Registry ordinary/full race suites pass 752 entries each; native race passes 636 with seven gated skips; controller ordinary/selected race passes 789/788 with six gated skips and the known test-race exclusion. Eight real controller SIGKILL scenarios plus groups/parent pass 11 entries, and native late-child GC/replaced-owner cases pass three entries. All 108 prior claims and 52 deployments are unchanged. Unknown first provision, durable cleanup, authenticated future-write/node fencing and coordinated A2A rollout remain open. |
@@ -206,6 +238,8 @@ proof. Production runtime packaging, restore and migration acceptance remain.
 
 ## References
 
+- [Existing workspace anchor adoption and native crash/owner-GC acceptance](AGYN-VOLUME-ANCHOR-ADOPTION.md)
+- [Versioned anchored registry backup and offline migration rehearsal](AGYN-ANCHORED-BACKUP.md)
 - [Checked anchored workspace retirement and crash/late-PVC acceptance](AGYN-ANCHORED-RETIREMENT.md)
 - [Resource-anchor controllers, combined native acceptance and remaining rollout](AGYN-ANCHOR-CONTROLLERS.md)
 - [Native resource anchors and delayed creates](AGYN-RESOURCE-ANCHORS.md)

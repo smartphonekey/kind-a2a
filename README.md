@@ -150,6 +150,13 @@ the new ownership/recovery metadata offline, including pending histories and
 database guard definitions. The actual installed database and all workspaces
 remain unchanged. This is not an automatic workspace-adoption or rollout path.
 
+The dependent [existing-workspace adoption](AGYN-VOLUME-ANCHOR-ADOPTION.md) now
+passes native source and Kubernetes crash/owner-GC acceptance while retaining
+the original PVC and its contents. It is not installed; registry admission and
+adoption persistence, the coordinator and complete-stack restore remain open.
+The first [production target](PRODUCTION.md#first-deployment-target) is single-node
+self-hosted Kubernetes with tested backup/restore.
+
 The new [durable execution service](SERVICE.md) adds authenticated A2A routing,
 transactional queued turns, reporting MCP, bounded outcome checks and a recoverable
 worker. It is a development implementation with explicit [production gates](PRODUCTION.md),

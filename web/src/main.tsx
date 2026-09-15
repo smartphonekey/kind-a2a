@@ -309,6 +309,10 @@ function Workspace({
   };
   const onTask = useCallback((task: A2ATask) => {
     setTasks((current) => [task, ...current.filter((t) => t.id !== task.id)]);
+    // Record the server task ID without remounting the active runtime.
+    setSelection((current) =>
+      current.task?.id === task.id ? current : { ...current, task },
+    );
     history.replaceState(null, "", `#task=${encodeURIComponent(task.id)}`);
   }, []);
   const shown = tasks.filter((t) =>
@@ -378,7 +382,8 @@ function Workspace({
           {shown.map((task) => (
             <button
               key={task.id}
-              className={`task-item ${selection.key === task.id ? "selected" : ""}`}
+              className={`task-item ${selection.task?.id === task.id ? "selected" : ""}`}
+              aria-current={selection.task?.id === task.id ? "true" : undefined}
               onClick={() => void selectTask(task.id)}
             >
               <span className="task-title">

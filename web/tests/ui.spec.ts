@@ -91,9 +91,20 @@ test("real REST transport: chat, refresh, same-task follow-up, artifacts and ter
     "task",
   )!;
   expect(taskId).toBeTruthy();
+  await expect(page.locator(".task-item.selected")).toHaveCount(1);
+  await expect(page.locator(".task-item.selected")).toHaveAttribute(
+    "aria-current",
+    "true",
+  );
+  await expect(page.locator(".task-item.selected .task-title")).toContainText(
+    text,
+  );
   await page.reload();
   await expect(page.locator(".assistant-message")).toContainText(
     `Reply from codex: ${text}`,
+  );
+  await expect(page.locator(".task-item.selected .task-title")).toContainText(
+    text,
   );
   await send(page, `follow-up-${text}`);
   await expect(page.locator(".assistant-message").last()).toContainText(
@@ -123,6 +134,7 @@ test("real REST transport: chat, refresh, same-task follow-up, artifacts and ter
   await expect(page.getByLabel("Message", { exact: true })).toBeDisabled();
   await expect(page.locator(".task-notice")).toContainText("Completed");
   await page.getByLabel("Agent", { exact: true }).selectOption("claude");
+  await expect(page.locator(".task-item.selected")).toHaveCount(0);
   await page.evaluate((id) => {
     location.hash = `task=${id}`;
   }, taskId);

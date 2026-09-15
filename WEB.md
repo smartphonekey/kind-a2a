@@ -146,6 +146,15 @@ Private receipts are `.state/a2a-web/live-ui-result-networked.json`,
 These prove UI integration with the retained trusted-local stack, not the
 unreleased volume-retirement changes in the separate Agyn worktrees.
 
+At 07:42 UTC, a follow-up verification again passed all 455 service tests and
+eight browser tests. New tasks now become the selected sidebar item as soon as
+the server assigns their ID, without remounting the active assistant-ui runtime.
+The browser regression first reproduced the missing selection, then passed on
+desktop and mobile with same-task continuation intact. Read-only checks of the
+two existing live conversations passed at all four viewport sizes; no agent
+work was replayed and no task Pods remained. The private verification receipt is
+`.state/a2a-web/recheck-jA7kTG/result.json`.
+
 Two earlier setup attempts did not pass and were not replayed. The first used a
 retained test profile whose subscription attachment had been removed; its
 accepted request/paused instance and original `tasks.sqlite` remain quarantined

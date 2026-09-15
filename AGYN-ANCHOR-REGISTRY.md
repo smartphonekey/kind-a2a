@@ -5,8 +5,10 @@
 Status: registry source and isolated PostgreSQL acceptance verified on
 2026-09-15. This is a dependent contribution, not a production release.
 Nothing is installed: the retained prepared/DNS stack and schema through `0022`
-remain unchanged. Both controller paths, native recovery integration and
-coordinated rollout remain unfinished.
+remain unchanged. The later [controller integration](AGYN-ANCHOR-CONTROLLERS.md)
+now migrates both owner paths and adds registry follow-up `e1a3b7f` for actual
+inbox-thread identity. Its final combined native acceptance passes;
+initially absent resource reconciliation and coordinated rollout remain open.
 
 ## Contract
 
@@ -54,7 +56,7 @@ Two source regressions also failed before their fixes: accepting a binding with
 a missing persisted volume anchor, and allowing a sandbox PVC's human-owner
 label to differ from its anchor. Both now reject those inputs.
 
-## Verification
+## Initial Verification
 
 - API lint and breaking checks against native API `3b25d03` pass.
 - Full registry ordinary and race suites: **618 passing entries each**, zero
@@ -94,16 +96,24 @@ used or modified by these fixtures.
 | [spk-ai/api](https://github.com/spk-ai/api/tree/feat/resource-anchor-registry) | `feat/resource-anchor-registry` | `6fe4cab`, based on native API `3b25d03` |
 | [spk-ai/runners](https://github.com/spk-ai/runners/tree/feat/resource-anchor-registry) | `feat/resource-anchor-registry` | `573b497`, based on registry `e7c42f4` |
 
+Follow-up `e1a3b7f` on the same Runners branch adds migration `0024`, retaining
+the legacy registry instance alias while pinning the canonical native inbox
+thread in the immutable workload anchor. Both real PostgreSQL suites now pass
+620 entries; the additional upgrade fixture preserves every field of existing
+`0023` anchor records across two migration applications. See the
+[controller report](AGYN-ANCHOR-CONTROLLERS.md) for that separate evidence.
+
 Existing fork licenses are retained; this service integration report is
 AGPL-3.0-only. No upstream PR has been submitted. The registry's
 [reproduction guide](https://github.com/spk-ai/runners/blob/573b497/RESOURCE-ANCHORS.md)
 describes dependency generation and gated tests.
 
-1. Migrate agent and sandbox controllers and all necessary wire/client paths.
-   Persist reservations before native calls, recover lost replies by reading
-   exact state, and retain admission for uncertain or late resources.
-2. Add combined registry/controller/native process-crash acceptance, including
-   initially absent resources and cancellation at each authorization boundary.
+1. Complete any remaining wire/client paths and coordinated integration.
+   The migrated controllers pass combined native process acceptance, persist
+   reservations before native calls and retain admission for uncertain resources;
+   they are not deployed.
+2. Close initially absent/late-create recovery. Present-Pod recovery and anchor
+   revocation do not establish that delayed child resources are cleaned up.
 3. Implement checked anchored-volume retirement, delayed hold reconciliation,
    durable child/credential cleanup and explicit legacy reconciliation.
 4. Coordinate all-writer upgrades while retaining the DNS correction, then rerun

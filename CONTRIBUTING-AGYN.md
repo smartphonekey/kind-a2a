@@ -8,8 +8,11 @@ require maintainers to adopt this entire lab or change a runtime image's role.
 The dependent [resource-anchor registry proposal](AGYN-ANCHOR-REGISTRY.md) now
 has source, PostgreSQL contention and historical-upgrade evidence. API and
 Runners branches remain separate from native runner/controller contributions.
-It is not installed and no upstream PR is submitted; both controller paths,
-anchored-volume retirement and coordinated rollout remain required.
+The dependent [controller integration](AGYN-ANCHOR-CONTROLLERS.md) now migrates
+both owner paths and corrects real inbox-thread persistence with additive
+registry migration `0024`. Source and final combined native acceptance pass.
+Nothing is installed and no upstream PR is submitted;
+anchored-volume retirement, durable cleanup and coordinated rollout remain open.
 
 `agynio/agynd-cli`: honor `CODEX_HOME` for Codex config, authentication placeholders
 and native-session mappings, with unchanged legacy paths when unset.
@@ -143,7 +146,7 @@ fencing remain separate requirements.
 ## Native Resource Anchors
 
 The [dependent native ownership capability](AGYN-RESOURCE-ANCHORS.md) remains
-separate from its pending registry/controller integration:
+separate from its dependent registry/controller integration:
 
 - API `feat/resource-anchors`, `3b25d03`, based on `d6449dd`: metadata reservation,
   anchored preparation and workload-anchor retirement; bindings retain exact
@@ -156,11 +159,47 @@ Native ordinary/full race suites and real Kubernetes delayed-create/CAS/GC
 acceptance pass. The fixture includes no production registry or A2A agents.
 Both branches are dependent proposals, not independent upstream-base patches;
 fork licensing is unchanged. No upstream PR is submitted and nothing is
-installed. The registry must persist anchor UIDs before creation authority,
-both controller paths must migrate, and anchored-volume retirement/all-writer
-guards still need implementation. Do not deploy this runner alone.
+installed. The linked registry and controller proposals now persist native
+owners before creation authority; their acceptance and rollout boundaries are
+separate. Anchored-volume retirement and remaining all-writer guards still need
+implementation. Do not deploy this runner alone.
+
+## Resource Anchor Controllers
+
+The [dependent controller proposal](AGYN-ANCHOR-CONTROLLERS.md) is based on
+prepared recovery `c2bb0e5`, not stock upstream. Branch
+`feat/resource-anchor-controllers`, source `2fddf9c`, uses only the distinct
+anchored APIs for new agent/sandbox starts and retains the old recovery contract
+for persisted unanchored records. It requires API `6fe4cab`, native runner
+`72a1cc8` and Runners `e1a3b7f` through migration `0024`.
+
+The registry follow-up preserves existing instance/volume identity while pinning
+the actual canonical inbox thread. Both ordinary/full registry race suites pass
+620 entries with real PostgreSQL; the upgrade fixture preserves existing `0023`
+anchors. Controller source and repeated anchor race checks pass, with documented
+broader race/vet exclusions. Final combined Kubernetes/process verification
+passes 38 scenarios plus the two owner groups and parent, with no failures/skips.
+All 105 existing PVCs and 52 deployment snapshots remain unchanged. No upstream
+PR is submitted and nothing is installed.
+
+The separate `lab/resource-anchors-native-dns` combination retains the installed
+resolver correction and the independent test-only fix below. It passes 765
+ordinary/full race entries with no test exclusion and five gated skips, plus a
+real native/process subset with four scenarios and three parent/group entries,
+no failures/skips. Both branches are pushed. This is an acceptance combination,
+not the focused upstream proposal or evidence of a coordinated real-agent rollout.
 
 ## Orchestrator Lifecycle Fixes
+
+A separate upstream-based test-only fix is pushed as
+`fix/group-consumer-test-race`, `fdf60f9`, based on `ae7d0bf`. It replaces a racy
+fake unsubscribe flag with channel signals and removes concurrent retry-global
+mutation from the retry/cancellation test. The baseline reproduces both races;
+60 repeated cases and both 257-entry ordinary/full race suites pass without test
+exclusions/skips. Production consumer behavior is unchanged. The unrelated vet
+self-assignment remains. Only the resource-anchor/DNS lab combination includes
+this fix; focused lifecycle proposals keep their own verification boundaries.
+No upstream PR has been submitted.
 
 The independent [workload DNS correction](AGYN-NATIVE-DNS.md) is pushed as
 `fix/workload-dns-interception`, `204b5e9`, based on upstream `ae7d0bf`. It removes

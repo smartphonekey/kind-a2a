@@ -123,9 +123,15 @@ source and real Kubernetes tests for delayed Pod/PVC creation, owner replacement
 and activation/revocation races. Workload and volume ownership have separate
 lifetimes. Dependent [registry persistence](AGYN-ANCHOR-REGISTRY.md) now passes
 source, real PostgreSQL contention and upgrade-preservation checks, including a
-fixed cancellation/replacement-reservation race. Both controller paths, checked
-anchored-volume retirement and a coordinated rollout remain unfinished; neither
-anchor contribution is installed.
+fixed cancellation/replacement-reservation race. The dependent
+[controller integration](AGYN-ANCHOR-CONTROLLERS.md) now migrates both owner paths,
+validates real assembler labels and preserves the actual inbox thread separately
+from the registry's legacy instance alias. Source, PostgreSQL upgrade and final
+combined native process/crash checks pass. The separate DNS-compatible lab branch
+retains the installed resolver fix and passes its native compatibility subset.
+Its full source race suite also passes after an independent test-only repair.
+Initially absent resource reconciliation, checked anchored-volume retirement and
+coordinated rollout remain unfinished; none of these anchor contributions is installed.
 
 The new [durable execution service](SERVICE.md) adds authenticated A2A routing,
 transactional queued turns, reporting MCP, bounded outcome checks and a recoverable

@@ -20,6 +20,6 @@ AGPL-3.0-only: `SERVICE.md`, `PRODUCTION.md`, `CONTRIBUTING-AGYN.md`,
 `AGYN-PREPARED-CONTROLLERS.md`, `AGYN-PREPARED-ROLLOUT.md`, and
 `AGYN-PREPARED-CLAUDE.md`, `AGYN-NATIVE-DNS.md`, `AGYN-PREPARED-SECRETS.md`, and
 `AGYN-PREPARED-RECOVERY.md`, `AGYN-RESOURCE-ANCHORS.md`,
-`AGYN-ANCHOR-REGISTRY.md`. New integration
+`AGYN-ANCHOR-REGISTRY.md`, `AGYN-ANCHOR-CONTROLLERS.md`. New integration
 scripts and the local integration-image Dockerfiles carry the same SPDX header. Third-party code in
 the generated runtime bundle retains its dependency licenses.

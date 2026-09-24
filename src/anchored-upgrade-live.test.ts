@@ -7,9 +7,12 @@ import { isAbsolute, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import { anchoredUpgradeSQL, assertAnchoredSchema, parseAnchoredUpgradeState } from "./live/anchored-upgrade.js";
+import { volumeMigrationUpgradeSQL, assertVolumeMigrationSchema, parseVolumeMigrationUpgradeState } from "./live/volume-migration-upgrade.js";
+import { seedVolumeMigrationBackupHistories } from "./test/volume-migration-backup-fixture.js";
 
-test("anchored PostgreSQL backup preserves populated recovery history and detects tampering", {
-  skip: process.env.AGYN_ANCHORED_BACKUP_TEST !== "trusted-local", timeout: 180_000,
+const adoption = process.env.AGYN_VOLUME_MIGRATION_BACKUP_TEST === "trusted-local";
+test(`${adoption ? "volume adoption" : "anchored"} PostgreSQL backup preserves populated recovery history and detects tampering`, {
+  skip: !adoption && process.env.AGYN_ANCHORED_BACKUP_TEST !== "trusted-local", timeout: 180_000,
 }, async t => {
   const image = process.env.AGYN_ANCHORED_TEST_POSTGRES_IMAGE ?? "", migrations = process.env.AGYN_ANCHORED_TEST_MIGRATIONS ?? "";
   assert(/^\S+@sha256:[a-f0-9]{64}$/.test(image), "explicit pinned offline PostgreSQL image required");
@@ -58,11 +61,12 @@ test("anchored PostgreSQL backup preserves populated recovery history and detect
     "exec", "-i", container, "psql", "-X", "-q", "-A", "-t", "-U", "agyn", "-d", "runners", "-v", "ON_ERROR_STOP=1",
     "-v", "VERBOSITY=sqlstate", "-v", `audit_runner_id=${runner}`, ...Object.entries(variables).flatMap(([key, value]) => ["-v", `${key}=${value}`]), "-f", "-",
   ], input).toString();
-  const snapshot = (container: string) => parseAnchoredUpgradeState(sql(container, anchoredUpgradeSQL), scope);
+  const snapshot = (container: string) => adoption ? parseVolumeMigrationUpgradeState(sql(container, volumeMigrationUpgradeSQL), scope)
+    : parseAnchoredUpgradeState(sql(container, anchoredUpgradeSQL), scope);
   stage = "migrations";
   sql(source, "CREATE TABLE schema_migrations (version TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW());");
   const versions = readdirSync(migrations).filter(name => /^\d{4}_[a-z0-9_]+\.sql$/.test(name)).sort();
-  assert.equal(versions.length, 26, "review exactly the migrations through 0026");
+  assert.equal(versions.length, adoption ? 27 : 26, "review exactly the migrations for this backup contract");
   for (const [index, version] of versions.entries()) {
     assert.equal(Number(version.slice(0, 4)), index + 1);
     const file = join(migrations, version); assert(lstatSync(file).isFile(), "migration must be a regular file");
@@ -127,11 +131,19 @@ test("anchored PostgreSQL backup preserves populated recovery history and detect
     });
   }
   stage = "source snapshot";
+  if (adoption) {
+    stage = "seed valid migration histories";
+    seedVolumeMigrationBackupHistories((input, variables) => sql(source, input, variables), runner, backend);
+  }
   const before = snapshot(source); assertAnchoredSchema(before);
-  assert.equal(before.registry.volumes.total, 12); assert.equal(before.registry.workloads.total, 10);
+  if (before.kind === "volume-migration-upgrade-state") {
+    assertVolumeMigrationSchema(before);
+    assert.deepEqual([before.recovery.volumes.adopted, before.recovery.pins.migrating, before.recovery.pins.completed], [6, 10, 2]);
+  }
+  assert.equal(before.registry.volumes.total, adoption ? 24 : 12); assert.equal(before.registry.workloads.total, 10);
   assert.deepEqual([before.recovery.workloads.anchored, before.recovery.workloads.revoked, before.recovery.workloads.observed], [10, 8, 6]);
   assert.equal(before.registry.workloads.unconfirmed, 4); assert.equal(before.recovery.volumes.retired, 2);
-  assert.equal(before.recovery.pins.anchored, 10);
+  assert.equal(before.recovery.pins.anchored, adoption ? 12 : 10);
   stage = "dump and restore";
   const archive = docker(["exec", source, "pg_dump", "-U", "agyn", "-d", "runners", "--format=custom", "--no-owner", "--no-privileges"]);
   assert(archive.subarray(0, 5).equals(Buffer.from("PGDMP")));
@@ -142,6 +154,29 @@ test("anchored PostgreSQL backup preserves populated recovery history and detect
     assert.throws(() => sql(restored, "UPDATE workloads SET resource_anchors=resource_anchors-'preparationRevocation' WHERE id=:'id'::uuid;", { id: row.workload }), /\(55000\)/);
   }
   assert.equal(snapshot(restored).fingerprint, before.fingerprint);
+
+  if (adoption) {
+    stage = "restored migration immutability";
+    assert.throws(() => sql(restored, "UPDATE runtime_volume_admission_guards SET volume_anchor_migration=NULL WHERE volume_anchor_migration IS NOT NULL;"), /\(55000\)/);
+    assert.equal(snapshot(restored).fingerprint, before.fingerprint);
+    const corrupt = (table: string, key: string, column: string, expression: string, variables: Record<string, string> = {}) => {
+      const originals = sql(restored, `SELECT jsonb_agg(jsonb_build_object('id',${key},'document',${column}))::text FROM ${table} WHERE ${column} IS NOT NULL;`).trim();
+      sql(restored, `BEGIN; ALTER TABLE ${table} DISABLE TRIGGER USER;
+        UPDATE ${table} SET ${column}=${expression} WHERE ${column} IS NOT NULL; ALTER TABLE ${table} ENABLE TRIGGER USER; COMMIT;`, variables);
+      assert.notEqual(snapshot(restored).fingerprint, before.fingerprint, "migration corruption was omitted from backup projection");
+      sql(restored, `BEGIN; ALTER TABLE ${table} DISABLE TRIGGER USER;
+        UPDATE ${table} AS destination SET ${column}=entry->'document' FROM jsonb_array_elements(:'originals'::jsonb) entry
+        WHERE destination.${key}=(entry->>'id')::uuid; ALTER TABLE ${table} ENABLE TRIGGER USER; COMMIT;`, { originals });
+      assert.equal(snapshot(restored).fingerprint, before.fingerprint);
+    };
+    for (const field of ["instanceUid", "pvcSpecSha256"]) {
+      stage = `tamper migration provenance/${field}`;
+      corrupt("volumes", "id", "anchor_adoption", "jsonb_set(anchor_adoption,ARRAY[:'field'],to_jsonb(:'value'::text))",
+        { field, value: field === "instanceUid" ? randomUUID() : "b".repeat(64) });
+    }
+    stage = "tamper owner admission plan";
+    corrupt("runtime_volume_admission_guards", "owner_id", "volume_anchor_migration", "jsonb_set(volume_anchor_migration,'{entries,0,source,expectedRevision}','\"99\"')");
+  }
 
   // Deliberate corruption is confined to this newly restored offline fixture.
   // It checks the backup projection independently of the registry's write guards.
@@ -185,5 +220,5 @@ test("anchored PostgreSQL backup preserves populated recovery history and detect
     ALTER TABLE runtime_volume_admission_guards ADD CONSTRAINT runtime_prepared_pin ${originalConstraint}; COMMIT;`);
   assert.equal(snapshot(restored).fingerprint, before.fingerprint);
   assert.equal(snapshot(source).fingerprint, before.fingerprint, "restore tests changed the source database");
-  t.diagnostic("10 valid histories, 4 pending workloads, mixed found/absent workspaces, 2 retirements, 8 document corruption checks and same-name function/constraint replacement verified; no installed database or agent was used");
+  t.diagnostic("10 anchored histories, 4 pending workloads, mixed found/absent workspaces, 2 retirements, 8 document corruption checks and same-name function/constraint replacement verified; the explicit migration mode additionally covers 12 adoption histories; no installed database or agent was used");
 });

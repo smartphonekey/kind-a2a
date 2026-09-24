@@ -9,6 +9,8 @@ import { setTimeout as delay } from "node:timers/promises";
 import { assertPreparedSchema, collectPreparedUpgradeState, parsePreparedUpgradeState, preparedUpgradeSQL } from "../dist/live/prepared-upgrade.js";
 import { anchoredMigrations, anchoredUpgradeSQL, assertAnchoredHistoryUnchanged, assertAnchoredSchema,
   collectAnchoredUpgradeState, parseAnchoredUpgradeState } from "../dist/live/anchored-upgrade.js";
+import { volumeMigrationVersions, volumeMigrationUpgradeSQL, assertVolumeMigrationHistoryUnchanged, assertVolumeMigrationSchema,
+  collectVolumeMigrationUpgradeState, parseVolumeMigrationUpgradeState } from "../dist/live/volume-migration-upgrade.js";
 
 const run = randomUUID(), name = `agyn-prepared-backup-${run}`;
 let directory, createAttempted = false, stage = "configuration", cleanupConfirmed = false, receipt, verifySource;
@@ -20,11 +22,11 @@ const image = process.env.AGYN_PREPARED_POSTGRES_IMAGE;
 try {
   assert.equal(process.env.AGYN_LIVE_ACCEPTANCE, "trusted-local");
   const contract = process.env.AGYN_PREPARED_BACKUP_CONTRACT ?? "prepared-through-0022";
-  assert(["prepared-through-0022", "resource-anchors-through-0026"].includes(contract), "unknown backup contract");
-  const anchored = contract === "resource-anchors-through-0026";
-  const collect = anchored ? collectAnchoredUpgradeState : collectPreparedUpgradeState;
-  const parse = anchored ? parseAnchoredUpgradeState : parsePreparedUpgradeState;
-  const snapshotSQL = anchored ? anchoredUpgradeSQL : preparedUpgradeSQL;
+  assert(["prepared-through-0022", "resource-anchors-through-0026", "volume-adoption-through-0027"].includes(contract), "unknown backup contract");
+  const adoption = contract === "volume-adoption-through-0027", anchored = adoption || contract === "resource-anchors-through-0026";
+  const collect = adoption ? collectVolumeMigrationUpgradeState : anchored ? collectAnchoredUpgradeState : collectPreparedUpgradeState;
+  const parse = adoption ? parseVolumeMigrationUpgradeState : anchored ? parseAnchoredUpgradeState : parsePreparedUpgradeState;
+  const snapshotSQL = adoption ? volumeMigrationUpgradeSQL : anchored ? anchoredUpgradeSQL : preparedUpgradeSQL;
   const root = process.env.AGYN_AUDIT_OUTPUT_DIR, kubeconfig = process.env.AGYN_KUBECONFIG;
   const migrations = process.env.AGYN_PREPARED_REGISTRY_MIGRATIONS;
   assert(isAbsolute(root ?? "") && isAbsolute(kubeconfig ?? "") && isAbsolute(migrations ?? ""));
@@ -75,7 +77,7 @@ try {
   assert.equal(restored.fingerprint, before.fingerprint, "restored lifecycle differs from source");
   stage = "offline-migrations";
   const applied = [];
-  const versions = anchored ? anchoredMigrations : ["0018_checked_volume_lifecycle.sql", "0019_volume_workload_admission.sql", "0020_legacy_volume_adoption.sql", "0021_volume_backend_identity.sql", "0022_prepared_workloads.sql"];
+  const versions = adoption ? volumeMigrationVersions : anchored ? anchoredMigrations : ["0018_checked_volume_lifecycle.sql", "0019_volume_workload_admission.sql", "0020_legacy_volume_adoption.sql", "0021_volume_backend_identity.sql", "0022_prepared_workloads.sql"];
   for (const version of versions) {
     if (before.registry.migrations.includes(version)) continue;
     const file = join(migrations, version); assert(lstatSync(file).isFile(), "migration must be a regular file");
@@ -85,8 +87,8 @@ try {
   }
   const upgradedOutput = sql(snapshotSQL), upgraded = parse(upgradedOutput, scope);
   if (anchored) {
-    assertAnchoredSchema(upgraded);
-    assertAnchoredHistoryUnchanged(before, upgraded);
+    (adoption ? assertVolumeMigrationSchema : assertAnchoredSchema)(upgraded);
+    (adoption ? assertVolumeMigrationHistoryUnchanged : assertAnchoredHistoryUnchanged)(before, upgraded);
     writeFileSync(join(directory, "rehearsal-state.jsonl"), upgradedOutput, { flag: "wx", mode: 0o600 });
   } else {
     assertPreparedSchema(upgraded);
@@ -96,7 +98,7 @@ try {
   }
   save("rehearsal.json", { state: upgraded, migrations: applied });
   verifySource();
-  receipt = { kind: anchored ? "anchored-upgrade-restored-backup" : "prepared-upgrade-restored-backup", version: 1,
+  receipt = { kind: adoption ? "volume-migration-restored-backup" : anchored ? "anchored-upgrade-restored-backup" : "prepared-upgrade-restored-backup", version: 1,
     ...(anchored ? { snapshotContract: contract } : {}), scope, sourceFingerprint: before.fingerprint, restoredFingerprint: restored.fingerprint,
     archiveSha256: createHash("sha256").update(archive).digest("hex"), postgresImage: image, restoredAt: new Date().toISOString(),
     rehearsal: { schemaVerified: true, migrations: applied, legacyHistoryUnchanged: true, fingerprint: upgraded.fingerprint }, installedDatabaseModified: false };

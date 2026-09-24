@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Operator-only adoption command; does not start the A2A service or controller.
+FROM ghcr.io/agynio/agents-orchestrator:0.23.0@sha256:82a3473f7ba660dc8e2743eef50463eb37a40412201797f50c511c33909fc1cf
+COPY --chown=10001:10001 volume-migration /app/volume-migration
+ENTRYPOINT ["/app/volume-migration"]

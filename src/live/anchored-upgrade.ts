@@ -11,7 +11,7 @@ export const anchoredMigrations = ["0023_resource_anchors.sql", "0024_resource_a
   "0025_anchored_volume_removal.sql", "0026_preparation_revocation.sql"] as const;
 const count = z.number().int().nonnegative().safe();
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/);
-const recoverySchema = z.object({
+export const anchoredRecoverySchema = z.object({
   contract: z.literal("resource-anchors-through-0026"),
   volumes: z.object({ anchored: count, reserved: count, retired: count, fingerprint: sha256 }).strict(),
   workloads: z.object({ anchored: count, revoked: count, observed: count, fingerprint: sha256 }).strict(),
@@ -26,15 +26,17 @@ const recoverySchema = z.object({
 // from the projection while its enclosing workload/volume identity stays equal.
 // Pretty constraint deparsing normalizes redundant BETWEEN/AND parentheses that
 // pg_restore reparses; use PostgreSQL's deparser rather than editing SQL strings.
-export const anchoredUpgradeSQL = registryUpgradeSQL(`
+export function resourceRecoverySQL(adoption = false): string { return `
 SELECT json_build_object(
-  'contract', 'resource-anchors-through-0026',
+  'contract', '${adoption ? "volume-adoption-through-0027" : "resource-anchors-through-0026"}',
   'volumes', (SELECT json_build_object(
     'anchored', count(*) FILTER (WHERE to_jsonb(v)->>'resource_anchor' IS NOT NULL),
     'reserved', count(*) FILTER (WHERE to_jsonb(v)->>'anchor_reservation' IS NOT NULL),
     'retired', count(*) FILTER (WHERE to_jsonb(v)->>'anchored_removal_observation' IS NOT NULL),
+    ${adoption ? "'adopted', count(*) FILTER (WHERE to_jsonb(v)->>'anchor_adoption' IS NOT NULL)," : ""}
     'fingerprint', encode(sha256(convert_to(COALESCE(jsonb_agg(jsonb_build_object('id', v.id,
       'anchor', to_jsonb(v)->'resource_anchor', 'reservation', to_jsonb(v)->'anchor_reservation',
+      ${adoption ? "'adoption', to_jsonb(v)->'anchor_adoption'," : ""}
       'observation', to_jsonb(v)->'anchored_removal_observation') ORDER BY v.id)::text, '[]'), 'UTF8')), 'hex')) FROM public.volumes v),
   'workloads', (SELECT json_build_object(
     'anchored', count(*) FILTER (WHERE to_jsonb(w)->>'resource_anchors' IS NOT NULL),
@@ -44,7 +46,10 @@ SELECT json_build_object(
       'resources', to_jsonb(w)->'resource_anchors') ORDER BY w.id)::text, '[]'), 'UTF8')), 'hex')) FROM public.workloads w),
   'pins', (SELECT json_build_object(
     'anchored', count(*) FILTER (WHERE to_jsonb(g)->>'resource_anchors_required' = 'true'),
+    ${adoption ? `'migrating', count(*) FILTER (WHERE to_jsonb(g)->>'volume_anchor_migration' IS NOT NULL AND COALESCE(to_jsonb(g)->'volume_anchor_migration'->>'complete','false')<>'true'),
+    'completed', count(*) FILTER (WHERE to_jsonb(g)->'volume_anchor_migration'->>'complete'='true'),` : ""}
     'fingerprint', encode(sha256(convert_to(COALESCE(jsonb_agg(jsonb_build_object('ownerKind', g.owner_kind, 'ownerId', g.owner_id,
+      ${adoption ? "'migration', to_jsonb(g)->'volume_anchor_migration'," : ""}
       'required', COALESCE(to_jsonb(g)->'resource_anchors_required', 'false'::jsonb)) ORDER BY g.owner_kind, g.owner_id)::text, '[]'), 'UTF8')), 'hex'))
     FROM public.runtime_volume_admission_guards g),
   'columns', (SELECT COALESCE(json_agg(json_build_object('table', c.relname, 'name', a.attname,
@@ -66,7 +71,8 @@ SELECT json_build_object(
     'fingerprint', encode(sha256(convert_to(pg_get_functiondef(p.oid), 'UTF8')), 'hex')) ORDER BY p.proname, pg_get_function_identity_arguments(p.oid)), '[]'::json)
     FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public' AND p.prokind='f')
 );
-`);
+`; }
+export const anchoredUpgradeSQL = registryUpgradeSQL(resourceRecoverySQL());
 
 export function parseAnchoredUpgradeState(output: string, scope: AuditScope) {
   const records = output.trim().split(/\r?\n/);
@@ -80,7 +86,7 @@ export function parseAnchoredUpgradeState(output: string, scope: AuditScope) {
     if (!base.registry.migrations.includes(migration)) missing = true;
     else assert(!missing, "noncontiguous resource lifecycle migrations");
   }
-  const recovery = recoverySchema.parse(JSON.parse(records[2]));
+  const recovery = anchoredRecoverySchema.parse(JSON.parse(records[2]));
   assert(recovery.volumes.anchored <= base.registry.volumes.checked && recovery.volumes.reserved === recovery.volumes.anchored &&
     recovery.volumes.retired <= recovery.volumes.anchored && recovery.workloads.anchored <= base.registry.workloads.prepared &&
     recovery.workloads.revoked <= recovery.workloads.anchored && recovery.workloads.observed <= recovery.workloads.revoked &&
@@ -99,7 +105,10 @@ export function collectAnchoredUpgradeState(read: AuditRead, scope: AuditScope):
   return collectRegistryUpgradeSnapshot(read, scope, anchoredUpgradeSQL, parseAnchoredUpgradeState);
 }
 
-export function assertAnchoredSchema(state: AnchoredUpgradeState): void {
+type ResourceSchemaState = Pick<AnchoredUpgradeState, "registry" | "pins"> & {
+  recovery: Pick<AnchoredUpgradeState["recovery"], "columns" | "constraints" | "triggers" | "functions">;
+};
+export function assertAnchoredSchema(state: ResourceSchemaState): void {
   assertPreparedSchema(state);
   for (const migration of anchoredMigrations) assert(state.registry.migrations.includes(migration), `missing required migration ${migration}`);
   for (const [table, name] of [["workloads", "workloads_resource_anchors_shape"], ["volumes", "volumes_resource_anchor_shape"],

@@ -4,22 +4,26 @@ Status: implementation in progress. The existing 0.4.0 Agyn adapter is a trusted
 local lab, not a production deployment. Passing the baseline tests does not
 remove any of the gates below.
 
-The [Kubernetes A2A app deployment](KUBERNETES.md) now runs the service and web
-UI inside the existing cluster, against the retained `0022` backend. Real parallel
-Codex work, completed-turn continuation and database restore are checked there.
-This does not deploy the rebased Agyn stack, harden the native agent runtime or
-complete replacement-node/workspace disaster recovery.
+Current installed state: the [Kubernetes A2A app](KUBERNETES.md) uses the rebased
+Agyn backend, upgraded **in place** through registry schema `0027` after
+[workspace migration](AGYN-WORKSPACE-MIGRATION.md). All 107 active workspaces keep
+their original PVCs and files; one unbound failed historical record stays
+quarantined. The app image, A2A routing and workflow code are unchanged.
 
-Current installed state: the reviewed prepared Agyn stack is deployed and
-retained locally, with registry migrations through `0022`, digest-pinned images
-and scoped runner RBAC. All four upgraded services are ready. Completed-turn
-Codex A2A continuation passes with the same session and exact PVC identity
-across two removed Pods. The [rollout report](AGYN-PREPARED-ROLLOUT.md) is the
-current deployment record; restoration/no-deployment statements in historical
-fixture rows below describe those earlier tests, not permission to restore old
-clients onto the upgraded registry.
+Latest upgrade acceptance: two existing Codex tasks continue concurrently with
+their original workspaces and native sessions. A separate interrupted-turn test
+retains one non-idempotent append, blocks unreconciled follow-up, then completes
+an explicitly authorized new read-only turn without replaying the old request.
+Compute is released after both checks. Registry and coordinated workspace/session
+backups are restore-tested. **Claude is not tested on this upgrade.** These checks
+do not harden the native runtime or prove complete replacement-node recovery.
 
-Latest acceptance: all five Codex lifecycle scenarios pass on the final
+The migration report is the current deployment record. The following historical
+acceptance paragraphs and fixture rows retain their original scope; statements
+that nothing was installed do not describe the newer rollout or authorize old
+clients against the upgraded registry.
+
+Earlier prepared-stack acceptance: all five Codex lifecycle scenarios pass on the final
 readiness-corrected service and retained prepared stack. Controller SIGKILL and
 Pod loss preserve a non-idempotent append; explicit reconciliation retires the
 old request without replay. Cancellation, parallel/FIFO work, blocking/streaming
@@ -172,7 +176,8 @@ apply to a single-node deployment.
 
 | Gate | Status | Required evidence |
 | --- | --- | --- |
-| Existing workspace anchor adoption | Native source and isolated Kubernetes acceptance verified; registry/coordinator pending | [Two focused contributions](AGYN-VOLUME-ANCHOR-ADOPTION.md) retain the original checked PVC, exact adopting owner/journal and migration hold through six lost-write boundaries. Ordinary/full race each pass 838 entries with seven gated skips; the native matrix passes 16 scenarios plus parent, including 12 SIGKILLs and both owner-GC retention cases. All 108 prior PVCs/PVs and 52 deployments match. Nothing is installed. Durable owner-wide admission, distinct registry adoption records/SQL guards, coordinator, checked legacy reconciliation, extended backup contract, authenticated writer/node fencing and coordinated A2A rollout remain required. |
+| Existing workspace anchor adoption | Installed in place; local migration and Codex checks verified | [Focused API/registry/coordinator contributions](AGYN-WORKSPACE-MIGRATION.md) add durable owner-wide admission, immutable plans, distinct adoption provenance, checked legacy promotion and a versioned backup contract. All 16 real three-process crash scenarios pass. The installed 107 active workspaces retain their original PVCs/files; one unbound failed record remains quarantined. Codex parallel continuation and explicit interrupted-turn reconciliation pass; Claude is untested on this upgrade. Authenticated external-writer/node fencing, complete replacement recovery and hardening remain required. |
+| Coordinated local migration backup | Registry, workspace/session and app restore checks verified | [Migration backup tooling](AGYN-WORKSPACE-MIGRATION.md#backup-scope) restores populated `0027` registry state, preserves 12 fixture adoption histories, and archive-compares the actual drained workspaces before and after adoption. The final post-test recovery point includes 109 claims and both app databases. It is private local evidence, not an encrypted off-node backup or full replacement-node recovery. |
 | Single-node replacement recovery | First production target selected; whole-stack restore unverified | Release requires encrypted off-node backup and a clean replacement-node restore of all required Agyn databases/credentials, A2A state, workspace/session contents and native/backend identities. Measure recovery point/time and verify integrity. Fence the old node, isolate the restore and hold admission closed; queued-at-backup work may also have executed after the snapshot. Registry-only rehearsal does not meet this gate. |
 | Anchored registry restore | Installed-source and populated-history offline restore verified; no deployment | [Versioned backup](AGYN-ANCHORED-BACKUP.md) fingerprints complete recovery documents and lifecycle schema definitions. The actual installed `0022` registry restores and rehearses four migrations offline, preserving 191 workloads and 101 volumes. Ten new-format histories restore pending work, mixed inventory and retired storage; previously invisible document changes and same-name weakened guards are detected. All 516 service test entries pass with the real PostgreSQL fixture enabled, with no failures/skips. All 108 PVCs and 52 deployments are unchanged. The distinct receipt does not bypass the `0022` rollout ceiling. Existing-workspace adoption, coordinated release, complete durable-state backup, off-machine retention and disaster recovery remain required. |
 | Unbound preparation revocation | Source and native/process acceptance verified; not installed | [Distinct native proof and two-step registry cleanup](AGYN-PREPARATION-REVOCATION.md) preserve workspace identity without fabricating a Pod binding or replaying execution. Native 15-entry and combined 19-entry fixtures pass; registry full race passes 838 entries with real PostgreSQL. The focused controller passes the complete 41-entry execution regression. Its separate DNS-compatible combination passes 879 ordinary/full race entries with seven gated skips, unfiltered vet/build and the 19-entry revocation matrix; Gateway compatibility passes 363 full race entries. All dependent branches are pushed. Existing-workspace adoption, DNS-compatible coordinated rollout, durable credential/receipt cleanup, accepted-request-without-workload recovery, authenticated fencing and hardening remain required; new-metadata backup evidence is recorded above. |

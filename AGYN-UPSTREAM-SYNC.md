@@ -3,15 +3,19 @@
 
 Status: fork synchronization, rebasing and isolated acceptance completed. All
 five new contribution branches are pushed; original tested branches are retained.
-No revisions from this sync are deployed. Independent before/after checks confirm
-the installed resources are preserved.
+No revisions were deployed during the sync itself. Independent before/after
+checks confirmed the installed resources were preserved.
 
 Subsequent [deployment work](KUBERNETES.md) built and imported the candidate
-backend images and rehearsed registry restore/migration, but did not install
-them: existing-workspace adoption coordination is still missing. The compatible
-A2A service/web app is separately deployed against the retained `0022` stack.
+backend images and rehearsed registry restore/migration, initially without
+installing them because existing-workspace coordination was missing. That gap
+is now addressed by the [focused workspace migration
+contributions](AGYN-WORKSPACE-MIGRATION.md). The four backend services are upgraded
+in place through schema `0027`, with 107 existing workspaces retained and adopted
+and one unbound failed record quarantined. Codex continuation and interruption
+checks pass; Claude is intentionally untested on this upgrade.
 The no-deployment and no-provider-renewal statements below describe this sync's
-earlier acceptance, not the subsequent app deployment.
+earlier acceptance, not the subsequent app deployment or workspace migration.
 
 ## Bases And Branches
 

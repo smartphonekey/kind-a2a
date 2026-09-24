@@ -4,7 +4,9 @@
 The A2A execution service and assistant-ui web application are installed on the
 existing single-node Agyn K3s cluster as of September 24, 2026. This is a
 **trusted-local deployment against the installed Agyn backend**, not a production
-release or an upgrade of the rebased backend services.
+release. The subsequent [workspace migration and in-place backend
+upgrade](AGYN-WORKSPACE-MIGRATION.md) installs the rebased services through registry
+schema `0027`; the A2A app image and routing code are unchanged.
 
 ## Access
 
@@ -176,24 +178,40 @@ wrong-migration-path attempt and its cleanup are also recorded. Subsequent real
 agent tests create legitimate registry records, so that initial dump is not a
 current all-system recovery point or a release authorization.
 
-These are **database restore tests**, not complete disaster recovery. Missing:
-coordinated agent workspace/session backups, all Agyn databases and keys,
+Those initial checks were **database restore tests**, not complete disaster
+recovery. The subsequent migration also restore-tests coordinated task workspace,
+native session and app data archives. Still missing: all Agyn databases and keys,
 encrypted off-node retention, and a complete replacement-node restore with
 fencing and no replay. Deleting `aira-a2a-data` or its namespace can destroy the
 local-path data. A PVC on the same node is not a backup.
 
 ## Backend Upgrade Boundary
 
+The following paragraph records the **earlier app-only deployment**, before
+[workspace migration](AGYN-WORKSPACE-MIGRATION.md). It is not the current backend
+state: registry `0027` and the compatible four backend images are now installed
+in place. The original 107 active workspaces were retained and adopted, while
+one unbound failed record remains quarantined. A namespaced ConfigMap permission
+was added for native anchors/journals; no cluster-wide RBAC was changed. Claude
+has not been retested on this upgrade.
+
+The current audit preserves all 116 pre-upgrade PVCs/PVs and all 53 Deployment
+identities, with only the four reviewed backend images changed. One additional
+test workspace brings the cluster to 117 claims. Completed-turn and interrupted
+Codex recovery pass separately, both services are ready, and no task Pods remain.
+The latest coordinated local backup restore-checks 109 workspace/app claims and
+the registry; see the migration report for its scope and remaining recovery gaps.
+
 The [rebased backend](AGYN-UPSTREAM-SYNC.md) was built, imported and verified,
-but its four service images were **not deployed**. Installed registry schema
-remains `0022`; candidates require the resource-anchor schema through `0026`.
+but its four service images were **not deployed at that stage**. Registry schema
+then remained `0022`; candidates required the resource-anchor schema through `0026`.
 Native adoption RPCs alone do not implement registry admission/persistence or
 the coordinator needed to migrate existing workspaces safely. The rollout guard
 was not widened, and no workspace/database reset or fabricated adoption receipt
 was used. Do not run candidate controllers against the installed database,
 notification stream or overlay as a supposed isolated deployment.
 
-The final audit matches all 10 original namespace identities, 108 PVCs/PVs,
+That app-deployment audit matched all 10 original namespace identities, 108 PVCs/PVs,
 52 Deployment specs/readiness states, 96 ClusterRoles, 76 ClusterRoleBindings,
 25 Docker container IDs and every original network policy. All eight generated
 app manifests also match their stored fields after the policy correction and

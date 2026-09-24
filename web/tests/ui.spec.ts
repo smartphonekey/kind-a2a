@@ -199,3 +199,61 @@ test("uncertain execution is read-only; logout clears browser access", async ({
   await expect(page.getByLabel("Access token")).toBeVisible();
   expect((await page.request.get("/web-api/session")).status()).toBe(401);
 });
+
+test("relogin gates the composer until the selected task is restored", async ({ page, request }, info) => {
+  await login(page);
+  const text = `restore-${info.project.name}-${Date.now()}`;
+  await send(page, text);
+  await expect(page.locator(".composer-label")).toContainText("Compute released");
+  const taskId = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("task")!;
+  await openTasks(page);
+  await page.getByRole("button", { name: "Sign out", exact: true }).click();
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  let requested!: () => void;
+  const started = new Promise<void>((resolve) => { requested = resolve; });
+  await page.route(`**/web-api/a2a/tasks/${taskId}*`, async (route) => {
+    requested();
+    await held;
+    await route.continue();
+  });
+  await page.getByLabel("Access token").fill(token);
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  await started;
+  await expect(page.getByRole("status")).toHaveText("Loading task");
+  await expect(page.getByLabel("Message", { exact: true })).toHaveCount(0);
+  release();
+  await expect(page.getByRole("status")).toHaveCount(0);
+  await send(page, `follow-up-${text}`);
+  await expect(page.locator(".assistant-message").last()).toContainText(`Reply from codex: follow-up-${text}`);
+  const calls = (await (await request.get("/__fixture/calls")).json()).filter((c: any) => c.taskId === taskId);
+  expect(calls).toHaveLength(2);
+  expect(new URLSearchParams(new URL(page.url()).hash.slice(1)).get("task")).toBe(taskId);
+});
+
+test("failed task restoration stays read-only; new-task navigation fences a stale response", async ({ page }, info) => {
+  await login(page);
+  await send(page, `failed-restore-${info.project.name}-${Date.now()}`);
+  await expect(page.locator(".composer-label")).toContainText("Compute released");
+  const taskId = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("task")!;
+  const url = `**/web-api/a2a/tasks/${taskId}*`;
+  await page.route(url, (route) => route.fulfill({ status: 503, body: "unavailable" }));
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Retry loading task" })).toBeVisible();
+  await expect(page.getByLabel("Message", { exact: true })).toHaveCount(0);
+  await page.unroute(url);
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  await page.route(url, async (route) => { await held; await route.continue(); });
+  await page.getByRole("button", { name: "Retry loading task" }).click();
+  await expect(page.getByRole("status")).toHaveText("Loading task");
+  await openTasks(page);
+  await page.getByRole("button", { name: "New task", exact: true }).click();
+  await page.getByLabel("Message", { exact: true }).fill("unsent draft");
+  const response = page.waitForResponse(r => r.url().includes(`/web-api/a2a/tasks/${taskId}`));
+  release();
+  await response;
+  await page.waitForTimeout(100);
+  await expect(page.getByLabel("Message", { exact: true })).toHaveValue("unsent draft");
+  expect(new URL(page.url()).hash).toBe("");
+});

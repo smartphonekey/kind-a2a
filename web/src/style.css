@@ -332,6 +332,19 @@ img {
   min-width: 0;
   color: #445a4c;
 }
+.task-load {
+  height: auto;
+  min-height: 72px;
+  padding-top: 16px;
+  padding-bottom: 16px;
+}
+.task-load > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.task-load > svg {
+  flex-shrink: 0;
+}
 .agent-select select {
   appearance: none;
   border: 0;

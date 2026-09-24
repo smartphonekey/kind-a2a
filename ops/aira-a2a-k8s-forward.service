@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+[Unit]
+Description=A2A Kubernetes web UI loopback tunnel
+StartLimitIntervalSec=0
+
+[Service]
+ExecStart=%h/.local/bin/kubectl --kubeconfig=%h/work/aira-a2a-lab/.state/agyn-kubeconfig --namespace=aira-a2a port-forward --address=127.0.0.1 service/aira-a2a 8084:8080
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+UMask=0077
+
+[Install]
+WantedBy=default.target

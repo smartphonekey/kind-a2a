@@ -222,6 +222,12 @@ function Workspace({
     [mobileMenu, setMobileMenu] = useState(false),
     [details, setDetails] = useState(false);
   const loadingTask = useRef(0);
+  const [taskLoad, setTaskLoad] = useState<{ id: string; error?: string } | null>(
+    () => {
+      const id = new URLSearchParams(location.hash.slice(1)).get("task");
+      return id ? { id } : null;
+    },
+  );
   const initialLocationLoaded = useRef(false);
   const client = useMemo(() => makeClient(), []);
   const refresh = useCallback(
@@ -253,6 +259,7 @@ function Workspace({
     async (id: string) => {
       const generation = ++loadingTask.current;
       setError("");
+      setTaskLoad({ id });
       try {
         const task = await client.getTask(id, 1000);
         if (generation !== loadingTask.current) return;
@@ -260,10 +267,12 @@ function Workspace({
         if (!session.profiles.some((p) => p.id === profileId))
           throw new Error("This task's agent profile is no longer available.");
         setSelection({ key: id, task, profileId });
+        setTaskLoad(null);
         setMobileMenu(false);
         history.replaceState(null, "", `#task=${encodeURIComponent(id)}`);
       } catch (e) {
-        if (generation === loadingTask.current) setError((e as Error).message);
+        if (generation === loadingTask.current)
+          setTaskLoad({ id, error: (e as Error).message });
       }
     },
     [client, session.profiles],
@@ -286,6 +295,7 @@ function Workspace({
       if (id) void selectTask(id);
       else {
         loadingTask.current++;
+        setTaskLoad(null);
         setSelection({
           key: crypto.randomUUID(),
           profileId: session.defaultProfile,
@@ -302,6 +312,7 @@ function Workspace({
   }, [selectTask, session.defaultProfile]);
   const newTask = (profileId = selection.profileId) => {
     loadingTask.current++;
+    setTaskLoad(null);
     setSelection({ key: crypto.randomUUID(), profileId });
     setMobileMenu(false);
     setError("");
@@ -434,16 +445,43 @@ function Workspace({
             {error}
           </div>
         )}
-        <ChatSession
-          key={selection.key}
-          selection={selection}
-          profiles={session.profiles}
-          onNew={newTask}
-          onTask={onTask}
-          onMenu={() => setMobileMenu(true)}
-          details={details}
-          onDetails={() => setDetails((v) => !v)}
-        />
+        {taskLoad ? (
+          <header className="chat-header task-load" aria-busy={!taskLoad.error}>
+            <button
+              className="icon mobile-only"
+              aria-label="Open task list"
+              onClick={() => setMobileMenu(true)}
+            >
+              <Menu size={19} />
+            </button>
+            <span role={taskLoad.error ? "alert" : "status"}>
+              {taskLoad.error || "Loading task"}
+            </span>
+            {taskLoad.error ? (
+              <button
+                className="icon"
+                aria-label="Retry loading task"
+                title="Retry loading task"
+                onClick={() => void selectTask(taskLoad.id)}
+              >
+                <RefreshCw size={16} />
+              </button>
+            ) : (
+              <LoaderCircle className="spin" size={16} />
+            )}
+          </header>
+        ) : (
+          <ChatSession
+            key={selection.key}
+            selection={selection}
+            profiles={session.profiles}
+            onNew={newTask}
+            onTask={onTask}
+            onMenu={() => setMobileMenu(true)}
+            details={details}
+            onDetails={() => setDetails((v) => !v)}
+          />
+        )}
       </section>
     </main>
   );

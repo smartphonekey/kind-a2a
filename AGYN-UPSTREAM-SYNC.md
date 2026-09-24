@@ -6,6 +6,13 @@ five new contribution branches are pushed; original tested branches are retained
 No revisions from this sync are deployed. Independent before/after checks confirm
 the installed resources are preserved.
 
+Subsequent [deployment work](KUBERNETES.md) built and imported the candidate
+backend images and rehearsed registry restore/migration, but did not install
+them: existing-workspace adoption coordination is still missing. The compatible
+A2A service/web app is separately deployed against the retained `0022` stack.
+The no-deployment and no-provider-renewal statements below describe this sync's
+earlier acceptance, not the subsequent app deployment.
+
 ## Bases And Branches
 
 The four fork `main` branches and their local equivalents were fast-forwarded,

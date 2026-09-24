@@ -1,6 +1,20 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import assert from 'node:assert/strict';
 import { isIP } from 'node:net';
+import { ObjectSerializer } from '@kubernetes/client-node/dist/serializer.js';
+
+export function asKubernetesClientObject(manifest) {
+  const types = { Namespace: 'v1', Secret: 'v1', ServiceAccount: 'v1', PersistentVolumeClaim: 'v1',
+    ResourceQuota: 'v1', Service: 'v1', NetworkPolicy: 'networking.k8s.io/v1', Deployment: 'apps/v1' };
+  assert.equal(manifest.apiVersion, types[manifest.kind], 'unsupported deployment object');
+  // The generated client calls ingress.from "_from". Passing wire JSON directly
+  // to KubernetesObjectApi.create silently drops this security restriction.
+  const type = `V1${manifest.kind}`;
+  const model = ObjectSerializer.deserialize(manifest, type, '');
+  assert.deepEqual(JSON.parse(JSON.stringify(ObjectSerializer.serialize(model, type, ''))), manifest,
+    'Kubernetes client serialization changed the deployment manifest');
+  return model;
+}
 
 // A single SQLite writer in a new namespace, using an existing compatible Agyn.
 // The caller creates the private configuration Secret separately. No credentials

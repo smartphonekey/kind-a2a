@@ -4,6 +4,12 @@ Status: implementation in progress. The existing 0.4.0 Agyn adapter is a trusted
 local lab, not a production deployment. Passing the baseline tests does not
 remove any of the gates below.
 
+The [Kubernetes A2A app deployment](KUBERNETES.md) now runs the service and web
+UI inside the existing cluster, against the retained `0022` backend. Real parallel
+Codex work, completed-turn continuation and database restore are checked there.
+This does not deploy the rebased Agyn stack, harden the native agent runtime or
+complete replacement-node/workspace disaster recovery.
+
 Current installed state: the reviewed prepared Agyn stack is deployed and
 retained locally, with registry migrations through `0022`, digest-pinned images
 and scoped runner RBAC. All four upgraded services are ready. Completed-turn

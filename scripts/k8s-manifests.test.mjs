@@ -2,7 +2,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
-import { serviceManifests } from './k8s-manifests.mjs';
+import { ObjectSerializer } from '@kubernetes/client-node/dist/serializer.js';
+import { serviceManifests, asKubernetesClientObject } from './k8s-manifests.mjs';
 
 const options = { image: `docker.io/library/a2a@sha256:${'a'.repeat(64)}`, ingressIp: '10.43.1.2',
   gatewayHost: 'gateway.agyn.dev', terminalHost: 'terminal.agyn.dev', agentIds: ['00000000-0000-0000-0000-000000000001'] };
@@ -41,6 +42,19 @@ test('rejects unpinned images, wildcard agents and invalid destinations', () => 
     { agentIds: [] }, { agentIds: ['*'] }, { agentIds: [options.agentIds[0], options.agentIds[0]] }]) {
     assert.throws(() => serviceManifests({ ...options, ...change }));
   }
+});
+test('client conversion preserves all wire fields, especially ingress source restrictions', () => {
+  for (const manifest of serviceManifests(options)) {
+    const model = asKubernetesClientObject(manifest);
+    const wire = JSON.parse(JSON.stringify(ObjectSerializer.serialize(model, `V1${manifest.kind}`, '')));
+    assert.deepEqual(wire, manifest);
+    if (manifest.kind === 'NetworkPolicy' && manifest.spec.ingress) {
+      assert.deepEqual(wire.spec.ingress[0].from[0].podSelector.matchExpressions[0].values, options.agentIds);
+      assert.equal(wire.spec.ingress[0].from[0].namespaceSelector.matchLabels['kubernetes.io/metadata.name'], 'agyn-workloads');
+    }
+  }
+  assert.throws(() => asKubernetesClientObject({ apiVersion: 'v1', kind: 'Unknown' }));
+  assert.throws(() => asKubernetesClientObject({ apiVersion: 'v1', kind: 'Namespace', unexpected: true }));
 });
 test('container build excludes operator state and uses the patched pinned Node runtime', () => {
   const ignore = readFileSync(new URL('../.dockerignore', import.meta.url), 'utf8');

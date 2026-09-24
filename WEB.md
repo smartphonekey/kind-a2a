@@ -7,6 +7,10 @@ runtime. It connects to the same durable execution service as machine clients.
 There is no additional agent controller, workflow engine, provider API client,
 or chat database in the frontend.
 
+For the installed Kubernetes app at `http://127.0.0.1:8084/ui/`, its separate
+access token and tested recovery, see [KUBERNETES.md](KUBERNETES.md). The host
+launcher described below remains available on port 8083.
+
 ## Run
 
 Use Node 24.21.0 or another version accepted by the service's SQLite guard.

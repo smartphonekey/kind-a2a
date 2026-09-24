@@ -5,7 +5,8 @@ AGPL-3.0-only. Covered files carry an SPDX header. The complete license is in
 [LICENSES/AGPL-3.0-only.txt](LICENSES/AGPL-3.0-only.txt).
 
 The new `web/` application code, tests, `WEB.md`, and `scripts/start-web.sh`
-are also AGPL-3.0-only. Third-party packages and the Agyn organization avatar
+and the new Kubernetes packaging, scripts and `KUBERNETES.md` are also
+AGPL-3.0-only. Third-party packages and the Agyn organization avatar
 at `web/public/agyn.png` retain their own terms; the avatar is not included in
 this license grant.
 

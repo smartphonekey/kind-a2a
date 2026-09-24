@@ -6,6 +6,11 @@ The [assistant-ui web workspace](WEB.md) adds browser chat with agent selection,
 durable task history, streaming, artifacts and cancellation. Run `npm run start:web`
 after the documented setup; the local URL is `http://127.0.0.1:8083/ui/`.
 
+The [Kubernetes-hosted app](KUBERNETES.md) is now available at
+`http://127.0.0.1:8084/ui/`, with its own durable task database. It uses the
+installed Agyn backend; the rebased backend upgrade remains gated on workspace
+adoption. This is still a trusted-local deployment.
+
 ```text
 A2A client -> A2A adapter -> Agyn Gateway -> one agent instance per A2A task
                                            |-- Codex runtime

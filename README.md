@@ -154,6 +154,13 @@ The dependent [existing-workspace adoption](AGYN-VOLUME-ANCHOR-ADOPTION.md) now
 passes native source and Kubernetes crash/owner-GC acceptance while retaining
 the original PVC and its contents. It is not installed; registry admission and
 adoption persistence, the coordinator and complete-stack restore remain open.
+
+The [September 24 upstream sync](AGYN-UPSTREAM-SYNC.md) fast-forwards four fork
+`main` branches and rebases the active contribution stacks on new branches,
+preserving the original tested heads. It reconciles upstream workload flavors
+with explicit resource bounds without changing A2A routing. The report records
+verification and the unchanged installed-stack boundary.
+
 The first [production target](PRODUCTION.md#first-deployment-target) is single-node
 self-hosted Kubernetes with tested backup/restore.
 

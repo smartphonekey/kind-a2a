@@ -3,6 +3,11 @@
 Keep contributions independently reviewable. An A2A implementation should not
 require maintainers to adopt this entire lab or change a runtime image's role.
 
+The [September 24 upstream sync](AGYN-UPSTREAM-SYNC.md) identifies the current
+rebased contribution branches and their exact dependencies. Earlier branches
+and acceptance revisions below remain preserved; no upstream PR is submitted
+by this synchronization.
+
 ## Ready For Focused Review
 
 The dependent [resource-anchor registry proposal](AGYN-ANCHOR-REGISTRY.md) now

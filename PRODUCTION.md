@@ -112,6 +112,12 @@ and subsequent compute release. Both API/native branches are pushed, but
 durable-state restore and coordinated real-agent rollout remain required.
 All 108 prior PVCs/PVs and 52 deployments are unchanged.
 
+The [September 24 upstream sync](AGYN-UPSTREAM-SYNC.md) updates fork bases and
+rebases the active API, native runner, controller and Gateway stacks on new
+branches. Upstream flavor sizing is integrated with explicit resource limits.
+This is a source compatibility milestone, **not an installed upgrade** or
+production gate closure; historical acceptance below retains its original scope.
+
 The latest [checked-volume acceptance](AGYN-CHECKED-VOLUMES.md#combined-process-acceptance)
 now combines real PostgreSQL, registry RPCs, controller process replacement and
 native Kubernetes deletion. It does not use the A2A driver or deployed Agents

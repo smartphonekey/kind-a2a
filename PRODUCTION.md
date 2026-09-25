@@ -15,8 +15,13 @@ their original workspaces and native sessions. A separate interrupted-turn test
 retains one non-idempotent append, blocks unreconciled follow-up, then completes
 an explicitly authorized new read-only turn without replaying the old request.
 Compute is released after both checks. Registry and coordinated workspace/session
-backups are restore-tested. **Claude is not tested on this upgrade.** These checks
-do not harden the native runtime or prove complete replacement-node recovery.
+backups are restore-tested. **Claude was not tested during that upgrade.** Its
+September 25 [credential and A2A follow-up](AGYN-CLAUDE-A2A.md) uses the existing
+Doppler token and verifies real parallel work and same-task continuation on the
+same installed stack. These checks do not harden the native runtime or prove
+complete replacement-node recovery. Claude interruption quarantine and explicit
+read-only recovery pass, but the negative REST admission check returns the wrong
+HTTP status (500 instead of 409); the follow-up report retains that failure.
 
 The migration report is the current deployment record. The following historical
 acceptance paragraphs and fixture rows retain their original scope; statements
@@ -176,7 +181,7 @@ apply to a single-node deployment.
 
 | Gate | Status | Required evidence |
 | --- | --- | --- |
-| Existing workspace anchor adoption | Installed in place; local migration and Codex checks verified | [Focused API/registry/coordinator contributions](AGYN-WORKSPACE-MIGRATION.md) add durable owner-wide admission, immutable plans, distinct adoption provenance, checked legacy promotion and a versioned backup contract. All 16 real three-process crash scenarios pass. The installed 107 active workspaces retain their original PVCs/files; one unbound failed record remains quarantined. Codex parallel continuation and explicit interrupted-turn reconciliation pass; Claude is untested on this upgrade. Authenticated external-writer/node fencing, complete replacement recovery and hardening remain required. |
+| Existing workspace anchor adoption | Installed in place; local migration and Codex checks verified | [Focused API/registry/coordinator contributions](AGYN-WORKSPACE-MIGRATION.md) add durable owner-wide admission, immutable plans, distinct adoption provenance, checked legacy promotion and a versioned backup contract. All 16 real three-process crash scenarios pass. The installed 107 active workspaces retain their original PVCs/files; one unbound failed record remains quarantined. Codex parallel continuation and explicit interrupted-turn reconciliation pass; the later [Claude follow-up](AGYN-CLAUDE-A2A.md) is separate from adoption of those existing workspaces. Authenticated external-writer/node fencing, complete replacement recovery and hardening remain required. |
 | Coordinated local migration backup | Registry, workspace/session and app restore checks verified | [Migration backup tooling](AGYN-WORKSPACE-MIGRATION.md#backup-scope) restores populated `0027` registry state, preserves 12 fixture adoption histories, and archive-compares the actual drained workspaces before and after adoption. The final post-test recovery point includes 109 claims and both app databases. It is private local evidence, not an encrypted off-node backup or full replacement-node recovery. |
 | Single-node replacement recovery | First production target selected; whole-stack restore unverified | Release requires encrypted off-node backup and a clean replacement-node restore of all required Agyn databases/credentials, A2A state, workspace/session contents and native/backend identities. Measure recovery point/time and verify integrity. Fence the old node, isolate the restore and hold admission closed; queued-at-backup work may also have executed after the snapshot. Registry-only rehearsal does not meet this gate. |
 | Anchored registry restore | Installed-source and populated-history offline restore verified; no deployment | [Versioned backup](AGYN-ANCHORED-BACKUP.md) fingerprints complete recovery documents and lifecycle schema definitions. The actual installed `0022` registry restores and rehearses four migrations offline, preserving 191 workloads and 101 volumes. Ten new-format histories restore pending work, mixed inventory and retired storage; previously invisible document changes and same-name weakened guards are detected. All 516 service test entries pass with the real PostgreSQL fixture enabled, with no failures/skips. All 108 PVCs and 52 deployments are unchanged. The distinct receipt does not bypass the `0022` rollout ceiling. Existing-workspace adoption, coordinated release, complete durable-state backup, off-machine retention and disaster recovery remain required. |

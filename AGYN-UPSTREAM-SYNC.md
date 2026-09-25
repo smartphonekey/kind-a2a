@@ -13,7 +13,9 @@ is now addressed by the [focused workspace migration
 contributions](AGYN-WORKSPACE-MIGRATION.md). The four backend services are upgraded
 in place through schema `0027`, with 107 existing workspaces retained and adopted
 and one unbound failed record quarantined. Codex continuation and interruption
-checks pass; Claude is intentionally untested on this upgrade.
+checks pass; Claude was intentionally untested during the upgrade. The later
+[Claude A2A follow-up](AGYN-CLAUDE-A2A.md) records its Doppler-backed credential
+and real-agent acceptance separately.
 The no-deployment and no-provider-renewal statements below describe this sync's
 earlier acceptance, not the subsequent app deployment or workspace migration.
 

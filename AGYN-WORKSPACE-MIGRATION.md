@@ -6,7 +6,9 @@ Status: the reviewed backend is upgraded **in place** through registry schema
 files; the one unbound failed historical record remains quarantined. Real Codex
 parallel continuation and interrupted-turn recovery both pass. The final backup,
 restore checks and preservation audit pass, and both web services are ready.
-Claude is intentionally not tested for this upgrade.
+Claude was intentionally not tested during this upgrade. The September 25
+[Claude credential and A2A follow-up](AGYN-CLAUDE-A2A.md) is a separate acceptance
+record on the same installed stack.
 
 ## Contribution Units
 
@@ -96,7 +98,7 @@ reproducible fixture environment.
 | Real Codex completed-turn continuation | Two existing tasks run concurrently in separate new Pods; original PVCs, file markers and native sessions retained |
 | Real Codex interrupted-turn recovery | One non-idempotent append retained; uncertain turn blocks follow-up until explicit reconciliation; new read-only turn preserves the same PVC/session |
 | Compute release | Zero task Pods after both live Codex checks |
-| Claude | Not run, as requested |
+| Claude | Not run during this migration, as requested; [subsequent acceptance](AGYN-CLAUDE-A2A.md) is separate |
 | Deployed UI | Restored history and old uncertain-task read-only state checked at 1440, 390 and 320 pixels; no overflow or page errors |
 
 The live crash matrix covers begin, native reserve, SQL reserve, native apply,

@@ -155,9 +155,14 @@ dropped by the JavaScript serialization issue above. Only the new app policy
 was corrected with identity checks; no original policy or CNI configuration was
 changed. Those failed receipts and cleanup evidence are retained.
 
-Claude remains configured but its short-lived local login expired during this
-deployment. Refresh it and the matching Agyn subscription before using that
-profile. The web login token and provider subscription credentials are separate.
+Claude's short-lived local login expired during the initial deployment. The
+September 25 [Claude follow-up](AGYN-CLAUDE-A2A.md) replaces the existing Agyn
+subscription credential with the OAuth token already stored in Doppler; real
+parallel work and same-task continuation now pass. The web login token and
+provider subscription credentials remain separate. This is a one-time sync,
+not automatic propagation of future Doppler rotations. Explicit interrupted-turn
+recovery also passes; unreconciled REST follow-ups are blocked but incorrectly
+return 500 instead of 409, so that HTTP acceptance check remains failed.
 
 ## Backup And Restore Scope
 
@@ -193,7 +198,8 @@ state: registry `0027` and the compatible four backend images are now installed
 in place. The original 107 active workspaces were retained and adopted, while
 one unbound failed record remains quarantined. A namespaced ConfigMap permission
 was added for native anchors/journals; no cluster-wide RBAC was changed. Claude
-has not been retested on this upgrade.
+was not tested during that upgrade; its later credential and acceptance results
+are recorded [separately](AGYN-CLAUDE-A2A.md).
 
 The current audit preserves all 116 pre-upgrade PVCs/PVs and all 53 Deployment
 identities, with only the four reviewed backend images changed. One additional

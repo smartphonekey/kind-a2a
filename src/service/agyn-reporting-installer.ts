@@ -12,6 +12,8 @@
  * @see src/service/agyn-terminal.ts
  * @see src/reporting/runtime.ts
  * @see src/reporting/agent-config.ts
+ * @see daemon::internal/daemon/init_scripts
+ * @see daemon::internal/inboxjournal/journal
  */
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";

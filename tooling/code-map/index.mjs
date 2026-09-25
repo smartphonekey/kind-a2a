@@ -2,22 +2,24 @@
 /**
  * Builds a fresh structural map without importing or executing repository modules.
  * @module
- * @remarks JSDoc owns explanations; the TypeScript AST owns symbols and import edges.
- * Related tests are import relationships, not coverage or evidence of a passing run.
+ * @remarks Source comments own explanations; language ASTs own declarations and imports.
+ * Related tests are static relationships, not coverage or evidence of a passing run.
  */
 import ts from 'typescript';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, realpathSync } from 'node:fs';
+import { realpathSync } from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
+import { read, safePath, excluded } from './files.mjs';
+import { parseGo } from './go-adapter.mjs';
+import { parseProto, parseSql } from './schema-parser.mjs';
 
-const MAX_FILE_BYTES = 2 * 1024 * 1024;
 const MAX_BATCH = 12;
-const excluded = new Set(['.git', '.state', 'node_modules', 'dist', 'build', 'coverage', 'test-results', 'playwright-report']);
 const sourceRoots = new Set(['src', 'web', 'scripts', 'tooling', 'ops']);
-const extension = /\.(?:[cm]?[jt]sx?)$/;
-const testFile = /(?:^|\/)[^/]+\.(?:test|spec)\.[cm]?[jt]sx?$/;
+const extension = /\.(?:[cm]?[jt]sx?|go|proto|sql)$/;
+const scriptExtension = /\.[cm]?[jt]sx?$/;
+const testFile = /(?:\.(?:test|spec)\.[cm]?[jt]sx?|_test\.go)$/;
 const documentSchema = z.object({
   version: z.literal(1),
   documents: z.array(z.object({
@@ -26,29 +28,6 @@ const documentSchema = z.object({
     kind: z.enum(['operations', 'architecture', 'contribution', 'verification', 'navigation', 'historical', 'legal'])
   }).strict())
 }).strict();
-
-function safePath(root, relative) {
-  const parts = relative.split('/');
-  if (path.isAbsolute(relative) || relative.includes('\\') || parts.some(p => !p || p === '.' || p === '..' || excluded.has(p))) {
-    throw new Error(`Disallowed repository path: ${relative}`);
-  }
-  let target = root;
-  for (const part of parts) {
-    target = path.join(target, part);
-    if (lstatSync(target).isSymbolicLink()) throw new Error(`Symlink paths are not inspected: ${relative}`);
-  }
-  return target;
-}
-
-function read(root, relative) {
-  const target = safePath(root, relative);
-  const fd = openSync(target, constants.O_RDONLY | constants.O_NOFOLLOW);
-  try {
-    const stat = fstatSync(fd);
-    if (!stat.isFile() || stat.size > MAX_FILE_BYTES) throw new Error(`Not a bounded regular file: ${relative}`);
-    return readFileSync(fd, 'utf8');
-  } finally { closeSync(fd); }
-}
 
 function walk(node, callback) {
   callback(node);
@@ -129,18 +108,25 @@ function symbols(source) {
   return result;
 }
 
-/** Reads only version-controlled or unignored source files in known source roots. */
-export function buildIndex(directory) {
+/**
+ * Parse a fresh checkout snapshot without running its packages, generators or SQL.
+ * Generated/vendor output is hidden by default; Go imports link packages, not calls.
+ */
+export function buildIndex(directory, { includeGenerated = false, roots } = {}) {
   const root = realpathSync(directory);
   const gitRoot = realpathSync(execFileSync('git', ['rev-parse', '--show-toplevel'], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim());
   if (gitRoot !== root) throw new Error('Use the repository root, not a subdirectory');
+  if (roots && (!Array.isArray(roots) || !roots.length || roots.some(r => r !== '.' && !/^[\w-]+(?:\/[\w-]+)*$/.test(r)))) throw new Error('Invalid source roots');
   const paths = [...new Set(execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z'],
     { cwd: root, encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 }).split('\0').filter(Boolean))]
-    .filter(file => sourceRoots.has(file.split('/')[0]) && extension.test(file) && !file.endsWith('.d.ts') &&
-      !file.split('/').some(part => excluded.has(part))).sort();
+    .filter(file => extension.test(file) && !file.endsWith('.d.ts') && !file.startsWith('docs/archive/') &&
+      !file.split('/').some(part => excluded.has(part)) &&
+      (roots ? roots.some(r => r === '.' || file.startsWith(`${r}/`)) : !scriptExtension.test(file) || sourceRoots.has(file.split('/')[0])) &&
+      (includeGenerated || !file.split('/').some(part => ['gen', 'generated'].includes(part)) && !/\.(?:pb|gen|connect)\.go$/.test(file))).sort();
   if (paths.length > 2500) throw new Error('Source map exceeds the 2500-file bound');
   const modules = new Map();
   const absolute = new Map();
+  const files = [];
   let totalBytes = 0;
   for (const file of paths) {
     let text;
@@ -148,21 +134,39 @@ export function buildIndex(directory) {
     catch (error) { if (error.code === 'ENOENT') continue; throw error; }
     totalBytes += Buffer.byteLength(text);
     if (totalBytes > 32 * 1024 * 1024) throw new Error('Source map exceeds the 32 MiB bound');
-    const source = ts.createSourceFile(path.join(root, file), text, ts.ScriptTarget.Latest, true);
+    files.push({ path: file, text });
+  }
+  let moduleText = '';
+  try { moduleText = read(root, 'go.mod'); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+  const go = parseGo(files.filter(f => f.path.endsWith('.go')), moduleText);
+  const native = new Map(go.files.map(f => [f.path, f]));
+  for (const { path: file, text } of files) {
+    const language = file.endsWith('.go') ? 'go' : file.endsWith('.proto') ? 'protobuf' : file.endsWith('.sql') ? 'sql' : 'typescript';
+    const source = language === 'typescript' ? ts.createSourceFile(path.join(root, file), text, ts.ScriptTarget.Latest, true) : undefined;
+    const parsed = language === 'go' ? native.get(file) : language === 'protobuf' ? parseProto(file, text) : language === 'sql' ? parseSql(file, text) : undefined;
+    if (!includeGenerated && parsed?.generated) continue;
     const id = file.replace(extension, '');
     if (modules.has(id)) throw new Error(`Duplicate component ID: ${id}`);
-    const doc = moduleDocumentation(source);
-    const item = { id, path: file, area: path.posix.dirname(file), test: testFile.test(file),
-      purpose: doc.description.split(/\n\s*\n/)[0] || 'No module overview; inspect its symbols and dependencies.',
-      documentation: doc, symbols: symbols(source), dependencies: [], externalImports: [], declaredTests: [],
+    const doc = parsed?.documentation ?? moduleDocumentation(source);
+    const declarations = parsed?.symbols ?? symbols(source);
+    const documentedDeclaration = declarations.find(s => s.exported && s.documentation.description) ?? declarations.find(s => s.documentation.description);
+    const purpose = doc.description || documentedDeclaration?.documentation.description;
+    const item = { id, path: file, language, area: path.posix.dirname(file), test: testFile.test(file),
+      purpose: purpose?.split(/\n\s*\n/)[0] || (parsed?.packageName ? `Package ${parsed.packageName}; inspect its declarations and dependencies.` : 'No module overview; inspect its symbols and dependencies.'),
+      purposeSource: doc.description ? 'module comment' : documentedDeclaration ? `symbol ${documentedDeclaration.name}` : 'undocumented',
+      documentation: doc, symbols: declarations, dependencies: [], externalImports: [], declaredTests: parsed?.testCases ?? [],
+      packageName: parsed?.packageName, goPackage: parsed?.goPackage, references: parsed?.references ?? [],
+      generated: parsed?.generated ?? false, imports: parsed?.imports ?? [],
       sourceHash: createHash('sha256').update(text).digest('hex'), text, source };
     modules.set(id, item);
     absolute.set(path.join(root, file), item);
   }
+  if (!modules.size) throw new Error('No supported source components found; check the selected checkout and source roots');
   const host = { fileExists: file => absolute.has(file), readFile: file => absolute.get(file)?.text };
+  const values = [...modules.values()];
   for (const item of modules.values()) {
-    const imports = new Set();
-    walk(item.source, node => {
+    const imports = new Set(item.imports);
+    if (item.source) walk(item.source, node => {
       if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier && ts.isStringLiteral(node.moduleSpecifier)) imports.add(node.moduleSpecifier.text);
       if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument) && ts.isStringLiteral(node.argument.literal)) imports.add(node.argument.literal.text);
       if (ts.isCallExpression(node)) {
@@ -178,6 +182,20 @@ export function buildIndex(directory) {
       }
     });
     for (const specifier of [...imports].sort()) {
+      if (item.language === 'go') {
+        const local = go.modulePath && (specifier === go.modulePath || specifier.startsWith(`${go.modulePath}/`));
+        const directory = local ? specifier.slice(go.modulePath.length + 1) || '.' : undefined;
+        const targets = local ? values.filter(m => m.language === 'go' && !m.test && m.area === directory) : [];
+        if (targets.length) for (const target of targets) item.dependencies.push({ id: target.id, specifier, relation: 'Go package import' });
+        else item.externalImports.push({ specifier, unresolvedLocal: Boolean(local) });
+        continue;
+      }
+      if (item.language === 'protobuf') {
+        const targets = values.filter(m => m.language === 'protobuf' && (m.path === specifier || m.path.endsWith(`/${specifier}`)));
+        if (targets.length === 1) item.dependencies.push({ id: targets[0].id, specifier, relation: 'protobuf import' });
+        else item.externalImports.push({ specifier, unresolvedLocal: false });
+        continue;
+      }
       const resolved = ts.resolveModuleName(specifier, item.source.fileName,
         { moduleResolution: ts.ModuleResolutionKind.NodeNext, module: ts.ModuleKind.NodeNext, allowJs: true }, host).resolvedModule;
       const target = resolved && absolute.get(resolved.resolvedFileName);
@@ -185,22 +203,34 @@ export function buildIndex(directory) {
       else item.externalImports.push({ specifier, unresolvedLocal: specifier.startsWith('.') });
     }
   }
-  return { root, modules };
+  return { root, modules, modulePath: go.modulePath, includeGenerated };
+}
+
+function relatedTests(index, item) {
+  return [...index.modules.values()].filter(m => m.test).flatMap(test => {
+    if (item.language === 'go' && test.language === 'go' && test.area === item.area && test.packageName === item.packageName) {
+      return [{ item: test, relation: 'same Go package (not coverage)' }];
+    }
+    const edge = test.dependencies.find(d => d.id === item.id);
+    return edge ? [{ item: test, relation: edge.relation ?? 'direct import' }] : [];
+  });
 }
 
 /** Compact discovery; offsets page the current scan, not a persistent cache. */
-export function listComponents(index, { area, includeTests = false, offset = 0, limit = 30 } = {}) {
+export function listComponents(index, { area, language, includeTests = false, offset = 0, limit = 30 } = {}) {
   if (!Number.isInteger(offset) || offset < 0 || !Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('Use offset >= 0 and limit between 1 and 100');
   const all = [...index.modules.values()].filter(m => includeTests || !m.test);
   const areas = [...new Set(all.map(m => m.area))].sort().map(id => ({ id, components: all.filter(m => m.area === id).length }));
   if (area && !areas.some(a => a.id === area || a.id.startsWith(`${area}/`))) throw new Error(`Unknown area: ${area}`);
-  const selected = all.filter(m => !area || m.area === area || m.area.startsWith(`${area}/`));
-  return { version: 1, areas, total: selected.length, offset,
+  if (language && !['typescript', 'go', 'protobuf', 'sql'].includes(language)) throw new Error(`Unknown language: ${language}`);
+  const selected = all.filter(m => (!area || m.area === area || m.area.startsWith(`${area}/`)) && (!language || m.language === language));
+  return { version: 1, areas, languages: [...new Set(all.map(m => m.language))].sort(), total: selected.length, offset,
     nextOffset: offset + limit < selected.length ? offset + limit : null,
-    components: selected.slice(offset, offset + limit).map(m => ({ id: m.id, path: m.path, area: m.area,
-      purpose: m.purpose.slice(0, 240), documented: Boolean(m.documentation.description),
-      exports: m.symbols.filter(s => s.exported).map(s => s.name),
-      relatedTestCount: [...index.modules.values()].filter(t => t.test && t.dependencies.some(d => d.id === m.id)).length })) };
+    components: selected.slice(offset, offset + limit).map(m => ({ id: m.id, path: m.path, area: m.area, language: m.language,
+      purpose: m.purpose.slice(0, 240), purposeSource: m.purposeSource, documented: m.purposeSource !== 'undocumented',
+      exports: m.symbols.filter(s => s.exported).slice(0, 20).map(s => s.name),
+      exportCount: m.symbols.filter(s => s.exported).length, exportsTruncated: m.symbols.filter(s => s.exported).length > 20,
+      relatedTestCount: relatedTests(index, m).length })) };
 }
 
 function batch(ids, collection) {
@@ -214,24 +244,35 @@ function batch(ids, collection) {
  * name, never both; focused reads retain test links without repeating every case.
  * Source is opt-in and bounded to 120 lines, with explicit truncation metadata.
  */
-export function inspectComponents(index, ids, { symbol, testCase, source = false } = {}) {
+export function inspectComponents(index, ids, { symbol, testCase, source = false, offset = 0, limit = 30 } = {}) {
   if (symbol !== undefined && testCase !== undefined) throw new Error('Select a symbol or a test case, not both');
+  if (!Number.isInteger(offset) || offset < 0 || !Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error('Use offset >= 0 and limit between 1 and 100');
   const selected = batch(ids, index.modules);
   const components = selected.map(item => {
     const focused = symbol !== undefined || testCase !== undefined;
     const chosen = testCase !== undefined ? [] : symbol !== undefined ? item.symbols.filter(s => s.name === symbol) : item.symbols;
     if (symbol !== undefined && !chosen.length) throw new Error(`Unknown symbol ${symbol} in ${item.id}`);
+    if (symbol !== undefined && source && chosen.length > 1) throw new Error(`Ambiguous symbol ${symbol} in ${item.id}; inspect its listed line ranges before reading source`);
     const cases = testCase !== undefined ? item.declaredTests.filter(t => t.name === testCase) : item.declaredTests;
     if (testCase !== undefined && cases.length !== 1) throw new Error(`Expected one test case named ${testCase} in ${item.id}; found ${cases.length}. Use the listed line ranges for ambiguous names.`);
-    const result = { id: item.id, path: item.path, sourceHash: item.sourceHash,
+    const result = { id: item.id, path: item.path, language: item.language, sourceHash: item.sourceHash,
       documentation: item.documentation, dependencies: item.dependencies, externalImports: item.externalImports,
+      ...(item.packageName ? { packageName: item.packageName } : {}),
+      ...(item.goPackage ? { goPackage: item.goPackage } : {}),
+      ...(item.references.length ? { references: item.references } : {}),
       dependents: [...index.modules.values()].filter(m => !m.test && m.dependencies.some(d => d.id === item.id)).map(m => m.id),
-      relatedTests: [...index.modules.values()].filter(m => m.test && m.dependencies.some(d => d.id === item.id))
-        .map(m => ({ id: m.id, path: m.path, relation: 'direct import', ...(focused ? {} : { cases: m.declaredTests }) })),
-      symbols: chosen.map(({ start, end, ...s }) => s) };
-    if (item.test) result.testCases = cases;
+      relatedTests: relatedTests(index, item).map(({ item: m, relation }) => ({ id: m.id, path: m.path, relation, caseCount: m.declaredTests.length,
+        ...(focused ? {} : { cases: m.declaredTests.slice(0, 5), casesTruncated: m.declaredTests.length > 5 }) })),
+      symbols: (focused ? chosen : chosen.slice(offset, offset + limit)).map(({ start, end, ...s }) => ({ ...s,
+        signature: s.signature.slice(0, 800), ...(s.signature.length > 800 ? { signatureTruncated: true } : {}) })),
+      symbolPage: { total: chosen.length, offset: focused ? 0 : offset, nextOffset: !focused && offset + limit < chosen.length ? offset + limit : null } };
+    if (item.test && symbol === undefined) {
+      result.testCases = focused ? cases : cases.slice(offset, offset + limit);
+      result.testCasePage = { total: cases.length, offset: focused ? 0 : offset, nextOffset: !focused && offset + limit < cases.length ? offset + limit : null };
+    }
     if (source) {
       const selection = testCase !== undefined ? cases[0] : symbol !== undefined ? chosen[0] : undefined;
+      if (selection && !Number.isInteger(selection.line)) throw new Error('This parser does not provide an exact source range for the selected declaration');
       const start = selection?.line ?? 1;
       const lines = item.text.split('\n');
       const end = Math.min(selection?.endLine ?? lines.length, start + 119);
@@ -240,7 +281,7 @@ export function inspectComponents(index, ids, { symbol, testCase, source = false
     }
     return result;
   });
-  return { version: 1, components, testNote: 'Related tests are static import relationships, not a passing result or coverage guarantee.' };
+  return { version: 1, components, testNote: 'Related tests are static import or same-Go-package relationships, not passing results or coverage. No target build or build-tag evaluation is performed.' };
 }
 
 function documents(root) {
@@ -274,16 +315,17 @@ export function inspectDocuments(root, ids) {
 export function checkDocumentation(index) {
   const issues = [];
   const catalog = documents(index.root);
-  const maintained = [...index.modules.values()].filter(m => !m.test &&
+  const maintained = [...index.modules.values()].filter(m => !m.test && m.language === 'typescript' &&
     ['src/service/', 'src/reporting/', 'web/src/', 'tooling/code-map/'].some(prefix => m.path.startsWith(prefix)));
-  for (const item of maintained) {
-    if (!item.documentation.description || !item.documentation.tags.some(t => t.name === 'module')) issues.push(`${item.path}: missing leading @module overview`);
+  for (const item of index.modules.values()) {
+    if (maintained.includes(item) && (!item.documentation.description || !item.documentation.tags.some(t => t.name === 'module'))) issues.push(`${item.path}: missing leading @module overview`);
     for (const tag of [item.documentation, ...item.symbols.map(s => s.documentation)].flatMap(d => d.tags)) {
-      if (tag.name === 'see' && /^[\w./-]+\.(?:md|[cm]?[jt]sx?)(?:#[\w-]+)?$/.test(tag.text)) {
+      if (tag.name === 'see' && /^[\w./-]+\.(?:md|[cm]?[jt]sx?|go|proto|sql)(?:#[\w.-]+)?$/.test(tag.text)) {
         try { safePath(index.root, tag.text.split('#')[0]); } catch { issues.push(`${item.path}: missing/unsafe @see ${tag.text}`); }
       }
     }
-    for (const dependency of item.externalImports) if (dependency.unresolvedLocal && extension.test(dependency.specifier)) issues.push(`${item.path}: unresolved local import ${dependency.specifier}`);
+    if (maintained.includes(item)) for (const dependency of item.externalImports) if (dependency.unresolvedLocal && scriptExtension.test(dependency.specifier)) issues.push(`${item.path}: unresolved local import ${dependency.specifier}`);
   }
-  return { ok: issues.length === 0, maintainedComponents: maintained.length, documents: catalog.size, issues };
+  return { ok: issues.length === 0, maintainedComponents: maintained.length, sourceComponents: index.modules.size,
+    documentedComponents: [...index.modules.values()].filter(m => m.documentation.description).length, documents: catalog.size, issues };
 }

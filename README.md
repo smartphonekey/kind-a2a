@@ -49,9 +49,18 @@ npm run code:map -- inspect src/service/worker src/service/task-store
 Inspect an exact symbol with `--symbol NAME`, or add `--source` for bounded,
 line-numbered implementation excerpts. The map derives imports, exports, test
 links and module/public JSDoc from source ASTs on demand; there is no generated
-component catalog to refresh. Test links are direct-import relationships, not
+component catalog to refresh. Test links are static import/package relationships, not
 coverage or passing results. Follow [AGENTS.md](AGENTS.md) and the repository
 [code-map skill](skills/code-map/SKILL.md) for navigation and authoring.
+
+Agyn contribution checkouts are also navigable. Start with `npm run code:map -- repos`,
+then `npm run code:map -- scan --repo runners`. Go, protobuf and SQL use structured
+parsers; select returned `repo::component` IDs together to follow cross-repository
+contracts. `repos --worktrees` exposes other local checkouts for explicit selection.
+The registry is `tooling/code-map/workspace.json`; it uses sibling checkout paths,
+not a generated component inventory. Missing clones remain explicitly unavailable.
+Go navigation needs a local Go toolchain; the helper builds offline and never
+builds or executes the scanned packages. SQL migrations are read, never applied.
 
 ## Documentation
 

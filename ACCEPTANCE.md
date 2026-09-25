@@ -36,6 +36,15 @@ node --test scripts/k8s-manifests.test.mjs
 `npm test` builds source, checks living-documentation structure and runs the
 application and navigation-tool tests. For documentation/tooling-only iterations,
 `npm run docs:check` and `npm run test:code-map` are available separately.
+`npm run test:code-map:go` exercises the standard-library Go parser. With the
+registered sibling checkouts available, `npm run docs:check:workspace` checks
+their catalogs and source-adjacent cross-links. Neither command runs target Go
+packages or applies migrations; actual fork tests remain separate verification.
+
+The suite includes short lease/deadline fixtures. On a busy workstation, diagnose
+load-related timeouts by rerunning the built tests with bounded concurrency:
+`node --test --test-concurrency=2 dist/*.test.js tooling/code-map/*.test.mjs`.
+Report the concurrency and any failing run; do not weaken assertions to hide it.
 
 Browser tests use a model-free service fixture. Ordinary source tests do not
 silently enable live Kubernetes, PostgreSQL or provider fixtures. Record skipped

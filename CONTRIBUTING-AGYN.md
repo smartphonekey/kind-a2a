@@ -29,6 +29,20 @@ Exact installed image digests are in [KUBERNETES.md](KUBERNETES.md#backend-revis
 A production release still needs a complete reproducible multi-repository
 manifest. Pushed, installed, merged and accepted upstream are distinct states.
 
+Source-adjacent documentation is maintained separately on `docs/living-contracts`
+branches in these forks, the daemon and the focused Claude session SDK. The SDK's
+combined session/diagnostic view uses `docs/living-diagnostics-contracts`. Original
+contribution and installed-image heads are preserved. These are documentation-only
+follow-ups, not new deployed binaries or upstream acceptance.
+
+From the A2A checkout, use `npm run code:map -- repos` to discover selected
+repositories and their actual Git heads, then scan and inspect returned IDs.
+`repos --worktrees` includes alternative local branches for explicit selection;
+the default SDK view follows the daemon's session/diagnostics combination.
+The navigator and its parser dependencies stay in this repository. Forks retain
+their own licenses, native comments/tests and small Markdown catalogs; using their
+code does not require adopting this tooling.
+
 ## Review Units
 
 | Area | Proposed home | Boundary |

@@ -72,6 +72,13 @@
       "kind": "contribution"
     },
     {
+      "id": "go-parser",
+      "path": "tooling/code-map/go-parser/README.md",
+      "title": "Go Parser Setup",
+      "purpose": "Local Go/C toolchain prerequisites and offline verification of the trusted parser, not target-repository execution.",
+      "kind": "operations"
+    },
+    {
       "id": "licensing",
       "path": "LICENSING.md",
       "title": "Licensing Scope",

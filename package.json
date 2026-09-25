@@ -13,7 +13,7 @@
     "test:web": "npm --prefix web test",
     "start:runner": "node dist/runner.js",
     "client": "node dist/client.js",
-    "pretest": "npm run build && npm run docs:check",
+    "pretest": "npm run build && npm run docs:check && npm run test:code-map:go",
     "test": "node --test dist/*.test.js tooling/code-map/*.test.mjs",
     "test:agyn": "node --test dist/agyn-backend.test.js",
     "test:adapter": "node --test dist/adapter.test.js",
@@ -22,7 +22,9 @@
     "code:map": "node tooling/code-map/cli.mjs",
     "code:map:mcp": "node tooling/code-map/mcp.mjs",
     "docs:check": "node tooling/code-map/cli.mjs check",
-    "test:code-map": "node --test tooling/code-map/*.test.mjs"
+    "docs:check:workspace": "node tooling/code-map/cli.mjs check --all-repos",
+    "test:code-map": "node --test tooling/code-map/*.test.mjs",
+    "test:code-map:go": "env GOTOOLCHAIN=local GOWORK=off GO111MODULE=off GOPROXY=off GOSUMDB=off go test -race tooling/code-map/go-parser/main.go tooling/code-map/go-parser/main_test.go"
   },
   "dependencies": {
     "@a2a-js/sdk": "1.1.0",
@@ -40,6 +42,8 @@
     "@types/node": "22.15.3",
     "@types/ws": "8.18.1",
     "esbuild": "0.28.2",
+    "libpg-query": "18.1.5",
+    "protobufjs": "8.8.0",
     "typescript": "5.8.3"
   }
 }

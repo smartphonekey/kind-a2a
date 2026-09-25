@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "defaultRepository": "a2a",
+  "repositories": [
+    { "id": "a2a", "purpose": "A2A execution, reporting, browser and local navigation tools", "checkout": "." },
+    { "id": "daemon", "purpose": "Native sessions, required initialization and durable inbox execution", "checkout": "../agyn-contrib/agynd-claude-integration", "roots": ["."] },
+    { "id": "claude-sdk", "purpose": "Claude session selection plus diagnostic result metadata used by the daemon", "checkout": "../agyn-contrib/claude-sdk-integration", "roots": ["."] },
+    { "id": "api", "purpose": "Cross-service protobuf contracts for execution and volume lifecycle", "checkout": "../agyn-contrib/api-volume-anchor-migration", "roots": ["proto"], "protocols": true },
+    { "id": "runners", "purpose": "Registry authority, workload reservations, migration and removal records", "checkout": "../agyn-contrib/runners-volume-anchor-migration", "roots": ["."] },
+    { "id": "orchestrator", "purpose": "Agent scheduling and reconciled workload/volume lifecycle", "checkout": "../agyn-contrib/orchestrator-volume-anchor-migration", "roots": ["."] },
+    { "id": "k8s-runner", "purpose": "Kubernetes workload identity, volume ownership and removal evidence", "checkout": "../agyn-contrib/runner-upstream-20260924", "roots": ["."] },
+    { "id": "gateway", "purpose": "Authenticated protocol forwarding and compatibility boundaries", "checkout": "../agyn-contrib/gateway-upstream-20260924", "roots": ["."] }
+  ]
+}

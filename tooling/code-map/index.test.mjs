@@ -72,7 +72,8 @@ test('selected symbols return bounded source with truthful line numbers', t => {
 });
 
 test('test components expose selectable cases and bounded case source', t => {
-  const { root } = fixture(t);
+  const { root, put } = fixture(t);
+  put('src/worker.test.ts', readFileSync(path.join(root, 'src/worker.test.ts'), 'utf8') + '\nconst selected = true;\n');
   const index = buildIndex(root);
   const listed = inspectComponents(index, ['src/worker.test']).components[0];
   assert.deepEqual(listed.testCases, [{ name: 'waits for removal', line: 3, endLine: 3 }]);
@@ -82,6 +83,10 @@ test('test components expose selectable cases and bounded case source', t => {
   assert.equal(result.source.truncated, false);
   assert(result.source.text.startsWith("test('waits for removal'"));
   assert.deepEqual(result.symbols, []);
+  const focused = inspectComponents(index, ['src/worker.test'], { symbol: 'selected' }).components[0];
+  assert.equal(focused.symbols.length, 1);
+  assert.equal(focused.testCases, undefined);
+  assert.equal(focused.testCasePage, undefined);
   assert.throws(() => inspectComponents(index, ['src/worker.test'], { testCase: 'missing' }), /found 0/);
   assert.throws(() => inspectComponents(index, ['src/worker.test'], { testCase: 'waits for removal', symbol: 'test' }), /not both/);
 });
@@ -236,7 +241,7 @@ test('real MCP SDK lists read-only tools and exercises discovery, batch detail a
   await server.connect(st); await client.connect(ct);
   t.after(async () => { await client.close(); await server.close(); });
   const listed = await client.listTools();
-  assert.deepEqual(listed.tools.map(t => t.name).sort(), ['inspect_components', 'inspect_documents', 'list_components', 'list_documents']);
+  assert.deepEqual(listed.tools.map(t => t.name).sort(), ['inspect_components', 'inspect_documents', 'list_components', 'list_documents', 'list_repositories']);
   assert(listed.tools.every(t => t.annotations.readOnlyHint && !t.annotations.openWorldHint));
   const scan = await client.callTool({ name: 'list_components', arguments: { area: 'src/service' } });
   assert.equal(scan.structuredContent.total, 2);

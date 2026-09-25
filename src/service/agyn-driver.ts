@@ -4,6 +4,8 @@
  * @module
  * @see src/service/worker.ts
  * @see src/service/agyn-reporting-installer.ts
+ * @see api::proto/agynio/api/agents/v1/agents
+ * @see api::proto/agynio/api/runners/v1/runners
  */
 import { AgynClient } from "../agyn-client.js";
 import type { DispatchReceipt, Execution, Runtime } from "./task-store.js";

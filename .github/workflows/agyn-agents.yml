@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 name: Agyn Agent Definitions
 on:
+  # A required check must report even when no agent-definition files change.
   pull_request:
-    paths: ["infra/**", "scripts/agyn-terraform*", "package*.json", ".nvmrc", ".github/workflows/agyn-agents.yml"]
   push:
     branches: [main]
     paths: ["infra/**", "scripts/agyn-terraform*", "package*.json", ".nvmrc", ".github/workflows/agyn-agents.yml"]

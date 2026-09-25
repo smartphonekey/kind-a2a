@@ -1,3 +1,4 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
 # Draft: Durable A2A Execution On Agyn
 
 Status: external contribution proposal, not accepted Agyn architecture.
@@ -78,8 +79,8 @@ boundary against a malicious agent or repository.
    deletion proof. The proposed additive `removal_confirmed_at` separates the
    trusted lifecycle observation from billing. The updated orchestrator waits
    for inspection and the exact durable ACK, keeping unconfirmed workloads
-   tracked. [Source/database checks pass; live rollout remains pending](../AGYN-REMOVAL.md).
-   What capability/fencing
+   tracked. This contract is installed in the [local reviewed stack](../KUBERNETES.md),
+   not an accepted upstream API. What capability/fencing
    contract should cover node partitions, forced deletion and in-flight creates?
    An opt-in immediate stop on pause is separate from removal confirmation.
 5. How should the daemon persist message execution intent and prevent automatic
@@ -96,15 +97,13 @@ boundary against a malicious agent or repository.
 The accompanying implementation tests scoped submissions, SQL transactions,
 cross-process claims, MCP wire calls, durable receipts, bounded stop reminders,
 HTTP authorization/revocation, FIFO work and injected release/dispatch failures.
-It is a trusted local prototype. Live credential delivery, native Stop reminders,
-completed-turn recovery, and explicit interrupted-turn recovery now pass. The
-fault test kills the controller and replaces a pod after a non-idempotent append;
-the follow-up keeps the native session/PVC and does not repeat the append.
-One live hard-cancellation test now observes Pod deletion before settlement and
-verifies a stopped heartbeat on the retained PVC. This is a healthy local-runner
-result, not partition fencing. Enforced network/sandbox isolation, operational
-recovery and a second live agent remain gates. See the dated acceptance report
-for separate live evidence and deterministic tests.
+It is a trusted local prototype with native Codex and Claude, task-isolated
+workspaces, compute release and a browser UI. [Current acceptance](../ACCEPTANCE.md)
+separates completed-turn continuation, explicit interrupted-turn reconciliation,
+model-free fixtures and real-provider execution. Workspaces have been migrated
+in place; local backup/restore checks are scoped, not a replacement-node recovery
+proof. Sandbox hardening, authenticated infrastructure fencing, complete disaster
+recovery and sustained release validation remain [production gates](../PRODUCTION.md).
 
 The focused `CODEX_HOME` daemon patch is independently useful: it lets native
 sessions and Agyn's native-session mapping use the same per-instance durable

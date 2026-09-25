@@ -107,10 +107,11 @@ deny-ingress policies and an egress allowance only to that `/32` and TCP port.
 The existing cluster policy is unchanged. This does not establish production
 network isolation or TLS for reporting.
 
-Claude's subscription uses the current local Max access token. That short-lived
-credential must be renewed in Agyn when it expires; the web app does not read
-or refresh provider credentials. Provider authentication remains an operator
-responsibility, separate from web login.
+Claude's subscription uses an existing secret-manager token synchronized into
+Agyn. The web app does not read or refresh it, and future secret-manager rotations
+do not automatically propagate to Agyn. Provider authentication remains an
+operator responsibility, separate from web login. The token's expiry has not
+been independently established.
 
 ## Tests
 
@@ -132,38 +133,11 @@ from [Agyn's GitHub organization](https://github.com/agynio); it remains Agyn's
 branding and is not relicensed. Third-party packages retain their own licenses.
 This is a local integration, not an official Agyn UI.
 
-## Local Acceptance
+## Verification Scope
 
-On 2026-09-15, Codex and Claude each passed two real browser turns: write a
-unique workspace file, report an artifact/outcome, release compute, reload the
-page and read the original file through the same task. Each task retained one
-instance/thread and used two different workloads. Their executions overlapped.
-The final cluster observation found zero task Pods, all 105 prior PVCs preserved,
-52 deployment specifications unchanged and three new retained task PVCs.
-
-The full service suite passed 455 tests, and all eight desktop/mobile browser
-tests passed. Read-only screenshots of both real tasks at 320, 390, 1440 and
-1920 pixels verified responsive framing with no horizontal overflow.
-
-Private receipts are `.state/a2a-web/live-ui-result-networked.json`,
-`live-ui-result-claude-networked.json` and `final-proof.json` in that directory.
-These prove UI integration with the retained trusted-local stack, not the
-unreleased volume-retirement changes in the separate Agyn worktrees.
-
-At 07:42 UTC, a follow-up verification again passed all 455 service tests and
-eight browser tests. New tasks now become the selected sidebar item as soon as
-the server assigns their ID, without remounting the active assistant-ui runtime.
-The browser regression first reproduced the missing selection, then passed on
-desktop and mobile with same-task continuation intact. Read-only checks of the
-two existing live conversations passed at all four viewport sizes; no agent
-work was replayed and no task Pods remained. The private verification receipt is
-`.state/a2a-web/recheck-jA7kTG/result.json`.
-
-Two earlier setup attempts did not pass and were not replayed. The first used a
-retained test profile whose subscription attachment had been removed; its
-accepted request/paused instance and original `tasks.sqlite` remain quarantined
-under `failed-initial-profile-config.json`. No workload was created for it, and
-automatic release confirmation remains unresolved. The next attempt created a
-Pod but did not acknowledge reporting setup; its task is marked for explicit
-reconciliation in the active store. Subsequent tests used new task IDs after
-dedicated profiles and the scoped reporting network allowances were configured.
+Current automated and real-provider results are summarized in
+[ACCEPTANCE.md](ACCEPTANCE.md). They distinguish model-free browser tests from
+real agent execution, and completed-turn continuation from interrupted recovery.
+The [archived UI report](docs/archive/2026-09-25/WEB.md#local-acceptance) retains
+the detailed receipts and failed attempts without treating them as current
+deployment instructions.

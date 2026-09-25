@@ -1,76 +1,83 @@
-# Agyn Backend
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+# Agyn Integration
 
-Agyn is the preferred execution backend for this lab. Agyn provides the self-hosted Kubernetes control plane, Codex runtime, per-agent persistent volumes, workload networking, and instance pause/resume lifecycle. This repository supplies the missing A2A adapter and durable A2A-task-to-Agyn-instance mapping.
+Agyn is the execution backend for the durable A2A service. It supplies instance
+and thread management, native Codex/Claude runtimes, workload scheduling,
+persistent volumes and provider proxying. This repository supplies task
+ownership, A2A protocol state, durable scheduling and execution reporting.
 
-## Install And Provision
+The current installed backend includes reviewed fork changes through registry
+schema `0027`. A stock Agyn installation alone does not satisfy this service's
+lifecycle contract. Use the [installed inventory](KUBERNETES.md#backend-revisions),
+not a generic `agyn local upgrade`, to identify the compatible stack.
 
-Install the current Agyn CLI and its local prerequisites, then create the local platform:
+## Ownership And Lifecycle
 
-```bash
-brew install agynio/tap/agyn lima xz
-agyn local doctor
-agyn local start --no-ca
-agyn local upgrade
-agyn auth login --profile local
-agyn organizations select --profile local
-```
+Each new task is bound to a dedicated Agyn instance, thread, workspace and native
+session. Different tasks can execute concurrently, while follow-ups for one task
+are serialized. Only trusted operator configuration selects agent profiles,
+runtime images, executables, volumes and subscription bindings.
 
-In Agyn, provision an operator-controlled Codex agent with:
+Agyn receives one recorded inbox submission for each execution. A required init
+gate configures reporting before the CLI starts; a durable inbox journal records
+execution intent/completion and prevents ambiguous pending work from being
+silently replayed. The service pins the exact workload identity.
 
-- native LLM mode and a Codex runtime image;
-- an OpenAI/ChatGPT subscription attached through an Agyn subscription secret;
-- one persistent volume definition mounted at `/workspace`;
-- an idle timeout suitable for the local lab (30 seconds here);
-- final messages delivered to the default thread;
-- handle `@a2a-codex` (or set `AGYN_AGENT_HANDLE`).
+An outcome does not prove compute release. The service waits for
+`removalConfirmedAt` from the compatible lifecycle stack; `removedAt` is a
+metering field and is insufficient. After confirmed release, the next turn can
+start a new Pod with the same task instance/thread/PVC/session.
 
-The checked-in adapter never accepts an executable, image, secret binding, or Agyn agent handle from an A2A request. Rotate the Agyn subscription when its stored access token expires. Do not put the token in this repository or an A2A message.
+## Runtime Requirements
 
-Export the Agyn VM kubeconfig only for operational verification:
+Operator-managed Codex and Claude profiles need:
 
-```bash
-mkdir -p .state
-agyn local kubeconfig > .state/agyn-kubeconfig
-```
+- A distinct, retained per-instance workspace and durable native session state.
+- The required-init, reporting/Stop and durable-inbox configuration appropriate
+  to the selected daemon/runtime.
+- A valid Agyn subscription binding, with provider authentication handled by
+  the native proxy rather than browser or A2A task credentials.
+- Explicit resource bounds, the intended network allowances and access to the
+  configured reporting endpoint.
+- Compatible Gateway, registry, native runner and orchestrator capabilities.
 
-## Run
+Codex persistence uses `CODEX_HOME` on the workspace. Claude persistence uses
+its durable configuration/session mapping and exact transcript identity.
+Profile configuration is immutable for existing tasks; changes require a new
+versioned profile rather than repointing an existing binding.
 
-```bash
-npm ci
-npm run build
-npm run start:agyn
-```
+The installer uses authenticated TerminalGateway delivery, not Kubernetes
+credentials inside the A2A worker. Its exact contract and remaining trusted-local
+assumptions are in [SERVICE.md](SERVICE.md#reporting-setup-contract).
 
-The start script derives the Gateway URL, organization, identity and bearer token from `AGYN_PROFILE` (default `local`). It listens on `127.0.0.1:8082` by default. Override `AGYN_AGENT_HANDLE`, `AIRA_PORT`, or `AIRA_DB_PATH` in the operator environment when needed.
+## Run And Operate
 
-```bash
-AIRA_URL=http://127.0.0.1:8082 npm run client -- submit \
-  "Create a function and tests" unique-request-key
-AIRA_URL=http://127.0.0.1:8082 npm run client -- continue <task-id> \
-  "Continue in the same workspace" unique-continuation-key
-AIRA_URL=http://127.0.0.1:8082 npm run client -- finish <task-id> \
-  "Run the tests and report the result" unique-finish-key
-AIRA_URL=http://127.0.0.1:8082 npm run client -- cancel <task-id>
-```
+For the installed Kubernetes app, follow [KUBERNETES.md](KUBERNETES.md).
+For a separately configured host instance, follow [WEB.md](WEB.md) or
+[SERVICE.md](SERVICE.md#run-requirements). Neither launcher provisions a fresh
+compatible Agyn installation.
 
-Ordinary successful turns end in A2A `INPUT_REQUIRED`, request an Agyn pause, and retain the task's thread, instance and PVC. A later message resumes that exact instance. `finish` sets `metadata.endTask=true`, resulting in A2A `COMPLETED` after the response and pause request. Agyn removes the workload pod asynchronously while retaining the PVC.
-
-Each new A2A task creates a new Agyn thread and instance. Agyn therefore schedules concurrent tasks as separate Kubernetes workloads. The adapter persists the binding before sending the first prompt, so cancellation and process recovery can still locate the instance.
-
-## Verification
-
-```bash
-npm test
-AIRA_URL=http://127.0.0.1:8082 ./scripts/verify-agyn.sh <task-id> [<task-id> ...]
-```
-
-The live verifier checks discovery, adapter/runtime identity, accepted release state, transcript credential patterns and, when the Agyn kubeconfig exists, actual scale-to-zero of workload pods.
+Use `AGYN_PROFILE` for the host launcher's existing operator login. Provider
+subscription credentials are separate from that login and from owner-scoped
+A2A/browser credentials. A secret-manager change does not automatically rotate
+the corresponding Agyn subscription.
 
 ## Boundaries
 
-- Agyn has no native A2A server, so `src/agyn-controller.ts` and the A2A/ConnectRPC translation are local code.
-- The adapter currently exports the agent's response text as its A2A artifact; arbitrary workspace file export remains a separate policy-controlled feature.
-- The current Agyn Codex daemon configures noninteractive `approval_policy=never`. The earlier ACP backend supports explicit coordinator approvals; the Agyn backend does not currently provide equivalent human approval requests.
-- Agyn pause is cooperative. Cancellation requests a pause and marks side effects uncertain; a command already executing may finish before its pod exits. It must not be automatically retried.
-- Completed-turn recovery is live tested. Automatic reconciliation of an adapter crash during an in-flight turn is not implemented; that case remains uncertain and requires explicit operator recovery.
-- This remains a trusted local execution lab. Agyn improves lifecycle ownership and private workload networking, but its containers share the local VM kernel and should not receive unrelated credentials or untrusted repositories without further hardening.
+- The native Agyn path is not the legacy ACP harness. The controller/workflow is
+  profile-neutral, but CLI configuration and persistence require runtime adapters.
+- The native integration does not provide the legacy ACP human-approval bridge.
+  Do not claim real approval handling from noninteractive execution tests.
+- Cancellation waits for workload removal. Work already executed can leave
+  effects; interruption requires explicit reconciliation rather than retry.
+- Root native runtimes and trusted-local reporting/hook configuration are not
+  hardened for hostile repositories. App Pod restrictions do not fix that.
+- Native session retention is implemented; centralized export/analytics and
+  authenticated editor takeover are separate unfinished features.
+
+See [ACCEPTANCE.md](ACCEPTANCE.md) for tested scope,
+[PRODUCTION.md](PRODUCTION.md) for release gates, and
+[CONTRIBUTING-AGYN.md](CONTRIBUTING-AGYN.md) for fork and review boundaries.
+The old `start:agyn` adapter is preserved in source; its
+[archived instructions](docs/archive/2026-09-25/AGYN.md) are not the durable
+service's runbook.

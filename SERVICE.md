@@ -1,7 +1,8 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
 # Durable Execution Service
 
-This is the new development service, separate from the preserved 0.4.0 lab
-adapter. Its authenticated HTTP API, worker, provider driver, reporting MCP and
+This service is separate from the preserved lightweight lab adapters. Its
+authenticated HTTP API, worker, provider driver, reporting MCP and
 durable store are wired together by `src/service/main.ts`. It is not yet a
 production deployment. See [PRODUCTION.md](PRODUCTION.md) for release gates and
 [CONTRIBUTING-AGYN.md](CONTRIBUTING-AGYN.md) for upstream review boundaries.
@@ -10,16 +11,10 @@ The optional [assistant-ui web workspace](WEB.md) adds authenticated browser
 chat at `/ui/`, using the same durable tasks and execution worker. Browser
 access is disabled unless explicitly configured.
 
-The current local installation uses the retained prepared stack through registry
-migration `0022`, not the stock services restored by historical fixtures below.
-The original stack passes all five Codex scenarios and four Claude scenarios;
-three Claude parallel attempts failed with native 401. A subsequent
-[native DNS fix](AGYN-NATIVE-DNS.md) is now retained on the prepared-compatible
-orchestrator. All five scenarios pass for both Claude and Codex with the stock
-proxy, with all 83 prior claims retained and zero task Pods/unconfirmed removals.
-See that report and the historical
-[Codex rollout](AGYN-PREPARED-ROLLOUT.md#final-retained-verification) and
-[Claude report](AGYN-PREPARED-CLAUDE.md) before operating or upgrading the lab.
+The installed backend uses the reviewed fork combination through registry schema
+`0027`, with native Codex and Claude profiles. See [KUBERNETES.md](KUBERNETES.md)
+for its exact revisions and [ACCEPTANCE.md](ACCEPTANCE.md) for verification scope.
+Stock Agyn alone is not a compatible backend for this service.
 
 ## Run Requirements
 
@@ -37,37 +32,12 @@ machine's default Node, agent runtime images or existing database contents.
 Configure an existing Agyn gateway and agent classes with per-instance durable
 volumes. The worker does not create Kubernetes objects itself.
 
-The current driver requires the additive `removalConfirmedAt` contract in
-Runners, Gateway and the orchestrator. Stock Agyn and the earlier local
-integration images are incompatible: `removedAt` ends metering and can be set
-while a failed Pod still exists. Source, real database, Gateway wire and a
-coordinated local failed-Pod test pass, as do all five native Codex lifecycle
-regressions on the coordinated stack. The stock deployments were restored;
-the database migration alone does not make them compatible. All five Claude
-lifecycle scenarios have passing fixtures across separate runs, but earlier
-native authentication failures and production deployment remain unresolved. See
-[the incident and rollout requirements](AGYN-REMOVAL.md). Do not start new tasks
-on the old stack expecting them to settle with this driver.
-
-The separate [volume retention/inventory fixes](AGYN-VOLUME-SAFETY.md) now pass
-source and native Kubernetes checks, including the combined patch stack. They
-are not deployed to the stock services. The proposed
-[checked-volume API/registry/runner implementation](AGYN-CHECKED-VOLUMES.md) now
-passes source and native acceptance. The dependent orchestrator/sandbox caller
-migration also passes component tests and real runner/Kubernetes cleanup with a
-fake registry; no deployment changed. A dependent Runners admission guard now
-passes real PostgreSQL contention and upgrade tests; coordinated rollout must
-also include migration `0019`, not just the original checked-volume API.
-Combined end-to-end deletion, authoritative garbage
-collection and infrastructure fencing still need work; retained disks
-must not be treated as disposable just because one registry scan omits them.
-
-The dependent [legacy-adoption guard](AGYN-CHECKED-VOLUMES.md#legacy-adoption-guards)
-also requires migration `0020`. It prevents adoption with unconfirmed workloads
-or an unknown recorded name and refuses implicit legacy reopen. Registry race,
-upgrade and combined native regressions pass, but this is not an adoption
-coordinator, a writer drain or a permanent rollout. Existing failed/unbound
-legacy records still require explicit reconciliation and must remain retained.
+The driver requires the additive `removalConfirmedAt` contract in Runners,
+Gateway and the orchestrator. `removedAt` ends metering and can be set while a
+failed Pod still exists; it is never release evidence. Use compatible clients,
+not a database migration alone. Retained disks must not be treated as disposable
+because one registry scan omits them. Failed/unbound records require explicit
+reconciliation and must not receive invented workspace bindings.
 
 The service requires `A2A_SERVICE_CONFIG_FILE`, an operator-owned JSON file:
 
@@ -155,22 +125,9 @@ It has no force option, provider credentials or agent-facing endpoint. A valid
 service database receives the same additive schema initialization as the
 service. Queued work and retained task state survive the change.
 
-Verification includes six barrier-synchronized processes, conflicting limits,
-operator-change races, all unreleased phases, expired-lease recovery, the legacy
-SQL guard, and two workers retaining a slot while a fake provider delays
-release. These are local process/storage tests, not a new live Agyn acceptance.
 Different databases and directly created Agyn workloads are outside this budget.
-The separate [native quota acceptance](AGYN-RESOURCES.md#native-namespace-quota-acceptance)
-proves controlled runner/Kubernetes admission. The coordinated local
-[A2A quota-recovery scenario](AGYN-RESOURCES.md#a2a-quota-recovery) now also verifies
-retained inbox/workspace state and explicit reconciliation after a rejected
-follow-up, without changing this scheduler. The independent
-[runner startup-secret fix](AGYN-RESOURCES.md#native-first-provision-failures)
-also passes native first-provision quota rejection and partial-PVC retention,
-and now passes [combined first-provision A2A recovery](AGYN-RESOURCES.md#combined-a2a-acceptance)
-with named-PVC ownership validation. Stock services are restored after acceptance;
-production rollout, whole-task CPU/RAM accounting, storage/PID/IO limits,
-fairness and sustained-load sizing remain separate work.
+Whole-task resource accounting, mandatory protected quotas, storage/PID/IO limits,
+fairness and sustained-load sizing remain [production gates](PRODUCTION.md).
 
 ## Client Authentication
 
@@ -195,15 +152,16 @@ no unauthenticated fallback and never trusts caller-supplied tenant headers.
 Use `Authorization: Bearer <token>`, `Content-Type: application/json` and
 `A2A-Version: 1.0` with the official A2A JSON-RPC methods at `/a2a`. Discovery is
 public at `/.well-known/agent-card.json`. Use TLS at a trusted ingress for any
-non-loopback client or reporter traffic. Browser origins are rejected; there is
-no browser authentication flow in this service.
+non-loopback client or reporter traffic. Machine APIs reject browser origins and
+never accept browser cookies. The optional [web boundary](WEB.md#browser-boundary)
+provides separate cookie authentication and REST/SSE routes.
 
 `SendMessage` persists and queues an execution. `configuration.returnImmediately`
 returns without waiting. Blocking sends wait for the submitted execution to
-settle and the task to be terminal or interrupted; they no longer return a
-partial success after 30 seconds. Follow-ups set `message.taskId` and reuse that task's stored
-profile. The API never accepts a runtime executable, image or Agyn handle in a
-request. Task IDs and contexts do not grant cross-owner access.
+settle and the task to be terminal or interrupted, without returning partial
+success at a fixed 30-second window. Follow-ups set `message.taskId` and reuse
+that task's stored profile. The API never accepts a runtime executable, image or
+Agyn handle in a request. Task IDs and contexts do not grant cross-owner access.
 
 JSON-RPC streams follow the task across interrupted states and subsequent turns,
 closing on terminal status, disconnect, authorization failure or service shutdown.
@@ -220,15 +178,20 @@ The initial task also exposes its atomic `metadata.snapshotSequence` cursor.
 Idle streams send keepalive comments every 15 seconds. A reader that cannot drain
 a write within 10 seconds is disconnected and releases its admission slot.
 Event-source failures use sanitized SDK error envelopes, not task outcomes.
-`GetTask` provides stored history/artifacts. See [protocol acceptance and remaining
-work](A2A-PROTOCOL.md), including production ingress and load-test boundaries.
+`GetTask` provides stored history/artifacts. Production ingress and sustained
+protocol/load validation remain [release work](PRODUCTION.md).
+
+Admission conflicts return REST `409 / ABORTED`; capacity limits return
+`429 / RESOURCE_EXHAUSTED`. JSON-RPC uses `-32010` / `-32029` respectively.
+Stream admission rejects before SSE headers. Internal errors are redacted;
+a transport failure does not authorize resubmitting potentially accepted work.
 
 ## Reporting Setup Contract
 
-The Agyn installer is now implemented and live-tested with the gated local
-environment in [AGYN-REPORTING.md](AGYN-REPORTING.md). The daemon must include the
-required-init and inbox-guard patches and the environment must opt in. Stock Agyn logs failed init
-scripts and continues, so an init script alone is NOT a startup safety gate.
+The Agyn installer uses an explicit trusted-local startup gate. The daemon must
+include the required-init and inbox-guard patches and the environment must opt in.
+Stock Agyn logs failed init scripts and continues, so an init script alone is not
+a startup safety gate.
 
 Agyn only starts an agent pod after an inbox message arrives. The service records
 dispatch intent, sends the message once, persists the returned request ID, then invokes `reportingSetupExecutable`
@@ -266,11 +229,8 @@ Streamable HTTP; no new A2A or MCP wire format is introduced.
 
 The runtime's operator-provided `/agyn/config.json` selects the reporting config
 adapter. Codex uses system TOML; Claude uses its settings and user MCP JSON
-files. Unknown runtimes fail setup. Claude completed/interrupted recovery,
-streaming, cancellation and parallel/FIFO fixtures now pass in separate reviewed
-local runs with the focused daemon patches and an explicit subscription binding.
-Earlier native authentication failures remain unexplained. See
-[AGYN-PORTABILITY.md](AGYN-PORTABILITY.md).
+files. Unknown runtimes fail setup. Both profiles use the same reporting contract;
+their CLI configuration and native persistence remain runtime-specific adapters.
 
 The gate also installs a trusted inbox control file authorizing only the current
 provider message. The daemon's durable journal records intent before the agent
@@ -282,10 +242,9 @@ The installer ACK requires exact execution/instance/workload identity plus a suc
 remote exit. An ambiguous send/setup is quarantined, never automatically resent.
 The worker pins that workload ID; a missing, stopped or replacement workload is
 an interruption, even if Agyn still reports the instance as ACTIVE.
-Live MCP calls, a native Stop reminder, pod removal and same-session continuation
-passed, independently of the installer ACK. Native workload-identity delivery
-remains an architecture question; this terminal-based installer is an explicit
-trusted-local boundary, not a proposed Agyn public API.
+Native workload-identity delivery remains an architecture question; this
+terminal-based installer is an explicit trusted-local boundary, not a proposed
+Agyn public API. An installer ACK alone is not end-to-end execution evidence.
 
 The remote stateless Streamable HTTP MCP endpoint is `/reporting/mcp`. Its bearer
 credential is bound to exactly one execution and instance. It cannot call A2A
@@ -321,8 +280,7 @@ reminds at most twice, then requests a stop and controller reconciliation.
   reported outcome does not authorize the next queued turn.
   This requires explicit `removalConfirmedAt` for every workload, including the
   pinned identity. Runners can set `removedAt` on failed/stopped status purely to
-  end metering; it is never sufficient release evidence. See
-  [the coordinated API/Runners/orchestrator changes](AGYN-REMOVAL.md).
+  end metering; it is never sufficient release evidence.
   `STOP_INACTIVE_INSTANCES=true` is explicit operator policy for stopping busy
   paused instances; it is not the upstream default. The service cannot attest
   provider behavior from a timestamp or image name alone.
@@ -333,8 +291,9 @@ reminds at most twice, then requests a stop and controller reconciliation.
   leases for a replacement worker; it does not claim all remote work was stopped.
   Bounded graceful draining and an operational supervisor remain release gates.
 - SQLite WAL must use a local/PVC filesystem with working locks, not a network
-  shared filesystem. This is not multi-node HA. Backup/restore, schema migration,
-  deletion/retention and disaster recovery remain unverified.
+  shared filesystem. This is not multi-node HA. Local database/workspace restore
+  and in-place migration are verified within the [documented scope](KUBERNETES.md#backup-and-restore-scope).
+  Production retention and complete replacement-node recovery remain release gates.
 - Drain old workers before upgrading the service/daemon profile together. An
   existing running execution without a pinned workload ID is quarantined rather
   than adopted. Never roll back the daemon alone under an inbox-guard profile.

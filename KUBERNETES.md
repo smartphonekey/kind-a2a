@@ -117,12 +117,20 @@ successful validation, without a second human plan approval. The
 own the event, concurrency and plan checks. Merge review remains the authority
 for adding agent profiles; existing definitions are not updated or destroyed.
 
-Live activation requires repository and organization-owner setup, which the
-current push-only login cannot perform:
+The owner has confirmed PR-review protection on `main`, the main-only
+`agyn-agents` environment and the workflow-restricted `agyn-deploy` group.
+Required status checks remain disabled; the group has no runners, the environment
+has no deployment credentials, and `AGYN_AUTO_APPLY_ENABLED` remains unset.
+These external settings need rechecking before activation; the push-only coding
+login cannot administer them.
 
-1. Protect `main` with required PR review and the validation check; disallow
-   direct/force pushes and bypasses. Configure the `agyn-agents` environment to
-   accept only the `main` branch, with no required reviewers or wait timer.
+Remaining activation gates:
+
+1. After unconditional PR validation is merged and observed on agent-definition
+   and unrelated-file PRs, require GitHub Actions' `validate` status check on
+   `main`. Preserve required PR review, stale-review dismissal and the prohibition
+   on direct/force pushes, deletion and bypasses. Keep the `agyn-agents` environment
+   main-branch-only, with no required reviewers or wait timer.
 2. Provision clean, single-job deployment runners in group `agyn-deploy`, with
    no host home, Docker socket, ambient cluster credentials or reusable workspace.
    Restrict the group to this repository and exactly

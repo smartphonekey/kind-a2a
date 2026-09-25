@@ -1,7 +1,36 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
+import { loadYaml } from "@kubernetes/client-node";
 import { assertAutoApplyContext, autoApplyEnvironment } from "./agyn-terraform-ci.mjs";
+
+const workflow = loadYaml(readFileSync(new URL("../.github/workflows/agyn-agents.yml", import.meta.url), "utf8"));
+
+test("agent-definition validation reports on every pull request without deployment access", () => {
+  assert.ok(Object.hasOwn(workflow.on, "pull_request"));
+  assert.deepEqual(workflow.on.pull_request ?? {}, {});
+  assert.equal(workflow.on.pull_request_target, undefined);
+  const validate = workflow.jobs.validate;
+  assert.equal(validate.name ?? "validate", "validate");
+  assert.equal(validate.if, undefined);
+  assert.equal(validate["runs-on"], "ubuntu-24.04");
+  assert.equal(validate.environment, undefined);
+});
+
+test("agent-definition deployment remains opt-in and limited to matching main pushes", () => {
+  assert.deepEqual(workflow.on.push, {
+    branches: ["main"],
+    paths: ["infra/**", "scripts/agyn-terraform*", "package*.json", ".nvmrc", ".github/workflows/agyn-agents.yml"],
+  });
+  const apply = workflow.jobs.apply;
+  assert.equal(apply.if, "github.repository == 'smartphonekey/kind-a2a' && " +
+    "github.event_name == 'push' && github.ref == 'refs/heads/main' && " +
+    "vars.AGYN_AUTO_APPLY_ENABLED == 'true'");
+  assert.equal(apply.needs, "validate");
+  assert.equal(apply.environment, "agyn-agents");
+  assert.equal(apply["runs-on"].group, "agyn-deploy");
+});
 
 const sha = "a".repeat(40);
 const context = () => ({

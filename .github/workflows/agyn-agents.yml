@@ -8,9 +8,9 @@ on:
     paths: ["infra/**", "scripts/agyn-terraform*", "package*.json", ".nvmrc", ".github/workflows/agyn-agents.yml"]
   workflow_dispatch:
 
-# PRs never receive cluster credentials, Agyn tokens or a privileged runner.
-# Live apply stays with an operator until a reviewed deployment identity and
-# approval environment exist. Do not replace this with pull_request_target.
+# PRs run only on hosted runners. The deployment group must restrict access to
+# this workflow at refs/heads/main; labels and job conditions are not isolation.
+# The owner enables apply only after that boundary and the environment exist.
 permissions:
   contents: read
 jobs:
@@ -41,3 +41,52 @@ jobs:
       - run: npm run test:gitops
       - run: npm run agents:provider
       - run: npm run agents:check
+  apply:
+    if: >-
+      github.repository == 'smartphonekey/kind-a2a' &&
+      github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+      vars.AGYN_AUTO_APPLY_ENABLED == 'true'
+    needs: validate
+    environment: agyn-agents
+    runs-on:
+      group: agyn-deploy
+      labels: [self-hosted, linux, x64]
+    concurrency:
+      group: agyn-agent-definitions-main
+      cancel-in-progress: false
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .nvmrc
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: "1.27.1"
+          cache: false
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: "1.16.4"
+          terraform_wrapper: false
+      - uses: bufbuild/buf-action@e8b15693be91ae73e965d157c722987338c768b3 # v1
+        with:
+          version: "1.73.0"
+          setup_only: true
+      - run: npm ci --ignore-scripts
+      - run: npm run agents:provider
+      - run: npm run agents:check
+      - name: Apply merged agent definitions
+        run: npm run agents:deploy
+        env:
+          AGYN_AUTO_APPLY_ENABLED: ${{ vars.AGYN_AUTO_APPLY_ENABLED }}
+          AGYN_API_TOKEN: ${{ secrets.AGYN_API_TOKEN }}
+          KUBE_TOKEN: ${{ secrets.AGYN_TF_KUBE_TOKEN }}
+          KUBE_HOST: ${{ vars.AGYN_KUBE_HOST }}
+          KUBE_CLUSTER_CA_CERT_DATA: ${{ vars.AGYN_KUBE_CA_PEM }}
+          TF_VAR_gateway_url: ${{ vars.AGYN_GATEWAY_URL }}
+          AGYN_GATEWAY_CA_PEM: ${{ vars.AGYN_GATEWAY_CA_PEM }}
+      # No upload-artifact step: plans/logs can hold sensitive configuration.
+      # This runner must be destroyed after the job, including its workspace.

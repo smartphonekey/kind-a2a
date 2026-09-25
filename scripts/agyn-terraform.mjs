@@ -6,6 +6,7 @@
  * implemented here. Logs/plans/state can be sensitive; they stay in private
  * operator storage. Rendering a candidate does not roll out the A2A service.
  * @see scripts/agyn-terraform-policy.mjs
+ * @see scripts/agyn-terraform-ci.mjs
  * @see scripts/agyn-terraform-provider.mjs
  * @see infra/agyn/agents.tf
  */
@@ -16,6 +17,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { mergeTerraformProfiles, reviewAgentPlan, terraformProfiles } from "./agyn-terraform-policy.mjs";
+import { assertAutoApplyContext, autoApplyEnvironment } from "./agyn-terraform-ci.mjs";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const state = path.join(root, ".state/agyn-terraform");
@@ -34,10 +36,12 @@ const usage = `Usage: node scripts/agyn-terraform.mjs <command> [options]
                                 Save a private plan and print its approval digest
   apply --plan FILE --approve SHA256 [--profile NAME] [--allow-create]
                                 Apply only that reviewed plan, with unchanged inputs
+  deploy                        CI-only fresh plan + policy-checked automatic apply
   render --config FILE --out NEW_FILE
                                 Generate a candidate A2A config from managed profiles
-Requires agents:provider first. Live commands require KUBE_CONFIG_PATH or
+Requires agents:provider first. Manual live commands require KUBE_CONFIG_PATH or
 KUBE_IN_CLUSTER_CONFIG=true; token via AGYN_API_TOKEN or an explicit --profile.
+CI deploy uses its protected environment's dedicated tokens, HTTPS origins and CAs.
 Custom Gateway CAs use SSL_CERT_FILE. No TLS verification bypass is supported.`;
 
 if (args.help || !command) {
@@ -50,14 +54,16 @@ if (args.help || !command) {
 }
 
 function main() {
-  if (options.positionals.length !== 1 || !["check", "plan", "apply", "render"].includes(command)) throw new Error(usage);
+  if (options.positionals.length !== 1 || !["check", "plan", "apply", "render", "deploy"].includes(command)) throw new Error(usage);
   const allowed = {
-    check: [], plan: ["profile", "allow-create"],
+    check: [], deploy: [], plan: ["profile", "allow-create"],
     apply: ["profile", "plan", "approve", "allow-create"], render: ["config", "out"],
   }[command];
   for (const [key, value] of Object.entries(args)) {
     if (value && !allowed.includes(key)) throw new Error(`Unexpected --${key} for ${command}`);
   }
+  const deployment = command === "deploy" ? deploymentContext() : undefined;
+  const allowCreate = command === "deploy" || args["allow-create"];
   process.umask(0o077);
   mkdirSync(state, { recursive: true, mode: 0o700 });
   const receipt = json(path.join(state, "provider.json"));
@@ -68,11 +74,15 @@ function main() {
   dev_overrides { "agynio/agyn" = ${JSON.stringify(path.dirname(receipt.binary))} }
   direct {}
 }\n`, { mode: 0o600 });
-  const env = { ...process.env };
+  const env = command === "deploy" ? autoApplyEnvironment(process.env) : { ...process.env };
   // Hidden CLI arguments/logging could change the reviewed action or expose data.
   for (const key of Object.keys(env)) if (key.startsWith("TF_") && key !== "TF_VAR_gateway_url") delete env[key];
   Object.assign(env, { TF_CLI_CONFIG_FILE: cliConfig, TF_INPUT: "0", TF_IN_AUTOMATION: "1", TF_WORKSPACE: "default" });
   const run = mkdtempSync(path.join(state, `${command}-`));
+  if (deployment) {
+    env.SSL_CERT_FILE = path.join(run, "gateway-ca.pem");
+    writeFileSync(env.SSL_CERT_FILE, env.AGYN_GATEWAY_CA_PEM, { mode: 0o600, flag: "wx" });
+  }
   const log = path.join(run, "terraform.log");
   const tf = (directory, argv, codes = [0]) => {
     const result = spawnSync("terraform", [`-chdir=${path.join(root, directory)}`, ...argv], {
@@ -95,10 +105,10 @@ function main() {
     console.log(`Terraform format, validation and mock tests passed. Log: ${log}`);
     return;
   }
-  if (!env.KUBE_CONFIG_PATH && env.KUBE_IN_CLUSTER_CONFIG !== "true") throw new Error("Select an explicit Kubernetes backend with KUBE_CONFIG_PATH or KUBE_IN_CLUSTER_CONFIG=true");
+  if (!deployment && !env.KUBE_CONFIG_PATH && env.KUBE_IN_CLUSTER_CONFIG !== "true") throw new Error("Select an explicit Kubernetes backend with KUBE_CONFIG_PATH or KUBE_IN_CLUSTER_CONFIG=true");
   if (env.KUBE_CONFIG_PATH) env.KUBE_CONFIG_PATH = path.resolve(env.KUBE_CONFIG_PATH);
   env.TF_DATA_DIR = path.join(state, "live-data");
-  if (command === "plan" || command === "apply") {
+  if (command === "plan" || command === "apply" || deployment) {
     if (args.profile) {
       try {
         env.AGYN_API_TOKEN = execFileSync("agyn", ["profile", "token", args.profile], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
@@ -127,19 +137,36 @@ function main() {
     console.log(`Candidate written to ${path.resolve(args.out)}; no deployment was changed.`);
     return;
   }
-  if (command === "plan") {
+  if (command === "plan" || deployment) {
     tf(directory, ["plan", "-input=false", "-no-color", "-lock-timeout=60s", "-detailed-exitcode", `-out=${savedPlan}`], [0, 2]);
   }
   const plan = JSON.parse(tf(directory, ["show", "-json", savedPlan]));
-  const review = reviewAgentPlan(plan, { allowCreate: args["allow-create"] });
+  const review = reviewAgentPlan(plan, { allowCreate });
   const sha256 = digest(readFileSync(savedPlan));
   if (command === "plan") {
     writeFileSync(`${savedPlan}.approval.json`, JSON.stringify({ sha256, inputs, allowCreate: args["allow-create"] }, null, 2) + "\n", { mode: 0o600, flag: "wx" });
     console.log(JSON.stringify({ plan: savedPlan, sha256, review, log }, null, 2));
   } else {
+    if (deployment) {
+      deploymentContext();
+      if (inputs !== sourceDigest(env, receipt) || sha256 !== digest(readFileSync(savedPlan))) throw new Error("Deployment inputs changed during planning");
+    }
     tf(directory, ["apply", "-input=false", "-no-color", "-lock-timeout=60s", savedPlan]);
-    console.log(JSON.stringify({ applied: sha256, review, log }, null, 2));
+    console.log(JSON.stringify({ applied: sha256, review, log, deployment }, null, 2));
   }
+}
+
+function deploymentContext() {
+  if (!process.env.GITHUB_EVENT_PATH) throw new Error("Auto-apply is only available in the protected GitHub deployment workflow");
+  const event = json(process.env.GITHUB_EVENT_PATH);
+  assertAutoApplyContext(process.env, event, { head: process.env.GITHUB_SHA, remoteHead: process.env.GITHUB_SHA, dirty: false });
+  const git = argv => execFileSync("git", argv, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  const remote = git(["ls-remote", "--exit-code", "https://github.com/smartphonekey/kind-a2a.git", "refs/heads/main"]);
+  return assertAutoApplyContext(process.env, event, {
+    head: git(["rev-parse", "HEAD"]),
+    remoteHead: /^([0-9a-f]{40})\trefs\/heads\/main$/.exec(remote)?.[1],
+    dirty: git(["status", "--porcelain", "--untracked-files=normal"]) !== "",
+  });
 }
 
 // Detect edits between review and apply, including ignored tfvars and external
@@ -157,7 +184,7 @@ function sourceDigest(env, receipt) {
   };
   collect("infra/agyn");
   collect("infra/modules/a2a-agents");
-  for (const name of ["agyn-terraform.mjs", "agyn-terraform-policy.mjs"]) {
+  for (const name of ["agyn-terraform.mjs", "agyn-terraform-policy.mjs", "agyn-terraform-ci.mjs"]) {
     entries.push([name, digest(readFileSync(path.join(root, "scripts", name)))]);
   }
   entries.push(["provider", receipt.binarySha256]);

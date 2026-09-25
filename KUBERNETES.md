@@ -101,23 +101,50 @@ export SSL_CERT_FILE="$HOME/.agyn/local/certs/agyn-local-ca.pem"
 npm run agents:plan -- --profile local
 ```
 
-Review the saved private plan/log and printed digest before applying that exact
-plan. Run the helper with `--help` for apply/render arguments. New profiles also
-require explicit create approval. Keep plans, logs, tokens and state out of Git
-and public CI artifacts. The Agyn operator token is passed only through the
-process environment, separately from provider subscriptions.
+These commands remain the manual recovery path: review the private plan/log and
+approve its exact digest. Use the helper's `--help` for apply/render arguments.
+Keep plans, logs, tokens and state out of Git and public CI artifacts. The Agyn
+operator token is separate from provider subscriptions.
 
 Terraform uses a separate Kubernetes Secret state and Lease lock in namespace
 `aira-a2a`. It does not adopt the application's PVC. Back up this state with
 encrypted off-node retention; deleting the namespace can lose agent ownership.
 State access needs a reviewed least-privilege deployment identity before CI apply.
 
-The [CI workflow](.github/workflows/agyn-agents.yml) validates definitions and
-mock tests without live credentials. Live approval/runner integration is not
-enabled. A successful Terraform apply alone does not publish a profile in the
-running A2A app: render a candidate service config from Terraform outputs, then
-use the drained configuration rollout below. Rendering never removes existing
-bindings or overwrites its input. No automatic app restart is performed.
+The chosen deployment policy is **automatic apply after merge**, following
+successful validation, without a second human plan approval. The
+[workflow](.github/workflows/agyn-agents.yml) and [CI guard](scripts/agyn-terraform-ci.mjs)
+own the event, concurrency and plan checks. Merge review remains the authority
+for adding agent profiles; existing definitions are not updated or destroyed.
+
+Live activation requires repository and organization-owner setup, which the
+current push-only login cannot perform:
+
+1. Protect `main` with required PR review and the validation check; disallow
+   direct/force pushes and bypasses. Configure the `agyn-agents` environment to
+   accept only the `main` branch, with no required reviewers or wait timer.
+2. Provision clean, single-job deployment runners in group `agyn-deploy`, with
+   no host home, Docker socket, ambient cluster credentials or reusable workspace.
+   Restrict the group to this repository and exactly
+   `smartphonekey/kind-a2a/.github/workflows/agyn-agents.yml@refs/heads/main`.
+   Group-level workflow restrictions are mandatory; labels and YAML conditions
+   do not protect a public repository from untrusted PR jobs. Verify the
+   organization's [runner-group controls](https://docs.github.com/en/rest/actions/self-hosted-runner-groups)
+   support this before registering any runner.
+3. Supply the step-scoped environment secrets and HTTPS/CA variables named in
+   the apply job. Use a dedicated Agyn deployment identity and Kubernetes state
+   identity, not the workstation login or admin kubeconfig. Verify state/Lease
+   access and denied access to unrelated secrets; if the shared namespace prevents
+   that boundary, migrate the Terraform state to a dedicated namespace first.
+   Runners need verified network access to the selected Gateway and Kubernetes API.
+4. Set repository variable `AGYN_AUTO_APPLY_ENABLED=true` only after those checks.
+   Until then, a green validation run does not mean deployment ran. Do not add
+   public plan/log artifacts; inspect a failure privately and reconcile partial
+   changes before manually rerunning it. Destroy the runner workspace after each job.
+
+A successful Terraform apply alone does not publish a profile in the running
+A2A app: render a candidate service config from Terraform outputs, then use the
+drained configuration rollout below. No automatic app restart is performed.
 
 ## Packaging And Upgrades
 

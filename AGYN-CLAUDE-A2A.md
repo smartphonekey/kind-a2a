@@ -6,8 +6,9 @@ September 25, 2026 follow-up to the
 untested during that September 24 upgrade. Its existing subscription credential
 has now been updated from Doppler, and real parallel execution and same-task
 continuation pass on the installed stack. Interrupted-turn quarantine and
-explicit recovery also work, but the negative REST admission check exposed an
-incorrect HTTP status, documented below. This is not a clean full acceptance pass.
+explicit recovery also work. The initial negative REST admission check exposed
+an incorrect HTTP status; its failed receipt is retained below. A subsequent
+[app-only fix](#rest-conflict-fix) corrects the transport mapping.
 
 ## Credential Source
 
@@ -39,8 +40,9 @@ secret before it takes effect for this agent.
 ## Runtime Path
 
 The web app selects the existing `claude` profile, model `claude-sonnet-5`.
-Observed task Pods run native Claude Code `2.1.225`. No service, A2A controller,
-workflow, image or agent-profile changes were needed.
+Observed task Pods run native Claude Code `2.1.225`. The credential update needed
+no service, A2A controller, workflow, image or agent-profile changes. The later
+REST error fix is a separate app image update.
 
 The runtime has a placeholder `CLAUDE_CODE_OAUTH_TOKEN`; Agyn's native LLM proxy
 injects the actual subscription credential into the provider request. The
@@ -52,6 +54,8 @@ Browser access still uses the separate owner-scoped A2A web token documented in
 web app's Access token field.
 
 ## Acceptance
+
+This table records the initial credential acceptance, before the error fix.
 
 Tests use the deployed service's authenticated A2A REST binding at
 `/web-api/agents/claude`, not the default Codex endpoint or a local standalone
@@ -80,12 +84,12 @@ database check confirmed that it created no execution and the original request
 remained quarantined. This is not an authentication failure or evidence of a
 retry, but the original acceptance script remains failed.
 
-`src/service/a2a.ts` maps store conflicts to `JsonRpcTransportError` (`-32010`).
-The SDK's `restStatusFor` maps that transport-specific error to 500, and the
-browser adapter sanitizes the message. A focused local reproduction confirms
-the mapping. Fixing the REST conflict/capacity mapping and adding cross-binding
-tests remains follow-up work; no application code was changed in this credential
-update. Clients must not infer that a 500 is safe to retry.
+The original `src/service/a2a.ts` mapped store conflicts to
+`JsonRpcTransportError` (`-32010`) for both bindings. The SDK's `restStatusFor`
+mapped that transport-specific error to 500, and the browser adapter sanitized
+the message. A focused local reproduction confirmed the mapping. No application
+code was changed in that credential update. Clients must not infer that a 500
+is safe to retry.
 
 The subsequent recovery check recorded an explicit operator reconciliation,
 then submitted a **new read-only message**, not a retry of the interrupted
@@ -113,3 +117,66 @@ node partitions and hostile-repository isolation are outside this follow-up.
 The earlier migration backup predates these new Claude workspaces and the
 credential update; it is not a current whole-stack restore point. The trusted
 local security and replacement-node recovery gates remain unchanged.
+
+## REST Conflict Fix
+
+Source `d8952aabce2bf2d7f6efaa9998d49f658d6d541c` is deployed to the Kubernetes
+app on September 25. The handler explicitly selects the error binding: REST
+admission conflicts return **409 / ABORTED**, capacity limits return
+**429 / RESOURCE_EXHAUSTED**, and JSON-RPC retains `-32010` / `-32029`.
+The SDK still parses and serializes protocol messages. The browser boundary
+fills generic REST status names that SDK 1.1 otherwise renders as `UNKNOWN`;
+known semantic errors keep their SDK mapping, and internal failures remain
+redacted. No admission, idempotency, retry, routing or reconciliation policy
+changed. No SDK or Agyn fork was required for this fix.
+
+Seven regression tests cover interrupted and terminal tasks, reused message IDs,
+task/owner limits, semantic errors and redaction through both bindings, including
+stream rejection before SSE headers. The five admission cases failed with 500
+before the fix. The complete suite now has **528 passing tests and one opt-in
+PostgreSQL test skipped**; all **12 browser tests** and **13 packaged-image
+transport/browser-boundary tests** pass.
+
+The app database was backed up with SQLite's online API and restored into an
+offline copy with identical schema/table hashes and passing integrity/foreign-key
+checks. No worker or provider credentials were used for the restore. The
+rollout preserved the Deployment identity and changed only its main/init image
+references. All 120 pre-existing PVC/PV identities and the complete app database
+were unchanged immediately after replacement. The local port-forward was
+stopped for approximately 16 seconds and then restarted; the separate host
+service on port 8083 was not restarted or upgraded.
+
+Live verification uses a **new Claude task**. After one observed append and
+intentional Pod removal, all six REST routes (send/stream on default, Codex and
+Claude profile URLs) reject follow-ups with 409; both JSON-RPC methods reject
+with `-32010`. The existing task's Claude binding remains authoritative on every
+route. None of these eight rejected requests creates an execution. The full
+interruption test now passes: explicit reconciliation retires the old request,
+one new read-only turn keeps the original PVC/native session/transcript, the
+file contains exactly one append, and compute is released. There is no automatic
+retry or replay of the interrupted action.
+
+The final audit preserves all 120 original PVC/PV identities and every
+pre-existing application-data row, including the four earlier quarantined
+executions; SQLite sequence counters advance for the new records. Only the
+new test task adds a workspace and two execution records; zero task Pods or
+Services remain. All 53 Deployment identities, namespaces, cluster-wide RBAC,
+network policies and original Docker containers are preserved; only the owned
+app's two image references changed. Registry adoption remains at 107 completed
+workspaces with one historical quarantine and zero unconfirmed workloads.
+
+The recovered Claude conversation and Compute released state pass browser checks
+at 1440, 390 and 320 pixels with no overflow or page errors. An earlier
+quarantined task remains read-only in the UI. Both local web services are ready.
+
+Private evidence: `.state/a2a-rest-errors-vcc4n8/`, including `before.json`,
+`app-before.sqlite`, `app-restored.sqlite`, `image.json`, `rollout.json` and
+`acceptance-interrupted.json`, `final-check.json` and
+`rest-fixed-ui-{1440,390,320}.png`. The first rollout preflight stopped before any
+deployment change because its in-memory inventory retained undefined optional
+fields; after matching the JSON serialization used for saved snapshots, the
+guard and rollout passed. The read-only final registry audit was rerun after
+correcting its command wrapper to forward SQL on stdin; no provider request was
+resent. The failed initial credential receipt remains in its
+original directory and is not rewritten as a pass. This app-only backup is not
+a new coordinated workspace/provider backup or replacement-node recovery proof.

@@ -6,7 +6,9 @@ existing single-node Agyn K3s cluster as of September 24, 2026. This is a
 **trusted-local deployment against the installed Agyn backend**, not a production
 release. The subsequent [workspace migration and in-place backend
 upgrade](AGYN-WORKSPACE-MIGRATION.md) installs the rebased services through registry
-schema `0027`; the A2A app image and routing code are unchanged.
+schema `0027`. The September 25 [admission error fix](AGYN-CLAUDE-A2A.md#rest-conflict-fix)
+subsequently updates only the A2A app image; task routing and workflow policy are
+unchanged.
 
 ## Access
 
@@ -35,8 +37,8 @@ curl --fail http://127.0.0.1:8084/readyz
 ## Installed Shape
 
 - Namespace `aira-a2a`, one replica, `Recreate` strategy, ClusterIP Service only.
-- App image source `13db0a522212aac9bc3327cc05e5ead83dc6ec7b`, pinned to
-  `docker.io/library/aira-a2a-service@sha256:348ead39a2f275f6e29e8d3d6c2378be5e49b3047f213ebd4a15f04089a6dbba`.
+- App image source `d8952aabce2bf2d7f6efaa9998d49f658d6d541c`, pinned to
+  `docker.io/library/aira-a2a-service@sha256:5e772d0c375eec76ddbc3d7ce56ac1675e8d873ae8105f3d2ade148c7f550804`.
   Node 24.21.0, SQLite 3.53.4 and UID 1000 are verified in the running Pod.
 - PVC `aira-a2a-data`, 1 GiB, `local-path`; SQLite at
   `/data/private/tasks.sqlite`. This claim must outlive app Pod replacement.
@@ -103,6 +105,10 @@ worker against a copied database or assume interrupted requests can be retried.
 
 ## Live Acceptance
 
+The table below records the initial September 24 app deployment. Current
+transport tests and the app-only rollout are recorded in the
+[September 25 admission error fix](AGYN-CLAUDE-A2A.md#rest-conflict-fix).
+
 Private evidence is under `.state/agyn-upstream-deploy-94iKDb/`; it contains
 operator metadata and must not be committed or published.
 
@@ -161,8 +167,11 @@ subscription credential with the OAuth token already stored in Doppler; real
 parallel work and same-task continuation now pass. The web login token and
 provider subscription credentials remain separate. This is a one-time sync,
 not automatic propagation of future Doppler rotations. Explicit interrupted-turn
-recovery also passes; unreconciled REST follow-ups are blocked but incorrectly
-return 500 instead of 409, so that HTTP acceptance check remains failed.
+recovery also passes. The initial REST check failed with 500 instead of 409;
+the subsequent app-only fix now returns 409 on all six live REST send/stream
+routes. The original failed receipt is retained separately.
+The new full interrupted-turn check passes with explicit reconciliation, one
+read-only continuation, no replay, and compute released.
 
 ## Backup And Restore Scope
 
@@ -201,7 +210,7 @@ was added for native anchors/journals; no cluster-wide RBAC was changed. Claude
 was not tested during that upgrade; its later credential and acceptance results
 are recorded [separately](AGYN-CLAUDE-A2A.md).
 
-The current audit preserves all 116 pre-upgrade PVCs/PVs and all 53 Deployment
+The migration audit preserved all 116 pre-upgrade PVCs/PVs and all 53 Deployment
 identities, with only the four reviewed backend images changed. One additional
 test workspace brings the cluster to 117 claims. Completed-turn and interrupted
 Codex recovery pass separately, both services are ready, and no task Pods remain.

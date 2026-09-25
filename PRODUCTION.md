@@ -8,7 +8,9 @@ Current installed state: the [Kubernetes A2A app](KUBERNETES.md) uses the rebase
 Agyn backend, upgraded **in place** through registry schema `0027` after
 [workspace migration](AGYN-WORKSPACE-MIGRATION.md). All 107 active workspaces keep
 their original PVCs and files; one unbound failed historical record stays
-quarantined. The app image, A2A routing and workflow code are unchanged.
+quarantined. That migration left the app image, A2A routing and workflow code
+unchanged. The subsequent [REST error fix](AGYN-CLAUDE-A2A.md#rest-conflict-fix)
+updates the app image without changing routing, admission or retry policy.
 
 Latest upgrade acceptance: two existing Codex tasks continue concurrently with
 their original workspaces and native sessions. A separate interrupted-turn test
@@ -20,11 +22,16 @@ September 25 [credential and A2A follow-up](AGYN-CLAUDE-A2A.md) uses the existin
 Doppler token and verifies real parallel work and same-task continuation on the
 same installed stack. These checks do not harden the native runtime or prove
 complete replacement-node recovery. Claude interruption quarantine and explicit
-read-only recovery pass, but the negative REST admission check returns the wrong
-HTTP status (500 instead of 409); the follow-up report retains that failure.
+read-only recovery pass. The initial negative REST check returned the wrong
+HTTP status (500 instead of 409); the deployed transport fix now returns 409
+on all six live REST send/stream routes. The follow-up report retains the
+original failure and records the fix separately.
+The new full Claude interruption check also passes without repeating the
+observed side effect; original data and quarantined tasks remain unchanged.
 
-The migration report is the current deployment record. The following historical
-acceptance paragraphs and fixture rows retain their original scope; statements
+The migration report and subsequent app-only fix record the current deployment.
+The following historical acceptance paragraphs and fixture rows retain their
+original scope; statements
 that nothing was installed do not describe the newer rollout or authorize old
 clients against the upgraded registry.
 

@@ -255,6 +255,7 @@ export function browserRouter(options: HttpOptions, browser: BrowserOptions) {
       card,
       profileId,
       options.pollMs,
+      "HTTP+JSON",
     );
     router.get(`${path}/.well-known/agent-card.json`, (_request, response) =>
       response.json(AgentCard.toJSON(card)),
@@ -299,6 +300,20 @@ export function browserRouter(options: HttpOptions, browser: BrowserOptions) {
         ]),
       });
       response.once("close", () => request.off("aborted", abort));
+      const json = response.json.bind(response);
+      response.json = (body) => {
+        // The SDK includes Error.message in REST errors; keep internal diagnostics server-side.
+        if (response.statusCode >= 500) {
+          return json({ error: { code: response.statusCode, status: "INTERNAL", message: "Internal service error" } });
+        }
+        // SDK 1.1's generic REST errors retain the HTTP code but serialize the status as UNKNOWN.
+        const status = response.statusCode === 409 ? "ABORTED"
+          : response.statusCode === 429 ? "RESOURCE_EXHAUSTED" : undefined;
+        if (status && body?.error?.status === "UNKNOWN") {
+          return json({ ...body, error: { ...body.error, status } });
+        }
+        return json(body);
+      };
       // Use the SDK REST binding for parsing/serialization; retain our bounded SSE writer.
       const streamRoute =
         request.method === "POST" && request.path === "/message:stream";
@@ -362,20 +377,6 @@ export function browserRouter(options: HttpOptions, browser: BrowserOptions) {
           }
         })();
       } else {
-        // The SDK includes Error.message in REST errors; keep internal diagnostics server-side.
-        const json = response.json.bind(response);
-        response.json = (body) =>
-          json(
-            response.statusCode >= 500
-              ? {
-                  error: {
-                    code: response.statusCode,
-                    status: "INTERNAL",
-                    message: "Internal service error",
-                  },
-                }
-              : body,
-          );
         restHandler({
           requestHandler: handler,
           userBuilder: async () => context.user!,

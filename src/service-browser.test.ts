@@ -7,11 +7,11 @@ import { setTimeout as delay } from "node:timers/promises";
 import test, { type TestContext } from "node:test";
 import { createServiceApp } from "./service/http.js";
 import { serviceCard } from "./service/card.js";
-import { DurableTaskStore } from "./service/task-store.js";
-import { TaskState } from "@a2a-js/sdk";
+import { DurableTaskStore, type StoreOptions } from "./service/task-store.js";
+import { Message, TaskState } from "@a2a-js/sdk";
 
-async function fixture(t: TestContext, sessionTtlMs?: number) {
-  const store = new DurableTaskStore(":memory:");
+async function fixture(t: TestContext, sessionTtlMs?: number, storeOptions?: StoreOptions) {
+  const store = new DurableTaskStore(":memory:", storeOptions);
   const shutdown = new AbortController(),
     server = createServer();
   let available = true,
@@ -101,6 +101,119 @@ const input = (
     parts: [{ text }],
   },
   configuration: { returnImmediately: true },
+});
+
+for (const scenario of ["recovery", "terminal", "identity", "task capacity", "owner capacity"] as const) {
+  test(`A2A admission errors: ${scenario} preserves REST/JSON-RPC bindings without accepting work`, async (t) => {
+    const capacity = scenario.endsWith("capacity");
+    const f = await fixture(t, undefined, {
+      maxQueuedPerTask: scenario === "task capacity" ? 1 : 32,
+      maxPendingPerOwner: scenario === "owner capacity" ? 1 : 256,
+    });
+    const cookie = await f.login(), scope = { tenant: "org", subject: "alice" };
+    const original = input("original");
+    const submitted = f.store.submit(scope, Message.fromJSON(original.message), "claude");
+    const taskId = submitted.task.id;
+    if (scenario === "recovery") {
+      const { lease } = f.store.claim("worker", 60_000, 1)!;
+      f.store.bind(lease, { instanceId: "instance", threadId: "thread", profileId: "claude" });
+      f.store.beginDispatch(lease);
+      f.store.dispatched(lease, "original-provider-request");
+      f.store.markUncertain(lease, "interrupted after a side effect");
+      f.store.settle(lease, { stopped: true });
+    } else if (scenario === "terminal") f.store.requestCancel(scope, taskId);
+    const params = scenario === "identity" ? input("original", "Different content")
+      : input("rejected", "Do not execute", scenario === "owner capacity" ? undefined : taskId);
+    const before = f.store.snapshot(scope, taskId), execution = f.store.execution(submitted.execution.id);
+    for (const method of ["SendMessage", "SendStreamingMessage"]) {
+      const response = await fetch(`${f.base}/a2a`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${f.tokens.alice}`, "content-type": "application/json", "A2A-Version": "1.0" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: "rejected", method, params }),
+        signal: AbortSignal.timeout(5000),
+      });
+      assert.equal(response.status, 200);
+      const body = await response.json() as any;
+      assert.equal(body.error.code, capacity ? -32029 : -32010);
+      assert.equal(body.id, "rejected");
+      assert.equal(body.result, undefined);
+      assert.deepEqual(f.store.snapshot(scope, taskId), before);
+    }
+    for (const path of ["/web-api/a2a", "/web-api/agents/codex", "/web-api/agents/claude"]) {
+      for (const operation of ["send", "stream"]) {
+        const response = await f.request(`${path}/message:${operation}`, {
+          method: "POST", headers: { cookie }, body: JSON.stringify(params),
+        });
+        assert.equal(response.status, capacity ? 429 : 409, `${path}/message:${operation}`);
+        assert(!response.headers.get("content-type")?.includes("text/event-stream"));
+        const body = await response.json() as any;
+        assert.equal(body.error.code, response.status);
+        assert.equal(body.error.status, capacity ? "RESOURCE_EXHAUSTED" : "ABORTED");
+        assert.match(body.error.message, /recovery|terminal|identity|queue|admission/);
+        assert.equal(body.task, undefined);
+        assert.deepEqual(f.store.snapshot(scope, taskId), before);
+        assert.deepEqual(f.store.execution(submitted.execution.id), execution);
+      }
+    }
+    // Exact retries still resolve to the original execution, even after quarantine or cancellation.
+    const retry = f.store.submit(scope, Message.fromJSON(original.message), "claude");
+    assert.equal(retry.duplicate, true);
+    assert.equal(retry.execution.id, submitted.execution.id);
+  });
+}
+
+test("browser REST: semantic errors retain their SDK status names", async (t) => {
+  const f = await fixture(t), cookie = await f.login(), scope = { tenant: "org", subject: "alice" };
+  const { task } = f.store.submit(scope, Message.fromJSON(input("original").message), "codex");
+  const { lease } = f.store.claim("worker", 60_000, 1)!;
+  f.store.bind(lease, { instanceId: "instance", threadId: "thread", profileId: "codex" });
+  f.store.beginDispatch(lease);
+  f.store.dispatched(lease, "provider-request");
+  f.store.report("instance", lease.executionId, { kind: "outcome", eventId: "done", outcome: "task_completed", message: "done" });
+  f.store.releasing(lease);
+  f.store.settle(lease, { stopped: true });
+  const canceled = await f.request(`/web-api/a2a/tasks/${task.id}:cancel`, {
+    method: "POST", headers: { cookie }, body: "{}",
+  });
+  assert.equal(canceled.status, 400);
+  assert.equal(((await canceled.json()) as any).error.status, "FAILED_PRECONDITION");
+  for (const operation of ["send", "stream"]) {
+    const missing = await f.request(`/web-api/a2a/message:${operation}`, {
+      method: "POST", headers: { cookie }, body: JSON.stringify(input("missing", "work", "missing")),
+    });
+    assert.equal(missing.status, 404);
+    assert.equal(((await missing.json()) as any).error.status, "NOT_FOUND");
+    const invalid = await f.request(`/web-api/a2a/message:${operation}`, {
+      method: "POST", headers: { cookie }, body: JSON.stringify({ message: { role: "ROLE_USER", parts: [] } }),
+    });
+    assert.equal(invalid.status, 400);
+    assert.equal(((await invalid.json()) as any).error.status, "INVALID_ARGUMENT");
+  }
+});
+
+test("A2A admission errors: unexpected failures stay redacted in REST and JSON-RPC", async (t) => {
+  const f = await fixture(t), cookie = await f.login();
+  f.store.submit = () => { throw new Error("private database path and authentication detail"); };
+  for (const operation of ["send", "stream"]) {
+    const response = await f.request(`/web-api/agents/claude/message:${operation}`, {
+      method: "POST", headers: { cookie }, body: JSON.stringify(input("never-accepted")),
+    });
+    assert.equal(response.status, 500);
+    const body = await response.json() as any;
+    assert.equal(body.error.status, "INTERNAL");
+    assert.equal(body.error.message, "Internal service error");
+    assert(!JSON.stringify(body).includes("private"));
+  }
+  for (const method of ["SendMessage", "SendStreamingMessage"]) {
+    const response = await fetch(`${f.base}/a2a`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${f.tokens.alice}`, "content-type": "application/json", "A2A-Version": "1.0" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params: input("never-accepted") }),
+      signal: AbortSignal.timeout(5000),
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual((await response.json() as any).error, { code: -32603, message: "Internal service error" });
+  }
 });
 
 test("browser: same-origin login, opaque HttpOnly session, no M2M credential bypass", async (t) => {

@@ -4,7 +4,8 @@ import { type AgentCard, Task, type SendMessageRequest, type GetTaskRequest, typ
   type ListTasksRequest, type StreamResponse, type SubscribeToTaskRequest, TaskState } from "@a2a-js/sdk";
 import { type A2ARequestHandler, type ServerCallContext } from "@a2a-js/sdk/server";
 import { ContentTypeNotSupportedError, ExtendedAgentCardNotConfiguredError, PushNotificationNotSupportedError,
-  RequestMalformedError, TaskNotCancelableError, TaskNotFoundError, UnsupportedOperationError, JsonRpcTransportError } from "@a2a-js/sdk/errors";
+  RequestMalformedError, TaskNotCancelableError, TaskNotFoundError, UnsupportedOperationError, JsonRpcTransportError,
+  fromRestErrorBody } from "@a2a-js/sdk/errors";
 import { DurableTaskStore, TaskStoreError, taskView, type Scope, type Submission } from "./task-store.js";
 import type { Principal } from "./auth.js";
 import { reportSchema } from "./events.js";
@@ -33,22 +34,10 @@ function streamSnapshot(task: Task, historyLength?: number): { task: Task; remai
   return { task: taskView(view, low), remainingArtifacts };
 }
 
-function mapped<T>(fn: () => T): T {
-  try { return fn(); }
-  catch (error) {
-    if (!(error instanceof TaskStoreError)) throw error;
-    if (error.code === "not_found") throw new TaskNotFoundError();
-    if (error.code === "invalid") throw new RequestMalformedError({ message: error.message });
-    throw new JsonRpcTransportError({ jsonrpc: "2.0", id: null, error: {
-      code: error.code === "capacity" ? -32029 : -32010,
-      message: error.message, data: { reason: error.code }
-    } });
-  }
-}
-
 export class DurableA2AHandler implements A2ARequestHandler {
   constructor(private readonly store: DurableTaskStore, private readonly card: AgentCard,
-    private readonly defaultProfile: string, private readonly pollMs = 250) {}
+    private readonly defaultProfile: string, private readonly pollMs = 250,
+    private readonly protocolBinding: "JSONRPC" | "HTTP+JSON" = "JSONRPC") {}
 
   async getAgentCard(): Promise<AgentCard> { return this.card; }
   async getAuthenticatedExtendedAgentCard(): Promise<never> { throw new ExtendedAgentCardNotConfiguredError(); }
@@ -64,30 +53,30 @@ export class DurableA2AHandler implements A2ARequestHandler {
     for (;;) {
       await this.checkAuth(context);
       const execution = this.store.execution(submitted.execution.id)!;
-      const task = mapped(() => this.store.get(scope, submitted.task.id));
+      const task = this.mapped(() => this.store.get(scope, submitted.task.id));
       // A predecessor's interruption cannot complete this message; a later turn cannot return WORKING.
       if (params.configuration?.returnImmediately ||
           (["settled", "uncertain"].includes(execution.phase) && blockingEnd.has(task.status!.state))) {
-        return mapped(() => taskView(task, params.configuration?.historyLength));
+        return this.mapped(() => taskView(task, params.configuration?.historyLength));
       }
       await delay(this.pollMs, undefined, { signal: this.signal(context) });
     }
   }
 
   async getTask(params: GetTaskRequest, context: ServerCallContext): Promise<Task> {
-    return mapped(() => taskView(this.store.get(this.scope(context, params.tenant), params.id), params.historyLength));
+    return this.mapped(() => taskView(this.store.get(this.scope(context, params.tenant), params.id), params.historyLength));
   }
 
   async cancelTask(params: CancelTaskRequest, context: ServerCallContext): Promise<Task> {
     try { return this.store.requestCancel(this.scope(context, params.tenant), params.id); }
     catch (error) {
       if (error instanceof TaskStoreError && error.code === "conflict") throw new TaskNotCancelableError();
-      return mapped(() => { throw error; });
+      return this.mapped(() => { throw error; });
     }
   }
 
   async listTasks(params: ListTasksRequest, context: ServerCallContext) {
-    return mapped(() => this.store.list(this.scope(context, params.tenant), params));
+    return this.mapped(() => this.store.list(this.scope(context, params.tenant), params));
   }
 
   async *sendMessageStream(params: SendMessageRequest, context: ServerCallContext): AsyncGenerator<StreamResponse> {
@@ -106,14 +95,14 @@ export class DurableA2AHandler implements A2ARequestHandler {
     if (params.configuration?.taskPushNotificationConfig) throw new PushNotificationNotSupportedError();
     const modes = params.configuration?.acceptedOutputModes ?? [];
     if (modes.length && !modes.includes("text/plain")) throw new ContentTypeNotSupportedError();
-    mapped(() => taskView({ history: [] } as unknown as Task, params.configuration?.historyLength));
-    const selected = params.message.taskId ? mapped(() => this.store.get(scope, params.message!.taskId)).metadata?.profileId : this.defaultProfile;
-    return mapped(() => this.store.submit(scope, params.message!, String(selected)));
+    this.mapped(() => taskView({ history: [] } as unknown as Task, params.configuration?.historyLength));
+    const selected = params.message.taskId ? this.mapped(() => this.store.get(scope, params.message!.taskId)).metadata?.profileId : this.defaultProfile;
+    return this.mapped(() => this.store.submit(scope, params.message!, String(selected)));
   }
 
   private async *watch(scope: Scope, taskId: string, context: ServerCallContext, subscription: boolean, historyLength?: number): AsyncGenerator<StreamResponse> {
     await this.checkAuth(context);
-    const snapshot = mapped(() => this.store.snapshot(scope, taskId));
+    const snapshot = this.mapped(() => this.store.snapshot(scope, taskId));
     let cursor = snapshot.sequence;
     if (subscription && terminal.has(snapshot.task.status!.state)) throw new UnsupportedOperationError({ message: "Task is already terminal" });
     const initial = streamSnapshot({ ...snapshot.task, metadata: { ...snapshot.task.metadata, snapshotSequence: cursor } }, historyLength);
@@ -128,7 +117,7 @@ export class DurableA2AHandler implements A2ARequestHandler {
     if (terminal.has(snapshot.task.status!.state)) return;
     for (;;) {
       await this.checkAuth(context);
-      const events = mapped(() => this.store.events(scope, taskId, cursor, 100));
+      const events = this.mapped(() => this.store.events(scope, taskId, cursor, 100));
       for (const event of events) {
         cursor = event.sequence;
         if (event.kind === "task.status") {
@@ -153,6 +142,23 @@ export class DurableA2AHandler implements A2ARequestHandler {
       }
       if (events.length === 100) continue;
       await delay(this.pollMs, undefined, { signal: this.signal(context) });
+    }
+  }
+
+  private mapped<T>(fn: () => T): T {
+    try { return fn(); }
+    catch (error) {
+      if (!(error instanceof TaskStoreError)) throw error;
+      if (error.code === "not_found") throw new TaskNotFoundError();
+      if (error.code === "invalid") throw new RequestMalformedError({ message: error.message });
+      // Admission errors are service-specific; do not pass a JSON-RPC envelope to the REST adapter.
+      if (this.protocolBinding === "HTTP+JSON") {
+        throw fromRestErrorBody({ message: error.message }, { statusCode: error.code === "capacity" ? 429 : 409 });
+      }
+      throw new JsonRpcTransportError({ jsonrpc: "2.0", id: null, error: {
+        code: error.code === "capacity" ? -32029 : -32010,
+        message: error.message, data: { reason: error.code }
+      } });
     }
   }
 

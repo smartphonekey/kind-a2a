@@ -15,17 +15,8 @@ The Agyn contributions are pushed to forks but remain outside those forks'
 
 Fork `main` branches are used as upstream-tracking bases. Do not merge every
 historical integration branch: many are alternatives, older bases or temporary
-acceptance combinations. The currently installed backend uses:
-
-| Repository | Contribution branch | Revision |
-| --- | --- | --- |
-| [spk-ai/api](https://github.com/spk-ai/api/tree/feat/volume-anchor-migration) | `feat/volume-anchor-migration` | `0b9feaf` |
-| [spk-ai/runners](https://github.com/spk-ai/runners/tree/feat/volume-anchor-migration) | `feat/volume-anchor-migration` | `627a1aa` |
-| [spk-ai/agents-orchestrator](https://github.com/spk-ai/agents-orchestrator/tree/feat/volume-anchor-migration) | `feat/volume-anchor-migration` | `fc93b1d` |
-| [spk-ai/k8s-runner](https://github.com/spk-ai/k8s-runner/tree/sync/2026-09-24-volume-adoption) | `sync/2026-09-24-volume-adoption` | `0ed8c5c` |
-| [spk-ai/gateway](https://github.com/spk-ai/gateway/tree/sync/2026-09-24-resource-lifecycle) | `sync/2026-09-24-resource-lifecycle` | `7d8267d` |
-
-Exact installed image digests are in [KUBERNETES.md](KUBERNETES.md#backend-revisions).
+acceptance combinations. Keep the installed revision/image inventory in
+[KUBERNETES.md](KUBERNETES.md#backend-revisions), not a second table here.
 A production release still needs a complete reproducible multi-repository
 manifest. Pushed, installed, merged and accepted upstream are distinct states.
 
@@ -35,10 +26,7 @@ combined session/diagnostic view uses `docs/living-diagnostics-contracts`. Origi
 contribution and installed-image heads are preserved. These are documentation-only
 follow-ups, not new deployed binaries or upstream acceptance.
 
-From the A2A checkout, use `npm run code:map -- repos` to discover selected
-repositories and their actual Git heads, then scan and inspect returned IDs.
-`repos --worktrees` includes alternative local branches for explicit selection;
-the default SDK view follows the daemon's session/diagnostics combination.
+Use the [code-map workflow](skills/code-map/SKILL.md) to select contribution worktrees.
 The navigator and its parser dependencies stay in this repository. Forks retain
 their own licenses, native comments/tests and small Markdown catalogs; using their
 code does not require adopting this tooling.
@@ -61,18 +49,18 @@ workflow policy or session-analysis pipeline.
 
 ## Small Independent Starting Points
 
-| Repository | Branch / revision | Change |
+| Repository | Branch / revision | Review focus |
 | --- | --- | --- |
-| `spk-ai/agynd-cli` | `fix/codex-home-persistence` / `c933329` | Honor `CODEX_HOME` for configuration, auth placeholders and session mappings; preserve unset defaults |
-| `spk-ai/agynd-cli` | `feat/required-init-scripts` / `591543b` | Opt-in fail-closed initialization; no A2A/MCP policy |
-| `spk-ai/agynd-cli` | `feat/durable-inbox-guard` / `8b6056c` | Intent before SDK execution, completion before ACK, explicit retirement of pending requests |
-| `spk-ai/agynd-cli` | `fix/shell-title-worker-lifetime` / `2aac6e7` | Stop/join the title refresher without stopping persistent tmux shells |
-| `spk-ai/agynd-cli` | `fix/claude-error-results` / `1b1dd62` | Fail on nil/error results before publishing or acknowledging the inbox |
-| `spk-ai/claude-sdk-go` | `feat/session-resumption` / `0cdc814` | Explicit new-session/resume options and pre-spawn validation |
+| `spk-ai/agynd-cli` | `fix/codex-home-persistence` / `c933329` | Native state routing |
+| `spk-ai/agynd-cli` | `feat/required-init-scripts` / `591543b` | Initialization policy, separate from A2A/MCP |
+| `spk-ai/agynd-cli` | `feat/durable-inbox-guard` / `8b6056c` | Interrupted execution safety |
+| `spk-ai/agynd-cli` | `fix/shell-title-worker-lifetime` / `2aac6e7` | Shell worker ownership |
+| `spk-ai/agynd-cli` | `fix/claude-error-results` / `1b1dd62` | SDK error handling |
+| `spk-ai/claude-sdk-go` | `feat/session-resumption` / `0cdc814` | Native session selection |
 
-Claude daemon `feat/claude-session-persistence` (`f29925c`) is a separate,
-dependent review unit: durable session mapping, exact transcript resume,
-ownership locking and fail-closed state checks. It pins the SDK session change.
+Claude daemon `feat/claude-session-persistence` (`f29925c`) is a dependent review
+unit; review the SDK session change first. Keep these ownership decisions separate
+from the source-adjacent contracts on the selected branch.
 
 These are review candidates, not the full runnable release. The Codex fix belongs
 around daemon state handling, not a bundle of A2A changes to
@@ -108,7 +96,6 @@ New service/reporting/UI code and current service documentation are AGPL-3.0-onl
 Fork contributions keep their repository licenses; `claude-sdk-go` remains MIT.
 See [LICENSING.md](LICENSING.md).
 
-For this repository, use `nvm use`, `npm ci`, `npm test` and the
-[web checks](WEB.md#tests). These tests do not replace live Agyn acceptance.
+Use [ACCEPTANCE.md](ACCEPTANCE.md) for this repository's verification procedure.
 Production gates remain in [PRODUCTION.md](PRODUCTION.md), independently of
 whether a change has been submitted or accepted upstream.

@@ -9,15 +9,8 @@ in [PRODUCTION.md](PRODUCTION.md); installed revisions are in
 
 ## Find Relevant Checks
 
-Start with structural discovery, then inspect the affected components together:
-
-```sh
-npm run code:map -- scan --area src/service
-npm run code:map -- inspect src/service/worker src/service/task-store
-```
-
-The result includes test files and case names derived from imports and syntax.
-These are navigation relationships, not coverage guarantees or passing results.
+Use the [code-map workflow](skills/code-map/SKILL.md) to find affected owners and
+their tests. Static links are not coverage guarantees or passing results.
 A change to a cross-component contract also requires the relevant integration
 suite even when a test imports that component only transitively.
 
@@ -33,13 +26,10 @@ npm run test:web
 node --test scripts/k8s-manifests.test.mjs
 ```
 
-`npm test` builds source, checks living-documentation structure and runs the
-application and navigation-tool tests. For documentation/tooling-only iterations,
-`npm run docs:check` and `npm run test:code-map` are available separately.
-`npm run test:code-map:go` exercises the standard-library Go parser. With the
-registered sibling checkouts available, `npm run docs:check:workspace` checks
-their catalogs and source-adjacent cross-links. Neither command runs target Go
-packages or applies migrations; actual fork tests remain separate verification.
+Use [package scripts](package.json) for available focused checks. With registered
+sibling checkouts present, also run `npm run docs:check:workspace`. Verify fork
+code in its own repository; A2A checks are not acceptance of an Agyn binary.
+For Go navigation prerequisites, see [parser setup](tooling/code-map/go-parser/README.md).
 
 The suite includes short lease/deadline fixtures. On a busy workstation, diagnose
 load-related timeouts by rerunning the built tests with bounded concurrency:

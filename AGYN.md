@@ -1,9 +1,8 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 # Agyn Integration
 
-Agyn is the execution backend for the durable A2A service. This page records
-ownership and runtime prerequisites across repositories; adapter contracts live
-beside the implementation and tests.
+This guide records the external prerequisites and trust decisions for using
+Agyn. The [adapter](src/service/agyn-driver.ts) owns its implementation contract.
 
 A stock Agyn installation alone is not compatible. Use the
 [installed inventory](KUBERNETES.md#backend-revisions), not a generic
@@ -12,25 +11,12 @@ are in [CONTRIBUTING-AGYN.md](CONTRIBUTING-AGYN.md).
 
 ## Ownership And Lifecycle
 
-- This repository owns authenticated A2A task identity, durable scheduling,
-  protocol state and execution reporting.
-- Agyn owns instances/threads, placement, workload lifecycle, persistent volumes,
-  native runtimes and provider proxying.
-- Operators own versioned profiles, runtime images, subscription bindings and
-  security/resource policy. Task input must not select infrastructure authority.
-
-The architectural goal is isolated durable task state, serialized turns within
-a task and released compute between turns. Runtime choice must not require a
-different A2A controller. Detailed dispatch, identity and release rules are in
-the owning modules:
-
-```sh
-npm run code:map -- scan --area src/service
-npm run code:map -- inspect src/service/agyn-driver src/service/worker src/service/task-store
-```
-
-Open cross-repository decisions remain in the
-[architecture proposal](docs/agyn-a2a-proposal.md), not an accepted upstream API.
+Cross-project responsibilities remain a maintainer decision in the
+[architecture proposal](docs/agyn-a2a-proposal.md#ownership), not an accepted
+upstream API. Operators must control profiles, runtime images, subscription
+bindings and security/resource policy; task input must not choose that authority.
+Use the [code-map workflow](skills/code-map/SKILL.md) for implemented lifecycle
+rules, rather than treating this guide as another state-machine specification.
 
 ## Runtime Requirements
 
@@ -40,11 +26,10 @@ support, valid subscription bindings, explicit resource bounds and the intended
 network allowances. Workloads must reach the configured reporting endpoint.
 Do not repoint a profile used by existing tasks; introduce a new versioned ID.
 
-CLI configuration and session persistence differ by runtime. Inspect
-`src/reporting/agent-config` and `src/service/agyn-reporting-installer` for those
-contracts. The worker uses authenticated TerminalGateway delivery, not Kubernetes
-credentials; [service setup](SERVICE.md#reporting-setup-contract) describes the
-remaining trust requirements.
+The native configuration and installation owners are
+[agent-config](src/reporting/agent-config.ts) and
+[agyn-reporting-installer](src/service/agyn-reporting-installer.ts).
+[Service setup](SERVICE.md#reporting-setup-contract) covers the operator trust boundary.
 
 ## Run And Operate
 

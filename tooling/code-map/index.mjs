@@ -111,6 +111,8 @@ function symbols(source) {
 /**
  * Parse a fresh checkout snapshot without running its packages, generators or SQL.
  * Generated/vendor output is hidden by default; Go imports link packages, not calls.
+ * Build tags are not evaluated, so coexisting platform variants are navigation
+ * candidates, not a claim that those files compile together.
  */
 export function buildIndex(directory, { includeGenerated = false, roots } = {}) {
   const root = realpathSync(directory);
@@ -311,7 +313,11 @@ export function inspectDocuments(root, ids) {
   }) };
 }
 
-/** Fails when maintained components lose module contracts or their doc links drift. */
+/**
+ * Check maintained module overviews and file-level documentation targets.
+ * Markdown heading fragments are deliberately outside this check's scope;
+ * callers must validate them separately before claiming complete link integrity.
+ */
 export function checkDocumentation(index) {
   const issues = [];
   const catalog = documents(index.root);

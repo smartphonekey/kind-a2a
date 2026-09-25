@@ -27,6 +27,7 @@ import { requireSqliteWalFix } from "./sqlite-runtime.js";
 import { parseSetupFailure } from "./setup-diagnostics.js";
 
 const pathSchema = z.string().refine(isAbsolute, "absolute path required");
+/** "trusted-local" acknowledges an operator trust boundary; it does not verify agent isolation. */
 const schema = z.object({
   environmentProfile: z.literal("trusted-local"),
   dbPath: pathSchema, credentialsFile: pathSchema, reportingSetupExecutable: pathSchema,

@@ -43,6 +43,8 @@ const loginSchema = z
  * the underlying credential; expiry invalidates sessions and shutdown clears them.
  * Exact Host and same-origin mutation checks ignore forwarded headers. Only the allowlisted
  * SDK REST routes are exposed, keeping every stream on the bounded SSE writer.
+ * An HTTPS origin assumes trusted TLS termination; it is not evidence that the
+ * incoming connection was encrypted or that the reverse proxy is authenticated.
  */
 export function browserRouter(options: HttpOptions, browser: BrowserOptions) {
   const origin = new URL(browser.origin);

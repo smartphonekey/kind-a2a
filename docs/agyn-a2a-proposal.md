@@ -28,13 +28,8 @@ without forcing CLI-specific configuration or session formats into A2A.
 
 ## Execution Contract
 
-The prototype's source is the authority for implemented behavior, not this draft.
-From the repository root, scan and batch-inspect the selected owners:
-
-```sh
-npm run code:map -- scan --area src/service
-npm run code:map -- inspect src/service/task-store src/service/worker src/service/agyn-driver
-```
+Use the [code-map workflow](../skills/code-map/SKILL.md) for implemented contracts.
+This draft proposes ownership; it is not another execution specification.
 
 Database fencing does not fence external side effects or provider calls already
 in flight. Exactly-once effects cannot be inferred from a lease or restored
@@ -42,18 +37,15 @@ session; infrastructure fencing remains a cross-system release requirement.
 
 ## Stop Check
 
-Inspect `src/reporting/stop-check` and `src/reporting/agent-config` for implemented
-hook/reporting behavior. Hook prompting is not a security boundary against a
+[Stop-check behavior](../src/reporting/stop-check.ts) belongs with its source.
+Hook prompting is not a security boundary against a
 malicious agent or repository; protection of runtime-managed configuration is a
 deployment requirement, not something a model reminder can supply.
 
 ## Recovery Matrix
 
-Recovery cases and executable failure tests belong with `src/service/worker`,
-`src/service/task-store` and `src/service/agyn-driver`. The operational decision
-to resume after uncertain effects requires explicit reconciliation; use
-[service recovery](../SERVICE.md#recovery-and-operations). A second matrix here
-would compete with the implementation as it changes.
+Use [service recovery](../SERVICE.md#recovery-and-operations) for operator decisions
+after uncertain effects, and source-adjacent tests for implemented recovery cases.
 
 ## Questions For Maintainers
 

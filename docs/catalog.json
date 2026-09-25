@@ -12,7 +12,7 @@
       "id": "agents",
       "path": "AGENTS.md",
       "title": "Repository Navigation And Documentation",
-      "purpose": "Scan-then-inspect workflow, source-adjacent authoring rules and local verification boundaries.",
+      "purpose": "Repository navigation policy, source-first documentation rules and local verification boundaries.",
       "kind": "navigation"
     },
     {
@@ -47,8 +47,8 @@
       "id": "agyn",
       "path": "AGYN.md",
       "title": "Agyn Integration",
-      "purpose": "Ownership across the A2A service and Agyn, compatible runtime prerequisites and trust boundaries.",
-      "kind": "architecture"
+      "purpose": "Compatible backend/profile prerequisites, credential responsibilities and operator trust boundaries.",
+      "kind": "operations"
     },
     {
       "id": "proposal",

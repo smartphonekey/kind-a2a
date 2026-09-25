@@ -73,8 +73,9 @@ For current information use [production readiness](../../PRODUCTION.md),
 
 ## Maintenance
 
-Keep current contracts, installed revisions and open release criteria in the
-top-level guides. Put dated investigations and superseded acceptance sequences
+Keep implementation contracts with code; top-level guides retain operator
+decisions, installed inventory and open release criteria. Put dated investigations
+and superseded acceptance sequences
 in the archive, preserving failures and test limitations. Update the current
 acceptance summary only when the corresponding verification has actually run.
 Archive moves do not change a document's license or publish private evidence.

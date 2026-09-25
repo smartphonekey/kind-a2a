@@ -7,17 +7,6 @@ installed stack, [Agyn integration](AGYN.md) for backend prerequisites and
 [production readiness](PRODUCTION.md) for release gates. Stock Agyn alone is
 not a compatible backend. Browser access is optional; see [WEB.md](WEB.md).
 
-Configuration schemas, transport behavior and execution contracts are maintained
-beside their code. Select components before reading implementation details:
-
-```sh
-npm run code:map -- scan --area src/service
-npm run code:map -- inspect src/service/main src/service/auth src/service/sqlite-runtime
-```
-
-Use `--source` on selected components when you need the exact validated schema
-or implementation; follow the returned test links for executable examples.
-
 ## Run Requirements
 
 Use the Node runtime in `.nvmrc` and a local/PVC filesystem with working SQLite
@@ -37,13 +26,12 @@ Use private absolute paths for the database and credentials, and the built
 `dist/service/agyn-reporting-installer.js` as the reporting setup executable.
 Select existing compatible Agyn profiles and a reporting URL reachable from
 their workloads. Version profile IDs when changing a profile; do not repoint
-bindings used by existing tasks. This entry point accepts only `trusted-local`;
-it does not provision Agyn or relax cluster policy.
+bindings used by existing tasks.
 
-Set `AGYN_GATEWAY_URL`, `AGYN_TOKEN`, `AGYN_ORGANIZATION_ID` and `AGYN_IDENTITY_ID`
-in the private operator environment. Supply `NODE_EXTRA_CA_CERTS` when a local
-CA is required; do not disable TLS verification. Then start the configured host
-service:
+Provision a compatible Agyn identity and supply the private connection environment
+required by [main.ts](src/service/main.ts). Supply `NODE_EXTRA_CA_CERTS` when a
+local CA is required; do not disable TLS verification. Then start the configured
+host service:
 
 ```sh
 A2A_SERVICE_CONFIG_FILE=/absolute/private/service.json npm run start:service
@@ -53,11 +41,7 @@ A2A_SERVICE_CONFIG_FILE=/absolute/private/service.json npm run start:service
 
 Changing the shared execution ceiling is a drained maintenance operation, not a
 way to clear stuck work. Never delete/recreate the database to reset capacity.
-Inspect the local admission contract before the change:
-
-```sh
-npm run code:map -- inspect src/service/admission-cli src/service/worker src/service/task-store
-```
+Use the [admission CLI](src/service/admission-cli.ts) against the existing database:
 
 1. Stop upstream submissions. Let accepted work settle, or cancel it and wait
    for confirmed workload removal. Inspect ambiguous provider state; SIGTERM
@@ -93,9 +77,10 @@ atomically replacing the file. Reconciliation permission is administrative,
 not an ordinary task-submission privilege.
 
 Use trusted TLS ingress for non-loopback A2A, browser and reporting traffic.
-Do not substitute provider or Agyn credentials for A2A access tokens. For client
-integration, batch-inspect `src/service/http` and `src/service/a2a`; browser
-access has a separate [security boundary](WEB.md#browser-boundary).
+Do not substitute provider or Agyn credentials for A2A access tokens. Client
+contracts are in the [HTTP routes](src/service/http.ts) and
+[A2A handler](src/service/a2a.ts); browser access has a separate
+[security boundary](WEB.md#browser-boundary).
 
 ## Reporting Setup Contract
 
@@ -105,15 +90,9 @@ stock init scripts that log failures and continue are not a startup safety gate.
 Runtime-managed configuration and journals need protection from agent writes
 before a hostile-code deployment can be considered safe.
 
-Inspect the actual installer, transport and reporting adapters together:
-
-```sh
-npm run code:map -- scan --area src/reporting
-npm run code:map -- inspect src/service/agyn-reporting-installer src/service/agyn-terminal src/reporting/agent-config src/reporting/stop-check
-```
-
-Wire payloads, acknowledgements, runtime-specific configuration and Stop behavior
-belong to those modules and their tests, not a second protocol description here.
+For the executable contract, follow the [installer](src/service/agyn-reporting-installer.ts)
+to its [terminal delivery](src/service/agyn-terminal.ts) and
+[runtime configuration](src/reporting/agent-config.ts) owners.
 
 ## Recovery And Operations
 
@@ -122,9 +101,9 @@ belong to those modules and their tests, not a second protocol description here.
   prove workload removal or authorize replay. Do not fabricate bindings or
   removal evidence for failed/unbound records.
 - Use an explicitly authorized reconciliation credential and record the reason
-  for the decision. Inspect `src/service/http`, `src/service/task-store` and
-  `src/service/agyn-driver` for the current recovery interface and eligibility
-  rules. Missing request identity may require failure and provider-side
+  for the decision. Follow the [reconciliation route](src/service/http.ts),
+  [store eligibility](src/service/task-store.ts) and [provider reconciliation](src/service/agyn-driver.ts).
+  Missing request identity may require failure and provider-side
   investigation rather than continuation.
 - Drain old workers before coordinated service/daemon upgrades. Never roll back
   the daemon alone under an inbox-guard profile. Audit older workloads before

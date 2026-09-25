@@ -19,16 +19,12 @@ for untrusted repositories.
 
 ## Baseline In Place
 
-- [x] Native Codex and Claude profiles use the same A2A controller/workflow.
-- [x] Per-task instance, thread, PVC and session; parallel tasks and FIFO turns.
-- [x] Durable ownership, admission, idempotency, MCP reports and Stop checks.
-- [x] Confirmed compute removal before settlement or the next queued turn.
-- [x] Completed-turn continuation and explicit interrupted-turn reconciliation.
-- [x] Assistant-ui browser access with durable history and owner-scoped auth.
-- [x] In-place backend migration through `0027`, retaining existing workspaces.
-- [x] Scoped local database/workspace backup and restore checks.
-
-These are local acceptance results, not closure of the production gates below.
+Baseline results are historical evidence in the
+[September 25 readiness snapshot](docs/archive/2026-09-25/PRODUCTION.md),
+[acceptance record](docs/archive/2026-09-25/ACCEPTANCE.md) and
+[deployment record](docs/archive/2026-09-25/KUBERNETES.md).
+Their original failures, corrections and verification limits still apply.
+Neither those results nor the presence of an implementation closes the gates below.
 
 ## Release Gates
 
@@ -38,8 +34,14 @@ These are local acceptance results, not closure of the production gates below.
   agent modification. No production `Unconfined` workaround.
 - [ ] Verify fail-closed bootstrap, cross-task network/overlay authorization,
   credential isolation and egress restrictions against adversarial workloads.
+  Cover node/host-network, IPv6 and public destinations, not only Pod-to-Pod probes.
+  Test effective additive policies and treat same-Pod isolation and overlay
+  authorization as separate boundaries; a deny rule alone is not proof of either.
 - [ ] Make bounded resource profiles and protected workload quotas mandatory.
   Test OOM, storage/PID/IO exhaustion, fairness and sustained capacity pressure.
+  Account for the whole task, including supporting runtimes, and size production
+  profiles from representative workloads. Exercise supporting-runtime failure and
+  real-agent OOM recovery without replay; a kernel OOM probe does not establish this.
 - [ ] Verify execution credentials cannot cross task/owner boundaries during
   replacement, cancellation or cleanup.
 

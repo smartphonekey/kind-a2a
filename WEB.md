@@ -1,10 +1,6 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 # A2A Web Workspace
 
-The opt-in `/ui/` app uses React and assistant-ui's native A2A runtime with the
-same durable execution service as machine clients. The frontend does not own an
-additional agent controller, provider API client or chat database.
-
 For the installed app at `http://127.0.0.1:8084/ui/`, use
 [Kubernetes access](KUBERNETES.md#access). The host instance below has separate
 state and credentials; it is not a replica or failover target.
@@ -28,9 +24,9 @@ Enable its optional browser configuration using the schema in
 path to the built `web/dist` directory. For a host installation, the usual origin
 is `http://127.0.0.1:8083`.
 
-The host launcher requires `node` and the installed `agyn` CLI on `PATH` and an
-existing operator login selected by `AGYN_PROFILE` (default `local`). It does not
-create environments, attach subscriptions or change cluster policy.
+The [host launcher](scripts/start-web.sh) requires `node` and the installed `agyn`
+CLI on `PATH` and an existing operator login; select its profile with `AGYN_PROFILE`.
+Provision the compatible environment and subscription bindings before launching.
 
 ```sh
 A2A_SERVICE_CONFIG_FILE=/absolute/private/service.json npm run start:web
@@ -43,24 +39,16 @@ private host files are `.state/a2a-web/service.json` and the mode-0600
 These operator files stay outside Git. Restarting requires sign-in again, but
 must preserve task history. Do not restart active work merely to rebuild CSS.
 
-For frontend development, `npm --prefix web run dev` watches and rebuilds static
-assets. Reload the same authenticated service URL; this is not a separate Vite
-server or an authentication-bypassing proxy.
+For frontend development, run `npm --prefix web run dev`, then reload the same
+authenticated service URL. Do not bypass service authentication with a dev proxy.
 
 ## Task Semantics
 
-Browse components before selecting the client and UI contracts:
-
-```sh
-npm run code:map -- scan --area web
-npm run code:map -- inspect web/src/client web/src/main src/service/browser
-```
-
-Task restoration, profile selection, stream handling and UI state rules are
-documented next to those implementations and linked tests. Use `--symbol NAME`
-or `--source` only for the selected detail. Privileged interrupted-task recovery
-remains an [operator procedure](SERVICE.md#recovery-and-operations), not a browser
-permission granted by this guide.
+Client and restoration contracts are in [client.ts](web/src/client.ts),
+[main.tsx](web/src/main.tsx) and the [browser router](src/service/browser.ts).
+Privileged interrupted-task recovery remains an
+[operator procedure](SERVICE.md#recovery-and-operations), not a browser permission
+granted by this guide.
 
 ## Browser Boundary
 
@@ -68,17 +56,15 @@ Keep browser and machine authentication separate. Do not persist service tokens
 in frontend storage or expose provider/subscription credentials through the UI.
 Maintain same-origin access; do not add a cross-origin proxy to bypass it.
 
-Only loopback origins may use HTTP. Remote access requires an HTTPS origin and
-a trusted reverse proxy preserving the configured Host and disabling streaming
-response buffering. Do not expose this trusted-local setup directly to the
-public internet. It is not a distributed-session or multi-node HA deployment.
+For remote access, arrange trusted TLS termination, configure an HTTPS origin,
+preserve the configured Host and disable streaming response buffering at the
+reverse proxy. Do not expose this trusted-local setup directly to the public
+internet. It is not a multi-node HA deployment.
 
-Agyn workloads must independently reach `reportingUrl`. Any insecure local
-reporting exception and network allowance is operator policy, not proof of
-production TLS or isolation. Provider credential rotation remains separate from
-web sign-in; a secret-manager update does not automatically propagate to Agyn.
-Cookie, route, request-limit and rendering contracts live in `src/service/browser`
-and the web source; security release criteria live in [PRODUCTION.md](PRODUCTION.md).
+Workload reporting access and provider credential rotation remain separate from
+web sign-in; follow [service setup](SERVICE.md#run-requirements) and
+[deployment credential operations](KUBERNETES.md#credentials-and-recovery).
+Security release criteria remain in [PRODUCTION.md](PRODUCTION.md).
 
 ## Tests
 
@@ -88,10 +74,11 @@ npm exec --prefix web -- playwright install chromium
 npm run test:web
 ```
 
-Browser tests use a separate model-free fixture, not provider credentials or the
-installed service database. Inspect `web/tests/ui.spec` and `web/tests/fixture`
-for cases and setup; screenshots/traces stay in ignored `web/test-results/`.
-Passing these tests is not real-provider acceptance.
+Keep these checks model-free: do not inject provider credentials or point them
+at the installed service database. The [Playwright configuration](web/playwright.config.ts)
+selects the [fixture](web/tests/fixture.mjs) and [cases](web/tests/ui.spec.ts).
+Passing these tests is not real-provider acceptance; keep screenshots/traces in
+ignored `web/test-results/`.
 
 ## Verification Scope
 

@@ -1,4 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+/**
+ * Relay reports through official Streamable HTTP MCP and read execution status.
+ *
+ * @module
+ * @remarks The private binding is reloaded per operation for credential rotation.
+ * Report delivery errors are ambiguous: callers may retry the same report, but
+ * must not infer that the underlying work was unperformed.
+ * @see src/reporting/config.ts
+ * @see src/reporting/mcp.ts
+ */
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { z } from "zod";
@@ -6,6 +16,13 @@ import { reportingConfig } from "./config.js";
 import type { ReportingClient } from "./mcp.js";
 import { reportSchema } from "../service/events.js";
 
+/**
+ * Construct a lazy client with no cached bearer or persistent MCP session.
+ * Each report opens/closes a transport and validates its structured receipt;
+ * status uses authenticated HTTP. Redirects fail, individual MCP fetches are
+ * bounded to ten seconds and status to five; no application retry is added.
+ * Errors are for trusted callers to sanitize before exposing them to an agent.
+ */
 export function remoteReportingClient(configFile: string): ReportingClient {
   return {
     async report(event) {

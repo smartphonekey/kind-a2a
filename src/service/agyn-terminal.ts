@@ -1,8 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+/**
+ * Identity-bound TerminalGateway delivery for the reporting startup gate.
+ * @module
+ * @remarks This setup channel is separate from both A2A and the agent's MCP reporting transport.
+ * @see src/service/agyn-reporting-installer.ts
+ * @see scripts/agyn-execution-receiver.cjs
+ */
 import WebSocket from "ws";
 import { z } from "zod";
 import type { AgynWorkload } from "../agyn-client.js";
 
+/**
+ * Wait for the registry's running main-container entry, not just workload/pod readiness.
+ * Ambiguous aliases or a terminated main container fail rather than selecting another target.
+ */
 export function reportingTargetReady(workload: AgynWorkload): boolean {
   const containers = z.array(z.object({ name: z.string().min(1), role: z.string(), status: z.string().optional() })).parse(workload.containers ?? []);
   const main = containers.filter(container => container.role === "CONTAINER_ROLE_MAIN");
@@ -11,13 +22,12 @@ export function reportingTargetReady(workload: AgynWorkload): boolean {
     throw new Error("ambiguous terminal main container");
   }
   if (main[0]?.status === "CONTAINER_STATUS_TERMINATED") throw new Error("terminal main container terminated");
-  // Pod readiness is reported independently of the registry's container list.
-  // TerminalProxy requires that list to resolve the main-container alias.
   return main[0]?.status === "CONTAINER_STATUS_RUNNING";
 }
 
 type Binding = { executionId: string; instanceId: string; workloadId: string; runtimeSha256: string };
 type DeliveryReason = "aborted" | "socket_error" | "closed" | "handshake" | "remote_exit" | "output_limit" | "protocol";
+/** Sanitized delivery progress only; payloadAttempted or an ACK does not make a failed delivery safe to replay. */
 export class ReportingDeliveryError extends Error {
   constructor(readonly diagnostic: { deliveryReason: DeliveryReason; receiverReady: boolean; payloadAttempted: boolean;
     acknowledged: boolean; httpStatus?: number; exitCode?: number }) {
@@ -26,6 +36,13 @@ export class ReportingDeliveryError extends Error {
   }
 }
 
+/**
+ * Deliver credentials only after the receiver confirms instance, workload and runtime digest.
+ * @remarks Readiness attests that terminal echo is disabled. Completion additionally
+ * requires the exact execution/instance ACK and a successful completed remote exit.
+ * TLS is required unless explicitly relaxed; output and time are bounded, redirects
+ * are disabled, and delivery is never retried here.
+ */
 export async function deliverBinding(ticket: { websocketUrl: string; ticket: string }, expected: Binding,
   payload: string, signal: AbortSignal, allowInsecureLocal = false): Promise<void> {
   const url = new URL(ticket.websocketUrl);

@@ -1,4 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+/**
+ * Adapt operator-selected native agent configuration for execution reporting.
+ *
+ * @module
+ * @remarks Generated commands reference the runtime directory, never its bearer
+ * token. These adapters preserve unrelated settings; they do not harden files
+ * against the trusted-local root agent.
+ * @see SERVICE.md#reporting-setup-contract
+ * @see src/reporting/runtime.ts
+ */
 import { isAbsolute, join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { parse, stringify } from "smol-toml";
@@ -8,8 +18,11 @@ export type AgentReportingFiles =
   | { agent: "codex"; settingsFile: string }
   | { agent: "claude"; settingsFile: string; mcpFile: string };
 
-// The manifest is supplied by the operator-selected Agyn runtime image, not by
-// an A2A message or the agent. Unknown runtimes must not start without reporting.
+/**
+ * Select files from the trusted runtime image's manifest, never an A2A message.
+ * Unknown SDKs fail closed; Claude state paths must be absolute, while Codex
+ * always uses system TOML. Selection alone neither creates nor validates files.
+ */
 export function agentReportingFiles(manifest: string, home: string, claudeConfigDir?: string): AgentReportingFiles {
   const { sdk } = z.object({ sdk: z.enum(["codex", "claude"]) }).parse(JSON.parse(manifest));
   if (sdk === "codex") return { agent: sdk, settingsFile: "/etc/codex/config.toml" };
@@ -27,6 +40,12 @@ function reportingCommands(directory: string, node: string) {
   };
 }
 
+/**
+ * Add Codex's required MCP relay and Stop hook to parsed TOML.
+ * Any existing execution_reporting server is a conflict, even an identical one;
+ * this adapter is not a reinstallation API. Command paths must be shell-safe
+ * absolute paths because native Stop hooks execute command strings.
+ */
 export function managedReportingConfig(source: string, directory: string, node: string): string {
   const { server, hook } = reportingCommands(directory, node);
   const config = parse(source);
@@ -42,6 +61,12 @@ export function managedReportingConfig(source: string, directory: string, node: 
   return stringify(config);
 }
 
+/**
+ * Prepare Claude settings and user MCP JSON without writing either file.
+ * Durable user state may reuse exact managed entries only; conflicting servers,
+ * altered or duplicate managed hooks, and settings disabling user hooks fail.
+ * Unrelated tools, hooks and permission settings are preserved.
+ */
 export function managedClaudeReportingConfig(settingsSource: string, mcpSource: string, directory: string, node: string): { settings: string; mcp: string } {
   const { server, hook } = reportingCommands(directory, node);
   const settings = z.record(z.unknown()).parse(JSON.parse(settingsSource));
@@ -60,8 +85,6 @@ export function managedClaudeReportingConfig(settingsSource: string, mcpSource: 
   }).passthrough()).parse(hooks.Stop ?? []);
   const existing = stop.filter(entry => entry.hooks.some(item => item.command === hook.hooks[0].command));
   if (existing.length > 1 || existing.length === 1 && !isDeepStrictEqual(existing[0], hook)) throw new Error("reporting stop hook already configured differently");
-  // Claude's user state can be durable. Reuse only our exact existing entries;
-  // never accumulate hooks or replace a different server with the same name.
   if (!existing.length) stop.push(hook);
   hooks.Stop = stop;
   settings.hooks = hooks;

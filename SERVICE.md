@@ -1,311 +1,139 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 # Durable Execution Service
 
-This service is separate from the preserved lightweight lab adapters. Its
-authenticated HTTP API, worker, provider driver, reporting MCP and
-durable store are wired together by `src/service/main.ts`. It is not yet a
-production deployment. See [PRODUCTION.md](PRODUCTION.md) for release gates and
-[CONTRIBUTING-AGYN.md](CONTRIBUTING-AGYN.md) for upstream review boundaries.
+This is the operator guide for the durable A2A service, not the preserved
+lightweight lab adapters. See [Kubernetes deployment](KUBERNETES.md) for the
+installed stack, [Agyn integration](AGYN.md) for backend prerequisites and
+[production readiness](PRODUCTION.md) for release gates. Stock Agyn alone is
+not a compatible backend. Browser access is optional; see [WEB.md](WEB.md).
 
-The optional [assistant-ui web workspace](WEB.md) adds authenticated browser
-chat at `/ui/`, using the same durable tasks and execution worker. Browser
-access is disabled unless explicitly configured.
+Configuration schemas, transport behavior and execution contracts are maintained
+beside their code. Select components before reading implementation details:
 
-The installed backend uses the reviewed fork combination through registry schema
-`0027`, with native Codex and Claude profiles. See [KUBERNETES.md](KUBERNETES.md)
-for its exact revisions and [ACCEPTANCE.md](ACCEPTANCE.md) for verification scope.
-Stock Agyn alone is not a compatible backend for this service.
+```sh
+npm run code:map -- scan --area src/service
+npm run code:map -- inspect src/service/main src/service/auth src/service/sqlite-runtime
+```
+
+Use `--source` on selected components when you need the exact validated schema
+or implementation; follow the returned test links for executable examples.
 
 ## Run Requirements
 
-Select the pinned Node runtime with `nvm use` (`nvm install` if necessary), then
-run `npm ci && npm test`. `.nvmrc` pins Node 24.21.0; its bundled SQLite was
-verified locally as 3.53.4. The service and admission CLI reject missing,
-unrecognized or unpatched SQLite versions before opening the task database.
-SQLite documents a rare multi-connection
-[WAL-reset corruption bug](https://www.sqlite.org/wal.html#walreset), fixed in
-3.51.3 and later, with backports to 3.50.7 and 3.44.6. The guard accepts those
-backport branches too. The previously used Node 22.20.0 bundles 3.50.4 and is no
-longer suitable for these service entry points. This pin does not change the
-machine's default Node, agent runtime images or existing database contents.
+Use the Node runtime in `.nvmrc` and a local/PVC filesystem with working SQLite
+WAL locks, not a network-shared filesystem. Do not bypass the SQLite startup
+guard or reuse the old lab database: legacy tasks require an explicit ownership
+migration. This is not a multi-node HA service.
 
-Configure an existing Agyn gateway and agent classes with per-instance durable
-volumes. The worker does not create Kubernetes objects itself.
-
-The driver requires the additive `removalConfirmedAt` contract in Runners,
-Gateway and the orchestrator. `removedAt` ends metering and can be set while a
-failed Pod still exists; it is never release evidence. Use compatible clients,
-not a database migration alone. Retained disks must not be treated as disposable
-because one registry scan omits them. Failed/unbound records require explicit
-reconciliation and must not receive invented workspace bindings.
-
-The service requires `A2A_SERVICE_CONFIG_FILE`, an operator-owned JSON file:
-
-```json
-{
-  "environmentProfile": "trusted-local",
-  "dbPath": "/absolute/private/service/tasks.sqlite",
-  "credentialsFile": "/absolute/private/service/credentials.json",
-  "reportingSetupExecutable": "/absolute/checkout/dist/service/agyn-reporting-installer.js",
-  "host": "127.0.0.1",
-  "port": 8083,
-  "publicUrl": "http://127.0.0.1:8083",
-  "reportingUrl": "https://execution-service.example/reporting",
-  "defaultProfile": "codex-v1",
-  "profiles": [{ "id": "codex-v1", "agentId": "00000000-0000-0000-0000-000000000001" }],
-  "concurrency": 2,
-  "turnTimeoutMs": 600000
-}
+```sh
+nvm use
+npm ci
+npm run build
 ```
 
-Replace the example agent ID with an actual Agyn class ID. Profile IDs are
-immutable versioned operator configuration: add an ID to change an existing
-profile, rather than repointing a task's old ID at a different agent.
-Do not point `dbPath` at the old lab database. Legacy tasks are not automatically
-assigned an owner or imported; that requires an explicit migration.
+Prepare an operator-owned JSON file following the startup schema in
+[main.ts](src/service/main.ts). Keep service state and credentials outside Git.
+Use private absolute paths for the database and credentials, and the built
+`dist/service/agyn-reporting-installer.js` as the reporting setup executable.
+Select existing compatible Agyn profiles and a reporting URL reachable from
+their workloads. Version profile IDs when changing a profile; do not repoint
+bindings used by existing tasks. This entry point accepts only `trusted-local`;
+it does not provision Agyn or relax cluster policy.
 
 Set `AGYN_GATEWAY_URL`, `AGYN_TOKEN`, `AGYN_ORGANIZATION_ID` and `AGYN_IDENTITY_ID`
-through the operator environment, as for the existing Agyn adapter. A local CA
-may be supplied with `NODE_EXTRA_CA_CERTS`. Then run `npm run start:service`.
+in the private operator environment. Supply `NODE_EXTRA_CA_CERTS` when a local
+CA is required; do not disable TLS verification. Then start the configured host
+service:
 
-Only the explicit `trusted-local` environment profile is accepted in this
-development entry point. It does not modify seccomp or weaken a cluster's policy.
-Network enforcement and a validated hardened deployment remain release work.
+```sh
+A2A_SERVICE_CONFIG_FILE=/absolute/private/service.json npm run start:service
+```
 
 ## Shared Execution Admission
 
-`concurrency` is a durable execution-count ceiling for **all** workers sharing
-one service database, across owners and agent profiles. Worker construction
-initializes the stored limit on first use, even without queued tasks. Every
-subsequent worker must match it; a mismatch fails before the service listens or
-calls the provider. Claims recheck it inside the existing SQLite write
-transaction. A database trigger also prevents the previous claim SQL path from
-exceeding an initialized ceiling; it does not make mixed-version operation a
-supported upgrade procedure.
+Changing the shared execution ceiling is a drained maintenance operation, not a
+way to clear stuck work. Never delete/recreate the database to reset capacity.
+Inspect the local admission contract before the change:
 
-A claimed execution reserves one slot from provisioning through confirmed
-release. An outcome, cancellation request, expired lease or lost worker does
-not free the slot. Recovery takes over the same reservation. Only settlement
-after confirmed removal frees it; a stopped but uncertain task then remains
-blocked for its own follow-ups until explicit reconciliation. Idle durable
-workspaces and queued turns do not consume execution slots. This is not a
-count of physical containers: one task can have supporting containers, and
-unexpected/late provider workloads still require infrastructure reconciliation.
-
-The additive schema keeps existing tasks, events and runtime bindings. On
-initial adoption, old reservations may already exceed the configured ceiling.
-They remain counted and recoverable; no new execution is admitted until enough
-reservations settle. Do not delete/recreate the database to reset the limit.
-
-To change the limit:
+```sh
+npm run code:map -- inspect src/service/admission-cli src/service/worker src/service/task-store
+```
 
 1. Stop upstream submissions. Let accepted work settle, or cancel it and wait
-   for confirmed removal under the existing worker configuration. Inspect any
-   ambiguous provider state. SIGTERM alone does not drain remote workloads.
-2. Stop all service workers. Inspect the existing database using the patched
-   Node runtime:
+   for confirmed workload removal. Inspect ambiguous provider state; SIGTERM
+   alone does not drain remote workloads.
+2. Stop every worker sharing the database. With the pinned Node runtime and a
+   current build, inspect the existing database:
 
    ```sh
    node dist/service/admission-cli.js --db /absolute/private/service/tasks.sqlite
    ```
 
-3. With `reserved: 0`, atomically compare the old limit and set the new one:
+3. With `reserved: 0`, compare the old limit and set the new one atomically:
 
    ```sh
    node dist/service/admission-cli.js --db /absolute/private/service/tasks.sqlite --expect 2 --max-active 4
    ```
 
-4. Set `concurrency: 4` in every worker's configuration and restart them. Retain
-   the command result with the deployment audit. A stale expected limit or any
-   unreleased reservation causes a nonzero exit without changing the limit.
+4. Set `concurrency: 4` in every worker configuration, restart, and retain the
+   command result in the deployment audit. A rejected change requires
+   investigation, not a force/reset workaround.
 
-The CLI uses an existing absolute regular file, refuses symlinks/missing paths,
-and checks for the service's task tables read-only before schema initialization.
-It has no force option, provider credentials or agent-facing endpoint. A valid
-service database receives the same additive schema initialization as the
-service. Queued work and retained task state survive the change.
-
-Different databases and directly created Agyn workloads are outside this budget.
-Whole-task resource accounting, mandatory protected quotas, storage/PID/IO limits,
-fairness and sustained-load sizing remain [production gates](PRODUCTION.md).
+Other databases and workloads created directly in Agyn are outside this budget.
+Resource isolation and sustained-load validation remain production gates.
 
 ## Client Authentication
 
-`credentialsFile` is a regular file with mode `0600` containing an array:
+Provision owner-scoped A2A credentials using the format maintained in
+[auth.ts](src/service/auth.ts). Keep the credentials file mode `0600`; generate
+tokens from at least 32 cryptographically random bytes and store only their
+SHA-256 digests in that file. Keep plaintext tokens in a secret manager or
+private client file. An authorized operator rotates/revokes credentials by
+atomically replacing the file. Reconciliation permission is administrative,
+not an ordinary task-submission privilege.
 
-```json
-[{
-  "sha256": "<hex SHA-256 digest of a random base64url bearer token>",
-  "tenant": "organization-id",
-  "subject": "workflow-service",
-  "expiresAt": "2026-12-01T00:00:00Z",
-  "canReconcile": false
-}]
-```
-
-Generate tokens from at least 32 cryptographically random bytes. Keep plaintext
-tokens in a secret manager or private client file, not this repository. Replace
-the credentials file atomically to rotate/revoke credentials. The authorizer
-reloads it for every request and while a subscription is open. The service has
-no unauthenticated fallback and never trusts caller-supplied tenant headers.
-
-Use `Authorization: Bearer <token>`, `Content-Type: application/json` and
-`A2A-Version: 1.0` with the official A2A JSON-RPC methods at `/a2a`. Discovery is
-public at `/.well-known/agent-card.json`. Use TLS at a trusted ingress for any
-non-loopback client or reporter traffic. Machine APIs reject browser origins and
-never accept browser cookies. The optional [web boundary](WEB.md#browser-boundary)
-provides separate cookie authentication and REST/SSE routes.
-
-`SendMessage` persists and queues an execution. `configuration.returnImmediately`
-returns without waiting. Blocking sends wait for the submitted execution to
-settle and the task to be terminal or interrupted, without returning partial
-success at a fixed 30-second window. Follow-ups set `message.taskId` and reuse
-that task's stored profile. The API never accepts a runtime executable, image or
-Agyn handle in a request. Task IDs and contexts do not grant cross-owner access.
-
-JSON-RPC streams follow the task across interrupted states and subsequent turns,
-closing on terminal status, disconnect, authorization failure or service shutdown.
-An open stream does not keep an agent container running. Subscribing to an already
-terminal task returns `UnsupportedOperationError`; use `GetTask` to inspect it.
-Disconnecting a blocking send or stream does not cancel an accepted execution.
-
-Streams start with an atomic task snapshot. History is omitted unless requested
-and may be further limited to fit the initial frame. Small snapshots include all
-artifacts; larger ones deliver artifacts in separate bounded updates marked with
-`metadata.snapshotSequence`. Subsequent durable status/artifact updates carry
-their own increasing `metadata.eventSequence`. Snapshot replay is not a new event.
-The initial task also exposes its atomic `metadata.snapshotSequence` cursor.
-Idle streams send keepalive comments every 15 seconds. A reader that cannot drain
-a write within 10 seconds is disconnected and releases its admission slot.
-Event-source failures use sanitized SDK error envelopes, not task outcomes.
-`GetTask` provides stored history/artifacts. Production ingress and sustained
-protocol/load validation remain [release work](PRODUCTION.md).
-
-Admission conflicts return REST `409 / ABORTED`; capacity limits return
-`429 / RESOURCE_EXHAUSTED`. JSON-RPC uses `-32010` / `-32029` respectively.
-Stream admission rejects before SSE headers. Internal errors are redacted;
-a transport failure does not authorize resubmitting potentially accepted work.
+Use trusted TLS ingress for non-loopback A2A, browser and reporting traffic.
+Do not substitute provider or Agyn credentials for A2A access tokens. For client
+integration, batch-inspect `src/service/http` and `src/service/a2a`; browser
+access has a separate [security boundary](WEB.md#browser-boundary).
 
 ## Reporting Setup Contract
 
-The Agyn installer uses an explicit trusted-local startup gate. The daemon must
-include the required-init and inbox-guard patches and the environment must opt in.
-Stock Agyn logs failed init scripts and continues, so an init script alone is not
-a startup safety gate.
+The trusted-local TerminalGateway installer is not a proposed public Agyn API.
+Runtime profiles must include compatible required-init and inbox-guard support;
+stock init scripts that log failures and continue are not a startup safety gate.
+Runtime-managed configuration and journals need protection from agent writes
+before a hostile-code deployment can be considered safe.
 
-Agyn only starts an agent pod after an inbox message arrives. The service records
-dispatch intent, sends the message once, persists the returned request ID, then invokes `reportingSetupExecutable`
-directly, without a shell, passing one JSON document on stdin. The trusted init
-gate holds the daemon before the agent CLI starts until reporting is configured:
+Inspect the actual installer, transport and reporting adapters together:
 
-```json
-{
-  "executionId": "execution-id",
-  "instanceId": "agyn-instance-id",
-  "threadId": "agyn-thread-id",
-  "profileId": "codex-v1",
-  "requestId": "agyn-message-id",
-  "retiredRequestIds": ["settled-predecessor-message-id"],
-  "reporting": { "url": "https://execution-service.example/reporting", "token": "<scoped-token>" }
-}
+```sh
+npm run code:map -- scan --area src/reporting
+npm run code:map -- inspect src/service/agyn-reporting-installer src/service/agyn-terminal src/reporting/agent-config src/reporting/stop-check
 ```
 
-The installer configures the exact runtime's MCP relay and stop check,
-without putting the token into prompts, transcripts, command arguments or logs.
-It must finish within 120 seconds and return only:
-
-```json
-{"executionId":"execution-id","instanceId":"agyn-instance-id","workloadId":"agyn-workload-id","reportingConfigured":true}
-```
-
-It waits for the instance's one live workload, then uses Agyn's authenticated
-TerminalGateway with an immutable argv command and a short-lived WebSocket
-ticket. The receiver disables terminal echo and acknowledges the instance,
-workload and pinned runtime digest before accepting any credential bytes. The
-token is written to a private, ephemeral file, not the task PVC. The gate checks
-the authenticated execution status and installs the managed MCP/Stop config
-before releasing startup. The relay uses the official MCP SDK over stdio and
-Streamable HTTP; no new A2A or MCP wire format is introduced.
-
-The runtime's operator-provided `/agyn/config.json` selects the reporting config
-adapter. Codex uses system TOML; Claude uses its settings and user MCP JSON
-files. Unknown runtimes fail setup. Both profiles use the same reporting contract;
-their CLI configuration and native persistence remain runtime-specific adapters.
-
-The gate also installs a trusted inbox control file authorizing only the current
-provider message. The daemon's durable journal records intent before the agent
-runs and completion before its inbox ACK. Settled predecessor requests are
-acknowledged without agent execution. Re-entry cannot replace a configured gate;
-an ambiguous installer result is quarantined, not retried with a new binding.
-
-The installer ACK requires exact execution/instance/workload identity plus a successful
-remote exit. An ambiguous send/setup is quarantined, never automatically resent.
-The worker pins that workload ID; a missing, stopped or replacement workload is
-an interruption, even if Agyn still reports the instance as ACTIVE.
-Native workload-identity delivery remains an architecture question; this
-terminal-based installer is an explicit trusted-local boundary, not a proposed
-Agyn public API. An installer ACK alone is not end-to-end execution evidence.
-
-The remote stateless Streamable HTTP MCP endpoint is `/reporting/mcp`. Its bearer
-credential is bound to exactly one execution and instance. It cannot call A2A
-methods or report on other executions. Tools are `report_progress`,
-`report_artifact`, `report_outcome` and `get_execution_status`.
-
-The standalone Codex hook executable is `node dist/reporting/stop-hook.js`. It reads native
-Stop input from stdin and `REPORTING_CONFIG_FILE`, a `0600` JSON file containing
-`url` and `token`. HTTPS is required unless `allowInsecureLocal: true` is explicitly
-set for a trusted lab. Register it through a trusted runtime-managed hook layer;
-an untrusted repository must not be able to replace this configuration. The lab's
-root agent can still modify runtime files, so this is not yet a hardened boundary. It
-reminds at most twice, then requests a stop and controller reconciliation.
+Wire payloads, acknowledgements, runtime-specific configuration and Stop behavior
+belong to those modules and their tests, not a second protocol description here.
 
 ## Recovery And Operations
 
-- `GET /tasks/:taskId/events?after=<sequence>&limit=100` provides owner-scoped
-  durable replay, independent of a lost SSE connection.
-- A credential with `canReconcile: true` may POST `resolution` (`continue` or
-  `fail`) and a nonempty `reason` to
-  `/tasks/:taskId/executions/:executionId/reconcile`. Only an already stopped,
-  uncertain execution is eligible. Inspect side effects before deciding; this
-  does not replay the old message or restore skipped queued messages.
-  A dispatch whose provider request ID was lost cannot continue; fail it and
-  retain its paused environment for provider-side investigation. For a known
-  request, the next workload receives an acknowledgement-only retirement entry.
-  Retirement discards the old inbox item; it does not assert the side effects
-  completed successfully. The decision, actor and reason remain in durable events.
-- The same privileged owner can issue/rotate an execution reporting credential
-  at `/tasks/:taskId/executions/:executionId/reporting-credential`. This is an
-  administrative recovery interface, not an agent-facing tool.
-- Cancellation waits for removal evidence. A pause ACK, FAILED status or a
-  reported outcome does not authorize the next queued turn.
-  This requires explicit `removalConfirmedAt` for every workload, including the
-  pinned identity. Runners can set `removedAt` on failed/stopped status purely to
-  end metering; it is never sufficient release evidence.
-  `STOP_INACTIVE_INSTANCES=true` is explicit operator policy for stopping busy
-  paused instances; it is not the upstream default. The service cannot attest
-  provider behavior from a timestamp or image name alone.
-- Database leases recover after process loss. A dispatch with no ACK is
-  quarantined rather than resent. Provisioning with an unknown instance remains
-  unresolved until provider identity and removal can be established.
-- SIGTERM stops admission, HTTP connections and local workers. It leaves durable
-  leases for a replacement worker; it does not claim all remote work was stopped.
-  Bounded graceful draining and an operational supervisor remain release gates.
-- SQLite WAL must use a local/PVC filesystem with working locks, not a network
-  shared filesystem. This is not multi-node HA. Local database/workspace restore
-  and in-place migration are verified within the [documented scope](KUBERNETES.md#backup-and-restore-scope).
-  Production retention and complete replacement-node recovery remain release gates.
-- Drain old workers before upgrading the service/daemon profile together. An
-  existing running execution without a pinned workload ID is quarantined rather
-  than adopted. Never roll back the daemon alone under an inbox-guard profile.
-  Also drain/audit workloads created by older orchestrators before trusting their
-  state; historical billing timestamps must not be backfilled as confirmation.
-  Runner/node partitions, force-deleted pods and late
-  in-flight creates need infrastructure fencing and explicit reconciliation;
-  these are not solved by the local cancellation test.
+- Inspect side effects and provider identity before reconciling an interrupted
+  execution. A restored session, accepted pause or reported outcome does not
+  prove workload removal or authorize replay. Do not fabricate bindings or
+  removal evidence for failed/unbound records.
+- Use an explicitly authorized reconciliation credential and record the reason
+  for the decision. Inspect `src/service/http`, `src/service/task-store` and
+  `src/service/agyn-driver` for the current recovery interface and eligibility
+  rules. Missing request identity may require failure and provider-side
+  investigation rather than continuation.
+- Drain old workers before coordinated service/daemon upgrades. Never roll back
+  the daemon alone under an inbox-guard profile. Audit older workloads before
+  trusting lifecycle evidence; partitions, forced deletion and late creates
+  require infrastructure fencing, not just process restart.
+- Preserve durable databases, workspace/session state and private configuration.
+  Use the [deployment backup and restore scope](KUBERNETES.md#backup-and-restore-scope)
+  before planning recovery. Retention/deletion is separate from compute release.
 
-An agent daemon can retry or redeliver work independently of this service. The
-ephemeral startup gate prevents an unprepared replacement from starting Codex;
-the opt-in durable journal prevents replay of a pending inbox attempt. Neither
-controller fencing nor this journal makes external side effects exactly once.
-The journal and control file must be protected from the agent in a hardened
-deployment; the current trusted-local root agent does not provide that boundary.
+Use [verification and acceptance](ACCEPTANCE.md) to select checks and record their
+scope. Local results do not prove exactly-once external effects, complete
+disaster recovery or production safety.

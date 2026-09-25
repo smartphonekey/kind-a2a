@@ -1,4 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+/**
+ * Bind assistant-ui's public A2A client to cookie-authenticated browser routes.
+ *
+ * @module
+ * @remarks The service owns task identity and history. Restored sends reuse the
+ * task/context pair; transport loss never authorizes replaying accepted work.
+ * No provider credentials or local persistent conversation store live here.
+ * @see WEB.md#task-semantics
+ * @see src/service/browser.ts
+ */
 import {
   A2AClient,
   type A2AMessage,
@@ -14,14 +24,18 @@ import {
   type ThreadMessage,
 } from "@assistant-ui/react";
 
+/** Operator-defined immutable profile ID; labels do not change a task's binding. */
 export type Profile = { id: string; name?: string };
+/** Browser-visible session metadata, without the bearer held by the service. */
 export type Session = {
   subject: string;
   profiles: Profile[];
   defaultProfile: string;
 };
+/** Paused states end the browser stream but are not terminal task outcomes. */
 export const waiting = (task?: A2ATask) =>
   task && ["input_required", "auth_required"].includes(task.status.state);
+/** Protocol finality, not a cancellation request or independent removal evidence. */
 export const terminal = (task?: A2ATask) =>
   task ? isTerminalTaskState(task.status.state) : false;
 export const profileName = (profile: Profile) => profile.name ?? profile.id;
@@ -31,6 +45,12 @@ export function taskTitle(task: A2ATask) {
     : (task.history?.find((m) => m.role === "user")?.parts.find((p) => p.text)
         ?.text ?? `Task ${task.id.slice(0, 8)}`);
 }
+/**
+ * Call a same-origin browser route without adding a bearer header. A supplied
+ * body selects POST (including the login exchange); later requests use cookies.
+ * HTTP errors are sanitized and no request is retried because a lost response
+ * does not prove the mutation was rejected.
+ */
 export async function api<T>(path: string, body?: unknown): Promise<T> {
   const response = await fetch(`/web-api/${path}`, {
     credentials: "same-origin",
@@ -54,6 +74,7 @@ export async function api<T>(path: string, body?: unknown): Promise<T> {
     ? (undefined as T)
     : ((await response.json()) as T);
 }
+/** Use owner-wide task routes, or a profile-scoped endpoint for new submissions. */
 export function makeClient(profileId?: string) {
   return new A2AClient({
     baseUrl: `${location.origin}/web-api/${profileId ? `agents/${encodeURIComponent(profileId)}` : "a2a"}`,
@@ -61,6 +82,12 @@ export function makeClient(profileId?: string) {
   });
 }
 
+/**
+ * Restore a linear assistant-ui history from a server snapshot, retaining message
+ * IDs. A latest textual status absent by text is appended as a synthetic message;
+ * dates use the task status timestamp, not original per-message timestamps.
+ * This is a projection for display, not a second durable history store.
+ */
 export function historyRepository(task?: A2ATask): ExportedMessageRepository {
   const messages: ThreadMessage[] = (task?.history ?? []).map((message) =>
     fromThreadMessageLike(
@@ -121,7 +148,12 @@ export function historyRepository(task?: A2ATask): ExportedMessageRepository {
   };
 }
 
-/** Adds task recovery to the public native client API, without patching assistant-ui internals. */
+/**
+ * Supply restored task identity through the public native client API, whose
+ * runtime has no initial task-ID option. The caller must select the task's stored
+ * profile and enforce recovery/cancellation lockout; this client guards finality.
+ * Streaming events update the local projection, not the authoritative task store.
+ */
 export class TaskClient extends A2AClient {
   task: A2ATask | undefined;
   streaming = false;
@@ -133,6 +165,12 @@ export class TaskClient extends A2AClient {
     });
     this.task = task;
   }
+  /**
+   * Override outgoing task/context IDs with the restored binding. Yield updates
+   * before ending on paused or terminal state so the UI sees the final snapshot.
+   * Detaching or aborting this stream is not cancelTask and no failed send is
+   * automatically retried; streaming is reset even on failure or early return.
+   */
   override async *streamMessage(
     message: A2AMessage,
     configuration?: A2ASendMessageConfiguration,

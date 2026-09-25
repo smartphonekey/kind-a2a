@@ -1,4 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+/**
+ * Executable composition root for the durable store, Agyn worker and authenticated HTTP service.
+ * @module
+ * @remarks Importing this module starts the service. SQLite and shared admission checks
+ * precede listening. The configured setup executable runs without a shell, receives
+ * scoped credentials only on stdin, and must exit successfully within 120 seconds with
+ * an exact execution/instance acknowledgement and workload ID. Shutdown leaves remote
+ * work and durable leases for recovery rather than claiming release.
+ * @see src/service/agyn-reporting-installer.ts
+ * @see src/service/worker.ts
+ * @see src/service/http.ts
+ */
 import { createServer } from "node:http";
 import { readFileSync, statSync } from "node:fs";
 import { isAbsolute } from "node:path";

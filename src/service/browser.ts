@@ -1,4 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+/**
+ * Opt-in same-origin browser sessions and the SDK REST/SSE view of durable tasks.
+ * @module
+ * @see src/service/http.ts
+ * @see src/service/a2a.ts
+ */
 import { randomBytes } from "node:crypto";
 import express, { type Request, type Response } from "express";
 import {
@@ -17,6 +23,7 @@ import type { HttpOptions } from "./http.js";
 import type { Principal } from "./auth.js";
 import { SseWriter } from "./sse-writer.js";
 
+/** Profile mounts choose defaults for new tasks only; existing tasks retain their stored profile. */
 export type BrowserOptions = {
   origin: string;
   assetsPath: string;
@@ -29,7 +36,14 @@ const loginSchema = z
   .object({ token: z.string().regex(/^[A-Za-z0-9_-]{32,256}$/) })
   .strict();
 
-/** An opt-in, same-origin boundary. The bearer never goes into a cookie or browser storage. */
+/**
+ * Serve the UI and cookie-authenticated APIs without widening the machine bearer boundary.
+ * @remarks Login retains the bearer only in server memory and issues an opaque,
+ * HttpOnly, same-site cookie scoped to /web-api. Requests and open streams revalidate
+ * the underlying credential; expiry invalidates sessions and shutdown clears them.
+ * Exact Host and same-origin mutation checks ignore forwarded headers. Only the allowlisted
+ * SDK REST routes are exposed, keeping every stream on the bounded SSE writer.
+ */
 export function browserRouter(options: HttpOptions, browser: BrowserOptions) {
   const origin = new URL(browser.origin);
   if (

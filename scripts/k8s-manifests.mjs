@@ -1,14 +1,28 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+/**
+ * Build nonsecret Kubernetes wire manifests and lossless generated-client models.
+ *
+ * @module
+ * @remarks This is a pure deployment description, not an installer or an Agyn
+ * migration. The caller owns the private Secret and must preserve durable state;
+ * imports do not contact a cluster or load kubeconfig.
+ * @see KUBERNETES.md#packaging-and-upgrades
+ * @see scripts/k8s-manifests.test.mjs
+ */
 import assert from 'node:assert/strict';
 import { isIP } from 'node:net';
 import { ObjectSerializer } from '@kubernetes/client-node/dist/serializer.js';
 
+/**
+ * Convert supported wire JSON before passing it to KubernetesObjectApi.create.
+ * The generated client's ingress.from field is named _from; passing wire data
+ * directly can silently drop source restrictions. A full serialization round
+ * trip must equal the input or conversion fails, including on unknown fields.
+ */
 export function asKubernetesClientObject(manifest) {
   const types = { Namespace: 'v1', Secret: 'v1', ServiceAccount: 'v1', PersistentVolumeClaim: 'v1',
     ResourceQuota: 'v1', Service: 'v1', NetworkPolicy: 'networking.k8s.io/v1', Deployment: 'apps/v1' };
   assert.equal(manifest.apiVersion, types[manifest.kind], 'unsupported deployment object');
-  // The generated client calls ingress.from "_from". Passing wire JSON directly
-  // to KubernetesObjectApi.create silently drops this security restriction.
   const type = `V1${manifest.kind}`;
   const model = ObjectSerializer.deserialize(manifest, type, '');
   assert.deepEqual(JSON.parse(JSON.stringify(ObjectSerializer.serialize(model, type, ''))), manifest,
@@ -16,9 +30,17 @@ export function asKubernetesClientObject(manifest) {
   return model;
 }
 
-// A single SQLite writer in a new namespace, using an existing compatible Agyn.
-// The caller creates the private configuration Secret separately. No credentials
-// belong in these objects, an image layer, or a checked-in values file.
+/**
+ * Return wire objects for a fresh trusted-local namespace and compatible Agyn:
+ * one Recreate SQLite writer, a durable PVC, ClusterIP and scoped network rules.
+ * Image digest, IPv4 ingress address, exact TLS hostnames and unique agent UUIDs
+ * are mandatory; these objects carry Secret references, never credential values.
+ *
+ * @remarks Network policies are additive, not proof of isolation. Private config
+ * is copied to memory at init, so Secret rotation needs a drained restart.
+ * Do not blindly apply this fresh-install set over an existing namespace or
+ * delete/recreate its PVC to upgrade. No objects are applied by this function.
+ */
 export function serviceManifests({ image, ingressIp, gatewayHost, terminalHost, agentIds }) {
   assert(/^[a-z0-9][a-z0-9./:_-]*@sha256:[a-f0-9]{64}$/.test(image), 'digest-pinned image required');
   assert.equal(isIP(ingressIp), 4, 'explicit ingress Service IPv4 required');

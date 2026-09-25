@@ -1,5 +1,15 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: AGPL-3.0-only
+/**
+ * Inspect or compare-and-set the shared execution limit without provider access.
+ * @module
+ * @remarks Only an existing absolute regular database file is accepted, never a symlink.
+ * A read-only service-table probe precedes additive schema initialization, so even
+ * inspection can initialize schema. Limit changes require the expected value and
+ * zero reservations; queued work and retained task state are preserved.
+ * @see src/service/task-store.ts
+ * @see src/service/sqlite-runtime.ts
+ */
 import { lstatSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { parseArgs } from "node:util";

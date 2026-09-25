@@ -13,12 +13,16 @@
     "test:web": "npm --prefix web test",
     "start:runner": "node dist/runner.js",
     "client": "node dist/client.js",
-    "pretest": "npm run build",
-    "test": "node --test dist/*.test.js",
+    "pretest": "npm run build && npm run docs:check",
+    "test": "node --test dist/*.test.js tooling/code-map/*.test.mjs",
     "test:agyn": "node --test dist/agyn-backend.test.js",
     "test:adapter": "node --test dist/adapter.test.js",
     "test:fake-acp": "node --test dist/acp-harness.test.js",
-    "test:live": "./scripts/verify-live.sh"
+    "test:live": "./scripts/verify-live.sh",
+    "code:map": "node tooling/code-map/cli.mjs",
+    "code:map:mcp": "node tooling/code-map/mcp.mjs",
+    "docs:check": "node tooling/code-map/cli.mjs check",
+    "test:code-map": "node --test tooling/code-map/*.test.mjs"
   },
   "dependencies": {
     "@a2a-js/sdk": "1.1.0",

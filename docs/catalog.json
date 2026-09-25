@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "documents": [
+    {
+      "id": "readme",
+      "path": "README.md",
+      "title": "AIRA A2A Lab",
+      "purpose": "Repository entry point, local prerequisites and routes to code owners and operating guides.",
+      "kind": "navigation"
+    },
+    {
+      "id": "agents",
+      "path": "AGENTS.md",
+      "title": "Repository Navigation And Documentation",
+      "purpose": "Scan-then-inspect workflow, source-adjacent authoring rules and local verification boundaries.",
+      "kind": "navigation"
+    },
+    {
+      "id": "production",
+      "path": "PRODUCTION.md",
+      "title": "Production Readiness",
+      "purpose": "Unclosed security, recovery, operations and release acceptance requirements.",
+      "kind": "operations"
+    },
+    {
+      "id": "deployment",
+      "path": "KUBERNETES.md",
+      "title": "Kubernetes A2A Deployment",
+      "purpose": "Installed stack inventory, access, coordinated upgrades and backup/restore scope.",
+      "kind": "operations"
+    },
+    {
+      "id": "service",
+      "path": "SERVICE.md",
+      "title": "Durable Execution Service",
+      "purpose": "Host service prerequisites, authorized credential handling, drained admission changes and recovery procedures.",
+      "kind": "operations"
+    },
+    {
+      "id": "web",
+      "path": "WEB.md",
+      "title": "A2A Web Workspace",
+      "purpose": "Browser installation, same-origin deployment requirements and model-free UI verification.",
+      "kind": "operations"
+    },
+    {
+      "id": "agyn",
+      "path": "AGYN.md",
+      "title": "Agyn Integration",
+      "purpose": "Ownership across the A2A service and Agyn, compatible runtime prerequisites and trust boundaries.",
+      "kind": "architecture"
+    },
+    {
+      "id": "proposal",
+      "path": "docs/agyn-a2a-proposal.md",
+      "title": "Draft: Durable A2A Execution On Agyn",
+      "purpose": "Proposed cross-repository responsibilities and unresolved maintainer decisions, not an accepted upstream API.",
+      "kind": "architecture"
+    },
+    {
+      "id": "acceptance",
+      "path": "ACCEPTANCE.md",
+      "title": "Verification And Acceptance",
+      "purpose": "Code-derived test discovery, cross-component verification procedures and evidence requirements; historical results remain archived.",
+      "kind": "verification"
+    },
+    {
+      "id": "contribution",
+      "path": "CONTRIBUTING-AGYN.md",
+      "title": "Contributing This Work To Agyn",
+      "purpose": "Fork/branch status, independent review units and upstream submission procedure.",
+      "kind": "contribution"
+    },
+    {
+      "id": "licensing",
+      "path": "LICENSING.md",
+      "title": "Licensing Scope",
+      "purpose": "License ownership across application code, documentation, archives, branding and third-party contributions.",
+      "kind": "legal"
+    },
+    {
+      "id": "archive",
+      "path": "docs/archive/README.md",
+      "title": "Documentation Archive",
+      "purpose": "Historical evidence index; follow selected reports only when needed, never as current operating instructions.",
+      "kind": "historical"
+    }
+  ]
+}

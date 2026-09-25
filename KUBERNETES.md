@@ -102,16 +102,16 @@ npm run test:web
 Wait for import to finish and independently verify the immutable digest in the
 VM's containerd. A host Docker tag alone does not identify the running image.
 
-[scripts/k8s-manifests.mjs](scripts/k8s-manifests.mjs) returns eight nonsecret
-wire-JSON resources given a pinned image, ingress IP, exact TLS hostnames and
-agent UUIDs. Secret creation is a separate operator step. It does not install
-Agyn, migrate its registry or attach subscriptions. Do not overwrite an existing
-namespace with the installer.
+The manifest factory's inputs, resource definitions and Kubernetes client
+conversion contract live beside the implementation. Inspect them structurally:
 
-When using the generated Kubernetes JavaScript client, pass each wire object
-through `asKubernetesClientObject()` before `KubernetesObjectApi.create()`.
-The client models ingress `from` as `_from`; bypassing the structured conversion
-can drop restrictions. Verify stored specs and both allowed and denied traffic.
+```sh
+npm run code:map -- inspect scripts/k8s-manifests
+```
+
+Secret creation, subscription binding and backend migration remain separate
+operator steps. Do not overwrite an existing namespace with the installer.
+Verify stored specs and both allowed and denied traffic after applying resources.
 
 For an app update, drain submissions and active work first. Use UID/resource-
 version preconditions and patch only the owned Deployment's init/main image

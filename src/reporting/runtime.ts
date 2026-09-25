@@ -1,4 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+/**
+ * Bundle the gated runtime installer, stdio MCP relay and native Stop command.
+ *
+ * @module
+ * @remarks The trusted installer supplies execution-local files; credentials
+ * remain in private binding.json, separate from generated native configuration.
+ * Only runtime.mjs invokes the CLI; importing this source does not run it.
+ * @see SERVICE.md#reporting-setup-contract
+ * @see src/reporting/agent-config.ts
+ * @see scripts/agyn-execution-receiver.cjs
+ */
 import { readFileSync, writeFileSync, renameSync, lstatSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { homedir } from "node:os";
@@ -11,6 +22,16 @@ import { agentReportingFiles, managedReportingConfig, managedClaudeReportingConf
 
 export { managedReportingConfig } from "./agent-config.js";
 
+/**
+ * Configure only a matching, uncanceled dispatching execution with no outcome
+ * and the required instance-bound inbox replay guard. String config targets
+ * denote Codex; structured targets select the runtime adapter.
+ *
+ * @remarks All target files are validated before writing. Replacements are atomic
+ * per file, not transactional across files; partial failure leaves readiness
+ * unpublished. configured.json is written last so the external init gate stays
+ * closed on failure. That marker attests setup, not execution or removal.
+ */
 export async function installRuntime(directory: string, config: string | AgentReportingFiles, node = process.execPath): Promise<void> {
   const bindingFile = join(directory, "binding.json");
   const expected = z.object({ executionId: z.string().uuid(), instanceId: z.string().uuid() }).parse(JSON.parse(readFileSync(join(directory, "expected.json"), "utf8")));
@@ -39,8 +60,6 @@ export async function installRuntime(directory: string, config: string | AgentRe
     const configured = managedClaudeReportingConfig(settings, readConfig(target.mcpFile), directory, node);
     updates = [{ path: target.settingsFile, value: configured.settings, mode: 0o600 }, { path: target.mcpFile, value: configured.mcp, mode: 0o600 }];
   }
-  // Validate every config before changing any. A write failure leaves the init
-  // gate closed; no configured acknowledgement is published for partial setup.
   for (const update of updates) {
     writeFileSync(`${update.path}.execution.tmp`, update.value, { mode: update.mode, flag: "wx" });
     renameSync(`${update.path}.execution.tmp`, update.path);
@@ -69,7 +88,6 @@ async function main() {
   else throw new Error("unknown runtime command");
 }
 
-// The bundle is the only executable; importing this module in tests has no effects.
 if (process.argv[1]?.endsWith("runtime.mjs")) {
   try { await main(); }
   catch {

@@ -1,28 +1,43 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+/**
+ * Lease-driven execution coordinator between durable task state and provider operations.
+ * @module
+ * @remarks Missing dispatch acknowledgements and interrupted workloads enter release
+ * and quarantine, never automatic replay. Lease loss stops local work without proving
+ * that a provider workload stopped.
+ * @see src/service/task-store.ts
+ * @see src/service/agyn-driver.ts
+ */
 import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { DurableTaskStore, TaskStoreError, type DispatchReceipt, type Execution, type Runtime } from "./task-store.js";
 
-/** Provider operations must not retry non-idempotent sends. Reporting is a separate channel. */
+/** Provider lifecycle boundary; authenticated reporting, not provider chat replies, supplies outcomes. */
 export interface RuntimeDriver {
+  /** On recovery, reconcile the previous create's identity instead of creating a replacement. */
   provision(execution: Execution, recovering: boolean, signal: AbortSignal): Promise<Runtime>;
   prepare(execution: Execution, signal: AbortSignal): Promise<void>;
+  /** Persist receipts through onAccepted as they arrive; never retry a potentially accepted send. */
   dispatch(execution: Execution, signal: AbortSignal, onAccepted: (receipt: DispatchReceipt) => void): Promise<string>;
   observe(execution: Execution, signal: AbortSignal): Promise<"running" | "interrupted">;
+  /** Return stopped only on confirmed removal, not a stop request, status change or reported outcome. */
   release(execution: Execution, signal: AbortSignal): Promise<{ stopped: boolean }>;
 }
 
+/** Concurrency is both a local job limit and the durable ceiling shared by every worker on this database. */
 export type WorkerOptions = {
   concurrency: number; leaseMs: number; pollMs: number; turnTimeoutMs: number;
   workerId?: string; onError?: (error: { executionId: string; phase: string; retrying: boolean }) => void;
 };
 
+/** Drive claimed phases while heartbeating generation-fenced leases; settle only after driver release evidence. */
 export class ExecutionWorker {
   private readonly workerId: string;
   private readonly stopping = new AbortController();
   private readonly jobs = new Set<Promise<void>>();
   private loop?: Promise<void>;
 
+  /** Initialize or verify shared admission immediately, even with no queued work or provider calls. */
   constructor(private readonly store: DurableTaskStore, private readonly driver: RuntimeDriver, private readonly options: WorkerOptions) {
     for (const value of [options.concurrency, options.leaseMs, options.pollMs, options.turnTimeoutMs]) {
       if (!Number.isSafeInteger(value) || value < 1) throw new Error("worker limits must be positive integers");
@@ -37,6 +52,7 @@ export class ExecutionWorker {
     this.loop = this.schedule();
   }
 
+  /** Abort and join local jobs, leaving durable leases for recovery; this is not a remote-workload drain. */
   async stop(): Promise<void> {
     this.stopping.abort();
     await this.loop;

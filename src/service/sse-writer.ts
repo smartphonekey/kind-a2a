@@ -1,9 +1,20 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+/**
+ * Bounded SSE delivery and idle keepalives shared by both A2A HTTP bindings.
+ * @module
+ * @see src/service/http.ts
+ * @see src/service/browser.ts
+ */
 import { once } from "node:events";
 import type { Writable } from "node:stream";
 
 export type SseWriteOptions = { heartbeatMs?: number; drainTimeoutMs?: number };
 
+/**
+ * Apply backpressure to preformatted frames without buffering an unbounded event queue.
+ * @remarks A failed or timed-out drain aborts the request and destroys its writable,
+ * allowing the HTTP owner-request slot to be released. This does not cancel durable work.
+ */
 export class SseWriter {
   private timer?: NodeJS.Timeout;
   private writing?: Promise<void>;
@@ -25,8 +36,8 @@ export class SseWriter {
     if (signal.aborted) this.interrupted();
   }
 
+  /** Callers must await each write; only the internal idle heartbeat may compete with the event producer. */
   async write(frame: string): Promise<void> {
-    // The event consumer awaits every write. Only one idle heartbeat may compete with it.
     if (this.writing) await this.writing;
     this.signal.throwIfAborted();
     if (this.closed) throw new Error("SSE writer is closed");
@@ -41,6 +52,7 @@ export class SseWriter {
     }
   }
 
+  /** Stop heartbeats and detach listeners after the pending write; the caller still owns ending the response. */
   async close(): Promise<void> {
     this.closed = true;
     clearTimeout(this.timer);

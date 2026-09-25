@@ -1,4 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+/**
+ * Render the authenticated workspace over the service's durable A2A tasks.
+ *
+ * @module
+ * @remarks Profile changes start new tasks; follow-ups retain server identity.
+ * Refresh restores server history, not a browser chat database. Tab/task changes
+ * detach observation without canceling execution; only explicit cancel requests
+ * ask the service to stop work. Reporting and provider credentials stay out of UI.
+ * @see WEB.md#task-semantics
+ * @see WEB.md#browser-boundary
+ * @see web/src/client.ts
+ */
 import {
   useCallback,
   useEffect,
@@ -91,6 +103,10 @@ function Brand() {
     </div>
   );
 }
+/**
+ * Exchange login input for a same-origin cookie and periodically revalidate the
+ * session. A 401 drops the workspace; provider authentication is not web login.
+ */
 function App() {
   const [session, setSession] = useState<Session | null>();
   const [loginError, setLoginError] = useState("");
@@ -202,7 +218,17 @@ function Login({
     </main>
   );
 }
+/**
+ * key identifies a mounted runtime, not necessarily a server task. Receiving a
+ * new task ID must keep that key stable so its in-flight stream is not remounted.
+ */
 type Selection = { key: string; profileId: string; task?: A2ATask };
+/**
+ * Restore hash-selected tasks through owner-scoped reads and their stored
+ * profiles. A load generation discards stale selection responses; the composer
+ * stays unmounted while restoration is pending or failed. List polling observes
+ * detached work without resubmitting it or changing its profile.
+ */
 function Workspace({
   session,
   onLogout,
@@ -486,6 +512,12 @@ function Workspace({
     </main>
   );
 }
+/**
+ * Own one runtime per Selection.key with an initial server-history projection.
+ * Poll/import only while no send stream is active, checking again after reads.
+ * Send/poll errors lock sending until reload; terminal, recovery-required and
+ * cancel-pending snapshots are read-only. Unmounting never cancels the task.
+ */
 function ChatSession({
   selection,
   profiles,
@@ -561,6 +593,11 @@ function ChatSession({
       client.onTask = () => {};
     };
   }, [client, runtime, onTask]);
+  /**
+   * Request service-side cancellation without aborting the browser stream as a
+   * substitute. A returned snapshot may still be pending runtime removal; retain
+   * its cancellationRequested lock until authoritative task state changes.
+   */
   const cancel = async () => {
     if (!client.task || canceling) return;
     setCanceling(true);
@@ -753,6 +790,7 @@ function ChatSession({
     </AssistantRuntimeProvider>
   );
 }
+/** Keep remote image references inert and external links isolated from this tab. */
 const Markdown = () => (
   <MarkdownTextPrimitive
     className="markdown"
@@ -794,6 +832,7 @@ function AssistantMessage() {
     </MessagePrimitive.Root>
   );
 }
+/** Download artifact parts as inert text; URLs in parts are text, never fetched. */
 function TaskDetails({
   task,
   onClose,

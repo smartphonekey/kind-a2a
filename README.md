@@ -5,10 +5,11 @@ An Agyn-backed A2A execution service with an assistant-ui web workspace.
 Codex and Claude run isolated tasks on single-node Kubernetes. Each task keeps
 its own workspace and native session while compute is removed between turns.
 
-**Status: trusted local lab, not production-ready.** The backend is upgraded
-in place through registry schema `0027`. See [production readiness](PRODUCTION.md)
-for the remaining release criteria and [acceptance](ACCEPTANCE.md) for what has
-actually been tested.
+**Status: trusted local lab, not production-ready.** See
+[production readiness](PRODUCTION.md) for release criteria,
+[deployment](KUBERNETES.md) for the installed revisions and
+[verification and acceptance](ACCEPTANCE.md) for procedures and evidence limits,
+not a manually maintained test inventory or passing-results claim.
 
 ## Use The Installed App
 
@@ -37,30 +38,37 @@ require changing the A2A controller or workflow.
 
 ## Task Lifecycle
 
-- A new task receives a dedicated instance, thread, workspace and native session.
-  Different tasks run concurrently; the installed service admits two executions.
-- Follow-ups retain the task's immutable profile and run FIFO in the same
-  workspace, never concurrently within that task.
-- An ordinary completed turn releases compute after confirmed Pod removal.
-  A follow-up starts a new Pod attached to the retained workspace/session.
-- Terminal tasks are read-only. Further work starts a new task.
-- Interrupted turns require explicit reconciliation. Restoring a session does
-  not authorize replay of actions that might already have completed.
-- Workspaces outlive compute. Retention and deletion are separate operations.
+Implementation contracts live beside their owning code and tests. Start with a
+component list, select related components, then inspect them together:
+
+```sh
+npm run code:map -- scan --area src/service
+npm run code:map -- inspect src/service/worker src/service/task-store
+```
+
+Inspect an exact symbol with `--symbol NAME`, or add `--source` for bounded,
+line-numbered implementation excerpts. The map derives imports, exports, test
+links and module/public JSDoc from source ASTs on demand; there is no generated
+component catalog to refresh. Test links are direct-import relationships, not
+coverage or passing results. Follow [AGENTS.md](AGENTS.md) and the repository
+[code-map skill](skills/code-map/SKILL.md) for navigation and authoring.
 
 ## Documentation
 
-| Document | Purpose |
-| --- | --- |
-| [Production readiness](PRODUCTION.md) | Current blockers and release acceptance criteria |
-| [Kubernetes deployment](KUBERNETES.md) | Installed images, access, upgrades and backup boundaries |
-| [Service](SERVICE.md) | Configuration, authentication, admission, reporting and recovery |
-| [Web workspace](WEB.md) | Browser setup, task behavior and security boundary |
-| [Agyn integration](AGYN.md) | Runtime requirements and ownership boundaries |
-| [Acceptance](ACCEPTANCE.md) | Current verification summary and its limits |
-| [Contributions](CONTRIBUTING-AGYN.md) | Fork/branch status and upstream review units |
-| [Architecture proposal](docs/agyn-a2a-proposal.md) | Contract proposed for discussion with Agyn |
-| [Licensing](LICENSING.md) | AGPL scope and third-party terms |
+Standalone docs cover setup, cross-component decisions, operations and release
+requirements. They do not maintain a second copy of class, function or API
+contracts. List their purposes before loading selected documents:
+
+```sh
+npm run code:map -- docs
+npm run code:map -- doc production deployment
+```
+
+[docs/catalog.json](docs/catalog.json) is the curated navigation index. Common
+entry points are [service operations](SERVICE.md), [web setup](WEB.md),
+[Agyn ownership](AGYN.md), [contributions](CONTRIBUTING-AGYN.md),
+[architecture questions](docs/agyn-a2a-proposal.md) and [licensing](LICENSING.md).
+The archive is indexed once; historical report bodies are not loaded by default.
 
 ## Develop And Verify
 
@@ -70,6 +78,8 @@ Use the Node version in `.nvmrc`; the service checks the bundled SQLite version.
 nvm use
 npm ci
 npm --prefix web ci
+npm run docs:check
+npm run test:code-map
 npm test
 npm run build:web
 npm exec --prefix web -- playwright install chromium

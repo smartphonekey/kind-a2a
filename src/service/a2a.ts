@@ -1,4 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+/**
+ * A2A SDK handler projecting durable tasks into blocking replies and live snapshots/events.
+ * @module
+ * @see src/service/task-store.ts
+ * @see src/service/http.ts
+ * @see src/service/browser.ts
+ */
 import { setTimeout as delay } from "node:timers/promises";
 import { type AgentCard, Task, type SendMessageRequest, type GetTaskRequest, type CancelTaskRequest,
   type ListTasksRequest, type StreamResponse, type SubscribeToTaskRequest, TaskState } from "@a2a-js/sdk";
@@ -11,8 +18,11 @@ import type { Principal } from "./auth.js";
 import { reportSchema } from "./events.js";
 import { taskArtifact } from "./artifacts.js";
 
+/** ServerCallContext state key for the authenticated owner, supplied by the transport, never the message. */
 export const PRINCIPAL = "execution.principal";
+/** Context signal combining disconnect and service shutdown; aborting it does not cancel accepted work. */
 export const SIGNAL = "execution.signal";
+/** Context callback revalidating credentials during blocking sends and subscriptions. */
 export const CHECK_AUTH = "execution.check_auth";
 const terminal = new Set([TaskState.TASK_STATE_COMPLETED, TaskState.TASK_STATE_FAILED,
   TaskState.TASK_STATE_CANCELED, TaskState.TASK_STATE_REJECTED]);
@@ -34,6 +44,13 @@ function streamSnapshot(task: Task, historyLength?: number): { task: Task; remai
   return { task: taskView(view, low), remainingArtifacts };
 }
 
+/**
+ * Share task semantics across SDK JSON-RPC and HTTP+JSON bindings.
+ * @remarks Contexts must supply PRINCIPAL, SIGNAL and CHECK_AUTH. Tenant mismatches
+ * appear as not-found, and follow-ups reuse the task's stored profile. Admission
+ * conflicts/capacity map to JSON-RPC -32010/-32029 or REST 409/429 respectively;
+ * the browser transport supplies the REST ABORTED/RESOURCE_EXHAUSTED status labels.
+ */
 export class DurableA2AHandler implements A2ARequestHandler {
   constructor(private readonly store: DurableTaskStore, private readonly card: AgentCard,
     private readonly defaultProfile: string, private readonly pollMs = 250,
@@ -46,6 +63,11 @@ export class DurableA2AHandler implements A2ARequestHandler {
   async listTaskPushNotificationConfigs(): Promise<never> { throw new PushNotificationNotSupportedError(); }
   async deleteTaskPushNotificationConfig(): Promise<never> { throw new PushNotificationNotSupportedError(); }
 
+  /**
+   * Persist a submission, then wait for that execution to settle or become uncertain
+   * and for the task to be terminal or interrupted. returnImmediately skips this wait,
+   * not persistence; disconnect or reauthorization failure does not undo acceptance.
+   */
   async sendMessage(params: SendMessageRequest, context: ServerCallContext): Promise<Task> {
     const scope = this.scope(context, params.tenant);
     await this.checkAuth(context);
@@ -67,6 +89,7 @@ export class DurableA2AHandler implements A2ARequestHandler {
     return this.mapped(() => taskView(this.store.get(this.scope(context, params.tenant), params.id), params.historyLength));
   }
 
+  /** Request cancellation; the returned task can remain working until runtime removal is confirmed. */
   async cancelTask(params: CancelTaskRequest, context: ServerCallContext): Promise<Task> {
     try { return this.store.requestCancel(this.scope(context, params.tenant), params.id); }
     catch (error) {
@@ -79,6 +102,12 @@ export class DurableA2AHandler implements A2ARequestHandler {
     return this.mapped(() => this.store.list(this.scope(context, params.tenant), params));
   }
 
+  /**
+   * Submit and watch the task across interrupted states and later turns until terminal.
+   * @remarks Start from an atomic snapshot cursor. History defaults to omitted and
+   * may be shortened to fit; large artifacts follow in snapshotSequence-tagged updates.
+   * Durable deltas use eventSequence, so snapshot replay is not a new persisted event.
+   */
   async *sendMessageStream(params: SendMessageRequest, context: ServerCallContext): AsyncGenerator<StreamResponse> {
     const scope = this.scope(context, params.tenant);
     await this.checkAuth(context);
@@ -86,6 +115,7 @@ export class DurableA2AHandler implements A2ARequestHandler {
     yield* this.watch(scope, submitted.task.id, context, false, params.configuration?.historyLength);
   }
 
+  /** Watch from a fresh snapshot without submitting work; already terminal tasks must be read with getTask. */
   async *resubscribe(params: SubscribeToTaskRequest, context: ServerCallContext): AsyncGenerator<StreamResponse> {
     yield* this.watch(this.scope(context, params.tenant), params.id, context, true);
   }

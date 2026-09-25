@@ -1,8 +1,25 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+/**
+ * Evaluate bounded outcome reminders and translate decisions to native Stop output.
+ *
+ * @module
+ * @remarks Decisions govern the agent's stop attempt, not task settlement. The
+ * store persists check identities and reminder counts across hook processes.
+ * @see src/service/task-store.ts
+ * @see src/reporting/hook-client.ts
+ */
 import type { ExecutionStatus } from "./mcp.js";
 
 export type StopDecision = { action: "allow" | "remind" | "stop"; reason: string };
 
+/**
+ * Cancel always wins. An ACK allows normal stopping in dispatching, running,
+ * releasing or settled phases; all other phases fail closed even with an
+ * outcome. Only active work without an outcome can receive reminders (two by
+ * default); exhaustion stops for reconciliation, never authorizes a work retry.
+ * Callers supply persisted, nonnegative safe-integer counts; this pure function
+ * does not consume a check.
+ */
 export function evaluateStop(status: ExecutionStatus, reminders: number, maxReminders = 2): StopDecision {
   if (!Number.isSafeInteger(reminders) || reminders < 0 || !Number.isSafeInteger(maxReminders) || maxReminders < 0) {
     throw new Error("invalid stop check budget");
@@ -25,9 +42,12 @@ export function evaluateStop(status: ExecutionStatus, reminders: number, maxRemi
   return { action: "remind", reason: `No outcome is acknowledged for ${execution}. Call report_outcome with turn_done, task_completed, input_required (including your question), or failed. Do not repeat work already performed.` };
 }
 
+/**
+ * Emit the command-Stop fields shared by Codex and Claude, retaining the export
+ * name for callers. A reminder blocks this stop attempt; stop halts the agent;
+ * allow emits no override, avoiding a cancellation notice on the next turn.
+ */
 export function codexStopOutput(decision: StopDecision): Record<string, unknown> {
-  // Claude Code and Codex use the same command-Stop decision fields. Keep the
-  // existing export name for callers; the decision contract itself is generic.
   if (decision.action === "remind") return { decision: "block", reason: decision.reason };
   if (decision.action === "stop") return { continue: false, stopReason: decision.reason };
   return {};

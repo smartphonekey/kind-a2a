@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+/**
+ * Public discovery metadata for the machine-facing A2A JSON-RPC binding.
+ * @module
+ * @see src/service/http.ts
+ * @see src/service/browser.ts
+ */
 import { type AgentCard } from "@a2a-js/sdk";
 
+/** Advertise bearer-authenticated text tasks and streaming; browser mounts replace the transport and security scheme. */
 export function serviceCard(publicUrl: string): AgentCard {
   return {
     name: "Agyn A2A Execution Service", description: "Isolated, durable Agyn task execution", version: "0.5.0-dev",

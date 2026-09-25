@@ -1,4 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+/**
+ * SQLite source of truth for owned tasks, queued executions, runtime bindings and replayable events.
+ * @module
+ * @remarks State transitions and their events commit together under BEGIN IMMEDIATE.
+ * Schema initialization is additive and separate from the legacy lab task tables;
+ * legacy tasks are not imported or assigned owners implicitly.
+ * @see src/service/worker.ts
+ * @see src/service/a2a.ts
+ */
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { chmodSync, mkdirSync, existsSync, lstatSync } from "node:fs";
 import { dirname } from "node:path";
@@ -9,10 +18,15 @@ import { evaluateStop, type StopDecision } from "../reporting/stop-check.js";
 import type { ExecutionStatus } from "../reporting/mcp.js";
 import { taskArtifact } from "./artifacts.js";
 
+/** Authenticated tenant/subject ownership; task IDs and shared context IDs are not access grants. */
 export type Scope = { tenant: string; subject: string };
+/** Internal lifecycle, distinct from A2A task status; uncertain means stopped but awaiting reconciliation. */
 export type Phase = "queued" | "provisioning" | "ready" | "dispatching" | "running" | "releasing" | "uncertain" | "settled";
+/** Immutable task-lifetime binding reused by follow-up executions, not evidence of a live workload. */
 export type Runtime = { instanceId: string; threadId: string; profileId: string };
+/** Generation-fenced database authority; it does not fence remote provider side effects. */
 export type Lease = { executionId: string; workerId: string; generation: number };
+/** Acceptance can record the request first and pin a workload later, but neither identity may change. */
 export type DispatchReceipt = { requestId: string; workloadId?: string };
 export type Execution = {
   id: string; taskId: string; ordinal: number; phase: Phase; message: Message;
@@ -21,7 +35,9 @@ export type Execution = {
   runtime: Runtime | null; profileId: string; createdAt: number; startedAt: number | null; uncertainReason: string | null;
 };
 export type Submission = { task: Task; execution: Execution; duplicate: boolean };
+/** Submission limits count unsettled turns, including stopped uncertainty, separately from compute reservations. */
 export type StoreOptions = { clock?: () => number; maxQueuedPerTask?: number; maxPendingPerOwner?: number };
+/** Database-wide claimed execution count; queued, settled and stopped-uncertain executions reserve no slot. */
 export type Admission = { maxActive: number | null; reserved: number };
 
 export class TaskStoreError extends Error {
@@ -34,12 +50,22 @@ const terminal = new Set([TaskState.TASK_STATE_COMPLETED, TaskState.TASK_STATE_F
   TaskState.TASK_STATE_CANCELED, TaskState.TASK_STATE_REJECTED]);
 type Row = Record<string, string | number | null>;
 
+/**
+ * Enforce owner isolation, per-task ordering and shared compute reservations in SQLite.
+ * @remarks Execution-ID and reporter methods are internal APIs, not owner authorization
+ * checks. Transports must authenticate and bind callers before exposing them.
+ */
 export class DurableTaskStore {
   private readonly db: DatabaseSync;
   private readonly clock: () => number;
   private readonly maxQueuedPerTask: number;
   private readonly maxPendingPerOwner: number;
 
+  /**
+   * Open WAL/FULL storage and initialize schema without replacing existing task state.
+   * The SQLite runtime-version guard is the entry point's responsibility.
+   * @see src/service/sqlite-runtime.ts
+   */
   constructor(path: string, options: StoreOptions = {}) {
     this.clock = options.clock ?? Date.now;
     this.maxQueuedPerTask = options.maxQueuedPerTask ?? 32;
@@ -114,6 +140,13 @@ export class DurableTaskStore {
 
   close(): void { this.db.close(); }
 
+  /**
+   * Persist a bounded text turn without provisioning or reserving compute.
+   * @remarks Both owner-wide messageId and task-scoped idempotencyKey bind to content;
+   * exact retries return the original execution, while changed content conflicts.
+   * Follow-ups require the same owner, context and profile. Terminal, canceling,
+   * closing or recovery-blocked tasks reject new turns; references must share ownership.
+   */
   submit(scope: Scope, message: Message, profileId: string): Submission {
     this.validateScope(scope);
     if (!message.messageId || message.messageId.length > 128 || message.role !== Role.ROLE_USER) {
@@ -203,6 +236,7 @@ export class DurableTaskStore {
     });
   }
 
+  /** Return stored history/artifacts; an absent task and another owner's task are both not-found. */
   get(scope: Scope, taskId: string): Task {
     this.validateScope(scope);
     const row = this.db.prepare("SELECT task_json FROM execution_tasks WHERE id=? AND tenant=? AND subject=?")
@@ -211,6 +245,7 @@ export class DurableTaskStore {
     return JSON.parse(String(row.task_json)) as Task;
   }
 
+  /** Internal lookup without owner checks; startedAt is dispatch intent time, not provider acknowledgement time. */
   execution(id: string): Execution | undefined {
     const row = this.db.prepare(`SELECT e.*, t.profile_id, r.instance_id, r.thread_id, w.workload_id,
       (SELECT at FROM task_events WHERE execution_id=e.id AND kind='execution.dispatching' LIMIT 1) AS started_at FROM task_executions e
@@ -229,6 +264,7 @@ export class DurableTaskStore {
     } : undefined;
   }
 
+  /** Paginate an owner's tasks using a cursor bound to its filters and creation-time ceiling, not a frozen status snapshot. */
   list(scope: Scope, params: ListTasksRequest): ListTasksResponse {
     this.validateScope(scope);
     const pageSize = params.pageSize ?? 50;
@@ -269,6 +305,7 @@ export class DurableTaskStore {
     })).toString("base64url") : "" };
   }
 
+  /** Atomically pair task contents with the last event sequence so streaming can continue without a snapshot/replay gap. */
   snapshot(scope: Scope, taskId: string): { task: Task; sequence: number } {
     return this.transaction(() => {
       const task = this.get(scope, taskId);
@@ -277,11 +314,13 @@ export class DurableTaskStore {
     });
   }
 
+  /** Initialize the shared ceiling once; later workers must match it, even when no tasks are queued. */
   configureAdmission(maxActive: number): void {
     this.validateAdmissionLimit(maxActive);
     this.transaction(() => this.assertAdmissionLimit(maxActive));
   }
 
+  /** Count unreleased reservations across all owners/profiles, including expired leases; an unset ceiling is null. */
   admission(): Admission {
     const row = this.db.prepare(`SELECT
       (SELECT max_active FROM execution_admission WHERE id=1) AS max_active,
@@ -289,6 +328,7 @@ export class DurableTaskStore {
     return { maxActive: row.max_active === null ? null : Number(row.max_active), reserved: Number(row.reserved) };
   }
 
+  /** Compare-and-set an initialized ceiling only with zero reservations; preserve queued work and retained state. */
   changeAdmissionLimit(expected: number, maxActive: number): Admission {
     this.validateAdmissionLimit(expected);
     this.validateAdmissionLimit(maxActive);
@@ -301,6 +341,13 @@ export class DurableTaskStore {
     });
   }
 
+  /**
+   * Recover an expired reservation first, otherwise admit the next eligible queued turn.
+   * @remarks Claims recheck the stored ceiling inside the write transaction. Recovery
+   * retains the same slot even above the ceiling; only new claims need spare capacity.
+   * Earlier unsettled turns block their task, and each acquisition advances the fencing
+   * generation. Lease expiry, cancellation and outcomes do not release reservations.
+   */
   claim(workerId: string, leaseMs: number, maxActive: number): { execution: Execution; lease: Lease; recovered: boolean } | undefined {
     if (!workerId || !Number.isSafeInteger(leaseMs) || leaseMs < 1 || !Number.isSafeInteger(maxActive) || maxActive < 1) {
       throw new TaskStoreError("invalid", "invalid worker lease or concurrency limit");
@@ -331,6 +378,7 @@ export class DurableTaskStore {
     });
   }
 
+  /** Extend only an unexpired, current-generation lease; a lost lease cannot be revived by its old worker. */
   heartbeat(lease: Lease, leaseMs: number): void {
     if (!Number.isSafeInteger(leaseMs) || leaseMs < 1) throw new TaskStoreError("invalid", "invalid lease duration");
     this.transaction(() => {
@@ -339,6 +387,7 @@ export class DurableTaskStore {
     });
   }
 
+  /** Bind during provisioning only; instance/thread uniqueness prevents reuse by another task. */
   bind(lease: Lease, runtime: Runtime): void {
     this.transaction(() => {
       const execution = this.assertLease(lease);
@@ -351,6 +400,7 @@ export class DurableTaskStore {
     });
   }
 
+  /** Persist intent before sending; recovery of this phase must quarantine, not resend, a possibly accepted message. */
   beginDispatch(lease: Lease): Execution {
     return this.transaction(() => {
       const execution = this.assertLease(lease);
@@ -361,6 +411,7 @@ export class DurableTaskStore {
     });
   }
 
+  /** Preserve immutable provider identities even if release began while setup was finishing. */
   recordDispatchReceipt(lease: Lease, receipt: DispatchReceipt): void {
     this.transaction(() => {
       const execution = this.assertLease(lease);
@@ -379,11 +430,13 @@ export class DurableTaskStore {
     });
   }
 
+  /**
+   * Select known, settled predecessor requests for acknowledgement-only inbox retirement.
+   * Uncertain work must first be reconciled; retirement does not assert successful side effects.
+   */
   retiredRequestIds(executionId: string): string[] {
     const execution = this.execution(executionId);
     if (!execution) throw new TaskStoreError("not_found", "execution not found");
-    // Settled predecessors have physical removal evidence. An ambiguous one can
-    // only settle through explicit reconciliation; never retire pending work.
     const rows = this.db.prepare(`SELECT request_id FROM task_executions WHERE task_id=? AND ordinal<?
       AND phase='settled' AND request_id IS NOT NULL ORDER BY ordinal`).all(execution.taskId, execution.ordinal) as Row[];
     return rows.map(row => String(row.request_id));
@@ -400,6 +453,13 @@ export class DurableTaskStore {
     });
   }
 
+  /**
+   * Commit an authenticated instance's report and materialized task updates atomically.
+   * @remarks Exact eventId retries remain idempotent after event admission closes;
+   * changed content conflicts. New reports require an uncanceled dispatching/running
+   * execution with no outcome. Outcomes bypass progress/artifact quotas but only record
+   * intent: the worker must still confirm release before publishing the final task state.
+   */
   report(instanceId: string, executionId: string, input: unknown): { sequence: number; duplicate: boolean } {
     const report = reportSchema.parse(input);
     const hash = contentHash(report);
@@ -440,6 +500,7 @@ export class DurableTaskStore {
     });
   }
 
+  /** Rotate one execution's reporting token, storing only its digest; the returned plaintext is for trusted delivery only. */
   issueReportingCredential(executionId: string, ttlMs: number): string {
     if (!Number.isSafeInteger(ttlMs) || ttlMs < 1 || ttlMs > 86_400_000) throw new TaskStoreError("invalid", "invalid credential lifetime");
     return this.transaction(() => {
@@ -456,6 +517,7 @@ export class DurableTaskStore {
     });
   }
 
+  /** Resolve an unexpired reporting token to its fixed execution/instance pair, never to an A2A owner principal. */
   authenticateReporter(token: string): { executionId: string; instanceId: string } | undefined {
     if (!/^[A-Za-z0-9_-]{43}$/.test(token)) return undefined;
     const row = this.db.prepare(`SELECT c.execution_id,r.instance_id FROM reporting_credentials c
@@ -470,6 +532,10 @@ export class DurableTaskStore {
     return { executionId, phase: execution.phase, canceled: execution.canceled, outcome: execution.outcome };
   }
 
+  /**
+   * Persist bounded Stop-hook reminders by check ID. A later outcome/cancel supersedes
+   * a cached reminder; exhaustion starts release for reconciliation without inventing an outcome.
+   */
   stopCheck(instanceId: string, executionId: string, checkId: string): StopDecision {
     if (!checkId || checkId.length > 128) throw new TaskStoreError("invalid", "bounded stop check ID required");
     return this.transaction(() => {
@@ -495,6 +561,7 @@ export class DurableTaskStore {
     });
   }
 
+  /** Discard queued work immediately, but keep active work reserved until confirmed release makes cancellation final. */
   requestCancel(scope: Scope, taskId: string): Task {
     return this.transaction(() => {
       const task = this.get(scope, taskId);
@@ -519,6 +586,12 @@ export class DurableTaskStore {
     });
   }
 
+  /**
+   * Consume driver-confirmed removal evidence and free the execution reservation.
+   * @remarks Only releasing executions qualify. An uncanceled uncertain execution leaves
+   * its task blocked for reconciliation after compute is freed. Terminal or uncertain turns
+   * discard queued successors; turn_done stays resumable unless endTask was requested.
+   */
   settle(lease: Lease, evidence: { stopped: boolean }): void {
     this.transaction(() => {
       const execution = this.assertLease(lease);
@@ -548,6 +621,10 @@ export class DurableTaskStore {
     });
   }
 
+  /**
+   * Start release without replay while preserving the reservation. An outcome or cancel
+   * already recorded wins; otherwise quarantine becomes final only after confirmed stop.
+   */
   markUncertain(lease: Lease, reason: string): void {
     this.transaction(() => {
       const execution = this.assertLease(lease);
@@ -564,6 +641,12 @@ export class DurableTaskStore {
     });
   }
 
+  /**
+   * Record an owner's explicit decision for an already stopped, uncertain execution.
+   * @remarks The transport must check reconciliation privilege. Continue requires a
+   * known provider request if dispatch began; it neither replays that request nor restores
+   * discarded queued turns. The decision, actor and reason remain in durable events.
+   */
   resolveUncertain(scope: Scope, executionId: string, resolution: "continue" | "fail", reason: string): Task {
     if (!["continue", "fail"].includes(resolution) || !reason.trim() || reason.length > 4096) {
       throw new TaskStoreError("invalid", "reconciliation decision and explanation are required");
@@ -584,6 +667,7 @@ export class DurableTaskStore {
     });
   }
 
+  /** Replay owner-scoped durable events strictly after the cursor, independently of any live SSE subscription. */
   events(scope: Scope, taskId: string, after = 0, limit = 100): TaskEvent[] {
     this.get(scope, taskId);
     if (!Number.isSafeInteger(after) || after < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 1000) {
@@ -646,6 +730,7 @@ export class DurableTaskStore {
   }
 }
 
+/** Preserve all history when omitted, none for zero, or the requested tail; artifacts are never trimmed here. */
 export function taskView(task: Task, historyLength?: number): Task {
   if (historyLength !== undefined && (!Number.isSafeInteger(historyLength) || historyLength < 0)) {
     throw new TaskStoreError("invalid", "invalid historyLength");

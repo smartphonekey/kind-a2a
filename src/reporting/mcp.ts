@@ -1,9 +1,21 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+/**
+ * Define MCP tools for progress, artifacts, outcomes and execution status.
+ *
+ * @module
+ * @remarks Tool arguments cannot select a task, execution or instance. A durable
+ * outcome ACK requires the agent to stop work; it neither certifies runtime
+ * removal nor settles the task. The service worker owns that transition.
+ * @see SERVICE.md#reporting-setup-contract
+ * @see src/service/events.ts
+ */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { type ExecutionReport, type OutcomeReport } from "../service/events.js";
 
+/** A committed event sequence; identical retries return the same sequence with duplicate=true. */
 export type ReportReceipt = { executionId: string; sequence: number; duplicate: boolean };
+/** Durable execution state, not provider liveness or evidence that compute was released. */
 export type ExecutionStatus = {
   executionId: string;
   phase: string;
@@ -11,12 +23,27 @@ export type ExecutionStatus = {
   outcome: OutcomeReport | null;
 };
 
-// Authentication binds this client to an execution; tool arguments cannot select one.
+/**
+ * A client already bound by authentication to one execution and instance.
+ * Implementations must resolve reports only after durable acceptance, reject
+ * eventId reuse with changed content, and preserve receipts for identical retries.
+ */
 export interface ReportingClient {
+  /**
+   * An outcome closes new reporting; identical retries can recover receipts even
+   * after that outcome, while authorized. Retry the ID/content, never the work.
+   */
   report(event: ExecutionReport): Promise<ReportReceipt>;
+  /** Read acknowledged state; an unavailable status must not be treated as completion. */
   status(): Promise<ExecutionStatus>;
 }
 
+/**
+ * Create an unconnected server over an already-scoped client.
+ * Artifacts precede the outcome; turn_done is resumable, task_completed closes
+ * the task after settlement. Backend failures become sanitized MCP errors,
+ * never receipts or automatic retries. The caller owns transport and closure.
+ */
 export function createReportingMcp(client: ReportingClient): McpServer {
   const server = new McpServer({ name: "execution-reporting", version: "0.1.0" });
   const eventId = z.string().min(1).max(128).describe("Unique event ID within this execution. Reuse it when retrying the same report.");

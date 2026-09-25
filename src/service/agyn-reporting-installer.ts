@@ -1,5 +1,18 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: AGPL-3.0-only
+/**
+ * Stdin/stdout executable that installs execution-scoped MCP reporting into an Agyn workload.
+ * @module
+ * @remarks Wait for one unremoved workload and its registered main container, then
+ * deliver the bundled runtime and credential through an immutable terminal command.
+ * The payload supplies current/retired request IDs for the inbox guard; the delivered
+ * runtime installs runtime-specific MCP/Stop configuration. Success requires identity-bound
+ * delivery and remote completion, proving setup only, not an outcome or release.
+ * Failures emit only allowlisted diagnostics.
+ * @see src/service/agyn-terminal.ts
+ * @see src/reporting/runtime.ts
+ * @see src/reporting/agent-config.ts
+ */
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { gzipSync } from "node:zlib";

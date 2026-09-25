@@ -1,83 +1,72 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 # Agyn Integration
 
-Agyn is the execution backend for the durable A2A service. It supplies instance
-and thread management, native Codex/Claude runtimes, workload scheduling,
-persistent volumes and provider proxying. This repository supplies task
-ownership, A2A protocol state, durable scheduling and execution reporting.
+Agyn is the execution backend for the durable A2A service. This page records
+ownership and runtime prerequisites across repositories; adapter contracts live
+beside the implementation and tests.
 
-The current installed backend includes reviewed fork changes through registry
-schema `0027`. A stock Agyn installation alone does not satisfy this service's
-lifecycle contract. Use the [installed inventory](KUBERNETES.md#backend-revisions),
-not a generic `agyn local upgrade`, to identify the compatible stack.
+A stock Agyn installation alone is not compatible. Use the
+[installed inventory](KUBERNETES.md#backend-revisions), not a generic
+`agyn local upgrade`, to identify the tested combination. Fork/review boundaries
+are in [CONTRIBUTING-AGYN.md](CONTRIBUTING-AGYN.md).
 
 ## Ownership And Lifecycle
 
-Each new task is bound to a dedicated Agyn instance, thread, workspace and native
-session. Different tasks can execute concurrently, while follow-ups for one task
-are serialized. Only trusted operator configuration selects agent profiles,
-runtime images, executables, volumes and subscription bindings.
+- This repository owns authenticated A2A task identity, durable scheduling,
+  protocol state and execution reporting.
+- Agyn owns instances/threads, placement, workload lifecycle, persistent volumes,
+  native runtimes and provider proxying.
+- Operators own versioned profiles, runtime images, subscription bindings and
+  security/resource policy. Task input must not select infrastructure authority.
 
-Agyn receives one recorded inbox submission for each execution. A required init
-gate configures reporting before the CLI starts; a durable inbox journal records
-execution intent/completion and prevents ambiguous pending work from being
-silently replayed. The service pins the exact workload identity.
+The architectural goal is isolated durable task state, serialized turns within
+a task and released compute between turns. Runtime choice must not require a
+different A2A controller. Detailed dispatch, identity and release rules are in
+the owning modules:
 
-An outcome does not prove compute release. The service waits for
-`removalConfirmedAt` from the compatible lifecycle stack; `removedAt` is a
-metering field and is insufficient. After confirmed release, the next turn can
-start a new Pod with the same task instance/thread/PVC/session.
+```sh
+npm run code:map -- scan --area src/service
+npm run code:map -- inspect src/service/agyn-driver src/service/worker src/service/task-store
+```
+
+Open cross-repository decisions remain in the
+[architecture proposal](docs/agyn-a2a-proposal.md), not an accepted upstream API.
 
 ## Runtime Requirements
 
-Operator-managed Codex and Claude profiles need:
+Operator-managed Codex and Claude profiles need retained per-instance workspaces
+and native session directories, compatible required-init/reporting/inbox-guard
+support, valid subscription bindings, explicit resource bounds and the intended
+network allowances. Workloads must reach the configured reporting endpoint.
+Do not repoint a profile used by existing tasks; introduce a new versioned ID.
 
-- A distinct, retained per-instance workspace and durable native session state.
-- The required-init, reporting/Stop and durable-inbox configuration appropriate
-  to the selected daemon/runtime.
-- A valid Agyn subscription binding, with provider authentication handled by
-  the native proxy rather than browser or A2A task credentials.
-- Explicit resource bounds, the intended network allowances and access to the
-  configured reporting endpoint.
-- Compatible Gateway, registry, native runner and orchestrator capabilities.
-
-Codex persistence uses `CODEX_HOME` on the workspace. Claude persistence uses
-its durable configuration/session mapping and exact transcript identity.
-Profile configuration is immutable for existing tasks; changes require a new
-versioned profile rather than repointing an existing binding.
-
-The installer uses authenticated TerminalGateway delivery, not Kubernetes
-credentials inside the A2A worker. Its exact contract and remaining trusted-local
-assumptions are in [SERVICE.md](SERVICE.md#reporting-setup-contract).
+CLI configuration and session persistence differ by runtime. Inspect
+`src/reporting/agent-config` and `src/service/agyn-reporting-installer` for those
+contracts. The worker uses authenticated TerminalGateway delivery, not Kubernetes
+credentials; [service setup](SERVICE.md#reporting-setup-contract) describes the
+remaining trust requirements.
 
 ## Run And Operate
 
-For the installed Kubernetes app, follow [KUBERNETES.md](KUBERNETES.md).
-For a separately configured host instance, follow [WEB.md](WEB.md) or
-[SERVICE.md](SERVICE.md#run-requirements). Neither launcher provisions a fresh
-compatible Agyn installation.
+Use [KUBERNETES.md](KUBERNETES.md) for the installed app and
+[WEB.md](WEB.md) or [SERVICE.md](SERVICE.md#run-requirements) for a separately
+configured host instance. Neither launcher provisions a compatible backend.
 
-Use `AGYN_PROFILE` for the host launcher's existing operator login. Provider
-subscription credentials are separate from that login and from owner-scoped
-A2A/browser credentials. A secret-manager change does not automatically rotate
-the corresponding Agyn subscription.
+`AGYN_PROFILE` selects the host launcher's existing operator login. That login,
+provider subscription credentials and owner-scoped A2A/browser credentials are
+separate. Secret-manager rotation does not automatically update an Agyn
+subscription; synchronization remains an authorized operator responsibility.
 
 ## Boundaries
 
-- The native Agyn path is not the legacy ACP harness. The controller/workflow is
-  profile-neutral, but CLI configuration and persistence require runtime adapters.
-- The native integration does not provide the legacy ACP human-approval bridge.
-  Do not claim real approval handling from noninteractive execution tests.
-- Cancellation waits for workload removal. Work already executed can leave
-  effects; interruption requires explicit reconciliation rather than retry.
-- Root native runtimes and trusted-local reporting/hook configuration are not
-  hardened for hostile repositories. App Pod restrictions do not fix that.
-- Native session retention is implemented; centralized export/analytics and
-  authenticated editor takeover are separate unfinished features.
+The native integration is not the legacy ACP harness and does not provide its
+human-approval bridge. Native session retention is not centralized export,
+analytics or authenticated editor takeover. Trusted-local root runtimes and
+mutable reporting/hooks are not hardened for hostile repositories; app Pod
+restrictions do not close that boundary.
 
-See [ACCEPTANCE.md](ACCEPTANCE.md) for tested scope,
-[PRODUCTION.md](PRODUCTION.md) for release gates, and
-[CONTRIBUTING-AGYN.md](CONTRIBUTING-AGYN.md) for fork and review boundaries.
-The old `start:agyn` adapter is preserved in source; its
-[archived instructions](docs/archive/2026-09-25/AGYN.md) are not the durable
-service's runbook.
+Use [verification and acceptance](ACCEPTANCE.md) for checks and evidence
+requirements, and [production readiness](PRODUCTION.md) for release requirements.
+The old `start:agyn` adapter remains in source for comparison; historical instructions
+are reachable through the [archive index](docs/archive/README.md), not current
+deployment or rollback procedures.

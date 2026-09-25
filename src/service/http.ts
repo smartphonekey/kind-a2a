@@ -1,4 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+/**
+ * HTTP composition of machine A2A, task administration, reporting and optional browser routes.
+ * @module
+ * @see src/service/a2a.ts
+ * @see src/service/browser.ts
+ * @see src/reporting/http.ts
+ */
 import express, { type Request, type Response } from "express";
 import { z } from "zod";
 import { AgentCard, formatSSEEvent, formatSSEErrorEvent } from "@a2a-js/sdk";
@@ -10,6 +17,7 @@ import { reportingRouter } from "../reporting/http.js";
 import { SseWriter, type SseWriteOptions } from "./sse-writer.js";
 import { browserRouter, type BrowserOptions } from "./browser.js";
 
+/** maxRequestsPerOwner bounds open HTTP requests per router, independently of durable execution admission. */
 export type HttpOptions = {
   store: DurableTaskStore; card: AgentCard; profileId: string; authorize: Authorize;
   signal: AbortSignal; pollMs?: number; maxRequestsPerOwner?: number;
@@ -19,6 +27,14 @@ export type HttpOptions = {
 };
 const reconciliation = z.object({ resolution: z.enum(["continue", "fail"]), reason: z.string().trim().min(1).max(4096) }).strict();
 
+/**
+ * Mount separately authenticated boundaries around the shared store and SDK transport.
+ * @remarks Discovery/health are public; reporting uses its own execution credentials.
+ * Machine routes reject browser origins and never authenticate cookies. Administrative
+ * recovery additionally requires canReconcile and task ownership. Stream admission
+ * happens before SSE headers; failures redact internal errors without changing task
+ * outcomes, and disconnects release request slots without canceling accepted executions.
+ */
 export function createServiceApp(options: HttpOptions) {
   const app = express();
   app.disable("x-powered-by");

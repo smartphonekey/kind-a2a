@@ -1,10 +1,20 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+/**
+ * Validated agent reports and canonical identities for durable event deduplication.
+ * @module
+ * @see src/service/task-store.ts
+ * @see src/reporting/mcp.ts
+ */
 import { createHash } from "node:crypto";
 import { z } from "zod";
 
 const identifier = z.string().min(1).max(128);
 const summary = z.string().min(1).max(16_384);
 
+/**
+ * Bounded, text-only reports; event IDs are unique within an execution, not globally.
+ * Outcomes describe agent intent and do not prove runtime release or settle a task.
+ */
 export const reportSchema = z.discriminatedUnion("kind", [
   z.object({ eventId: identifier, kind: z.literal("progress"), message: summary,
     percent: z.number().min(0).max(100).optional() }).strict(),
@@ -17,6 +27,7 @@ export const reportSchema = z.discriminatedUnion("kind", [
 export type ExecutionReport = z.infer<typeof reportSchema>;
 export type OutcomeReport = Extract<ExecutionReport, { kind: "outcome" }>;
 
+/** Durable replay record with a database-wide sequence; a task's sequence may have gaps. */
 export type TaskEvent = {
   sequence: number;
   taskId: string;
@@ -26,7 +37,7 @@ export type TaskEvent = {
   payload: Record<string, unknown>;
 };
 
-// Hash structured content independently of object key order, not JSON spelling.
+/** Hash JSON-compatible content independently of object key order, omitting undefined object fields. */
 export function contentHash(value: unknown): string {
   const canonical = (item: unknown): unknown => {
     if (Array.isArray(item)) return item.map(canonical);

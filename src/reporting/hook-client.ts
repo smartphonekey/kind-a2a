@@ -1,9 +1,25 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+/**
+ * Bridge native Stop input to the authenticated, execution-scoped stop check.
+ *
+ * @module
+ * @remarks The service owns the reminder budget. Missing configuration, malformed
+ * input or unavailable reporting stops locally without claiming an outcome.
+ * @see src/reporting/stop-check.ts
+ * @see src/reporting-http.test.ts
+ * @see SERVICE.md#reporting-setup-contract
+ */
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { reportingConfig } from "./config.js";
 import { codexStopOutput } from "./stop-check.js";
 
+/**
+ * Check once with a fresh ID per invocation, so repeated native turn IDs cannot
+ * bypass the reminder budget. Redirects are rejected and the request times out
+ * after five seconds. Failures return a sanitized stop/reconcile instruction,
+ * never permission to repeat work; the executable caller bounds stdin size.
+ */
 export async function runStopHook(input: string, configFile: string | undefined): Promise<Record<string, unknown>> {
   try {
     z.object({ hook_event_name: z.literal("Stop") }).passthrough().parse(JSON.parse(input));

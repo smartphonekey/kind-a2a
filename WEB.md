@@ -1,117 +1,84 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 # A2A Web Workspace
 
-The opt-in `/ui/` app uses React and assistant-ui's native
-[`@assistant-ui/react-a2a`](https://www.assistant-ui.com/docs/runtimes/a2a/overview)
-runtime. It connects to the same durable execution service as machine clients.
-There is no additional agent controller, workflow engine, provider API client,
-or chat database in the frontend.
+The opt-in `/ui/` app uses React and assistant-ui's native A2A runtime with the
+same durable execution service as machine clients. The frontend does not own an
+additional agent controller, provider API client or chat database.
 
-For the installed Kubernetes app at `http://127.0.0.1:8084/ui/`, its separate
-access token and tested recovery, see [KUBERNETES.md](KUBERNETES.md). The host
-launcher described below remains available on port 8083.
+For the installed app at `http://127.0.0.1:8084/ui/`, use
+[Kubernetes access](KUBERNETES.md#access). The host instance below has separate
+state and credentials; it is not a replica or failover target.
 
 ## Run
 
-Use Node 24.21.0 or another version accepted by the service's SQLite guard.
-The frontend has a separate lockfile; service-only installations do not need it.
+Use the Node runtime in `.nvmrc`. The frontend has a separate lockfile;
+service-only installations do not need it.
 
 ```sh
+nvm use
 npm ci
 npm --prefix web ci
 npm run build
 npm run build:web
-A2A_SERVICE_CONFIG_FILE=/absolute/path/service.json npm run start:web
 ```
 
-The launcher loads `AGYN_PROFILE` (default `local`) through the installed `agyn`
-CLI. Both `node` and `agyn` must be on `PATH`. It uses the same environment
-variables as [the service](SERVICE.md); it does not create environments, attach
-provider credentials or change cluster policies. Agent profiles need the
-reporting gate, durable native session directories and valid subscriptions.
+Configure the service following [SERVICE.md](SERVICE.md#run-requirements).
+Enable its optional browser configuration using the schema in
+[main.ts](src/service/main.ts), with the exact browser origin and an absolute
+path to the built `web/dist` directory. For a host installation, the usual origin
+is `http://127.0.0.1:8083`.
 
-Add this optional object to the normal service JSON:
+The host launcher requires `node` and the installed `agyn` CLI on `PATH` and an
+existing operator login selected by `AGYN_PROFILE` (default `local`). It does not
+create environments, attach subscriptions or change cluster policy.
 
-```json
-{
-  "browser": {
-    "origin": "http://127.0.0.1:8083",
-    "assetsPath": "/absolute/checkout/web/dist"
-  }
-}
+```sh
+A2A_SERVICE_CONFIG_FILE=/absolute/private/service.json npm run start:web
 ```
 
 Open `http://127.0.0.1:8083/ui/` and sign in with an owner-scoped **A2A service
-access token**, not an Agyn, OpenAI or Anthropic token. Its digest must be in the
-private `credentialsFile`; see [SERVICE.md](SERVICE.md). Omitting `browser`
-preserves the previous machine-only behavior.
+access token**, not an Agyn, OpenAI or Anthropic token. The current workstation's
+private host files are `.state/a2a-web/service.json` and the mode-0600
+`.state/a2a-web/access-token`; its user unit is `aira-a2a-web.service`.
+These operator files stay outside Git. Restarting requires sign-in again, but
+must preserve task history. Do not restart active work merely to rebuild CSS.
 
-The current workstation uses `.state/a2a-web/service.json` and the mode-0600
-`.state/a2a-web/access-token`. Its user systemd unit is `aira-a2a-web.service`.
-These operator files are ignored by Git. Restarting requires web sign-in again,
-but preserves task history. Do not restart during an active execution merely to
-rebuild CSS.
-
-For frontend development, `npm --prefix web run dev` rebuilds the static assets
-in watch mode. Reload the same service URL; no second origin or development
-proxy bypasses the browser authentication boundary.
+For frontend development, `npm --prefix web run dev` watches and rebuilds static
+assets. Reload the same authenticated service URL; this is not a separate Vite
+server or an authentication-bypassing proxy.
 
 ## Task Semantics
 
-- Agent selection creates a new task. Follow-ups retain the existing task's
-  immutable profile, task ID and context ID.
-- Each task has its own Agyn instance, workspace and native session. Changing
-  tasks or closing a tab only disconnects the browser stream; it does not cancel
-  execution or keep compute running between turns.
-- Progress and outcomes arrive over SSE. Artifacts download as inert text.
-  Server history reloads after refresh or task selection.
-- The native runtime has no initial task-ID option. `TaskClient` binds restored
-  sends through its public client API and ends the browser stream on a paused
-  state. Polling refreshes tasks that ran while their UI was detached.
-- Completed, canceled, rejected and failed tasks are read-only. An ordinary
-  conversational reply reports `turn_done`; `task_completed` closes it.
-- Cancellation stays pending until the service confirms runtime removal.
-  Disconnecting a stream is never considered a cancellation receipt.
-- Uncertain executions are read-only and require the existing privileged
-  reconciliation API. The UI does not grant that privilege or expose reporting
-  credentials. Transport failures are never automatically resent.
-- New tasks include a bounded first-message title in A2A metadata. Older tasks
-  fall back to a task-ID label.
+Browse components before selecting the client and UI contracts:
+
+```sh
+npm run code:map -- scan --area web
+npm run code:map -- inspect web/src/client web/src/main src/service/browser
+```
+
+Task restoration, profile selection, stream handling and UI state rules are
+documented next to those implementations and linked tests. Use `--symbol NAME`
+or `--source` only for the selected detail. Privileged interrupted-task recovery
+remains an [operator procedure](SERVICE.md#recovery-and-operations), not a browser
+permission granted by this guide.
 
 ## Browser Boundary
 
-`/web-api/login` exchanges the user's service token for a random, opaque,
-HttpOnly, SameSite=Strict cookie. The bearer stays in server memory and is
-revalidated on requests and throughout streams. Logout, expiry, revocation and
-shutdown invalidate access. Sessions last at most eight hours and are not
-persisted; tokens and messages are not stored in localStorage. Machine APIs
-still reject browser origins and never accept the cookie.
-
-Every browser route checks the configured Host and Origin. Mutations require
-an exact Origin match. Cross-site requests and DNS rebinding hosts are rejected;
-no permissive CORS is added. Login attempts, sessions, request bodies and
-concurrent requests are bounded. SSE retains backpressure, heartbeats and
-disconnect handling. Internal REST errors are sanitized. Markdown does not
-enable raw HTML or remote images.
+Keep browser and machine authentication separate. Do not persist service tokens
+in frontend storage or expose provider/subscription credentials through the UI.
+Maintain same-origin access; do not add a cross-origin proxy to bypass it.
 
 Only loopback origins may use HTTP. Remote access requires an HTTPS origin and
-a reverse proxy preserving that Host and disabling streaming-response buffering.
-Do not expose this trusted-local setup directly to the public internet: the
-existing sandbox and production limitations still apply. This remains a
-single-process SQLite service, not a distributed browser session or HA service.
+a trusted reverse proxy preserving the configured Host and disabling streaming
+response buffering. Do not expose this trusted-local setup directly to the
+public internet. It is not a distributed-session or multi-node HA deployment.
 
-Agyn Pods must reach `reportingUrl`, which can differ from the browser origin.
-The workstation uses `http://192.168.5.2:8083/reporting` with explicit
-`A2A_ALLOW_INSECURE_LOCAL_REPORTING=true`. The two web-agent IDs have separate
-deny-ingress policies and an egress allowance only to that `/32` and TCP port.
-The existing cluster policy is unchanged. This does not establish production
-network isolation or TLS for reporting.
-
-Claude's subscription uses an existing secret-manager token synchronized into
-Agyn. The web app does not read or refresh it, and future secret-manager rotations
-do not automatically propagate to Agyn. Provider authentication remains an
-operator responsibility, separate from web login. The token's expiry has not
-been independently established.
+Agyn workloads must independently reach `reportingUrl`. Any insecure local
+reporting exception and network allowance is operator policy, not proof of
+production TLS or isolation. Provider credential rotation remains separate from
+web sign-in; a secret-manager update does not automatically propagate to Agyn.
+Cookie, route, request-limit and rendering contracts live in `src/service/browser`
+and the web source; security release criteria live in [PRODUCTION.md](PRODUCTION.md).
 
 ## Tests
 
@@ -121,23 +88,17 @@ npm exec --prefix web -- playwright install chromium
 npm run test:web
 ```
 
-Browser tests start a separate model-free fixture on port 8094 with the real
-HTTP service, SQLite store, worker, assistant-ui runtime and REST/SSE binding.
-They never load Agyn/provider credentials. Desktop/mobile cases cover refresh,
-same-task follow-ups, parallel profiles, task switching, artifacts, cancellation,
-interrupted-task lockout and logout. Screenshots and traces are under ignored
-`web/test-results/`.
-
-The application and browser boundary are AGPL-3.0-only. The displayed avatar is
-from [Agyn's GitHub organization](https://github.com/agynio); it remains Agyn's
-branding and is not relicensed. Third-party packages retain their own licenses.
-This is a local integration, not an official Agyn UI.
+Browser tests use a separate model-free fixture, not provider credentials or the
+installed service database. Inspect `web/tests/ui.spec` and `web/tests/fixture`
+for cases and setup; screenshots/traces stay in ignored `web/test-results/`.
+Passing these tests is not real-provider acceptance.
 
 ## Verification Scope
 
-Current automated and real-provider results are summarized in
-[ACCEPTANCE.md](ACCEPTANCE.md). They distinguish model-free browser tests from
-real agent execution, and completed-turn continuation from interrupted recovery.
-The [archived UI report](docs/archive/2026-09-25/WEB.md#local-acceptance) retains
-the detailed receipts and failed attempts without treating them as current
-deployment instructions.
+[ACCEPTANCE.md](ACCEPTANCE.md) describes verification procedures and separates
+model-free checks from live acceptance. Historical receipts remain behind the
+[archive index](docs/archive/README.md), not in current operating instructions.
+
+This is a local integration, not an official Agyn UI. The application/browser
+boundary is AGPL-3.0-only; the Agyn avatar and third-party packages keep their own
+terms. See [LICENSING.md](LICENSING.md).

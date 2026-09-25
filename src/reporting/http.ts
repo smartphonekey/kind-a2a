@@ -1,4 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+/**
+ * Expose durable execution reports, status and stop checks to scoped reporters.
+ *
+ * @module
+ * @remarks Bearer authentication fixes the execution and instance on every
+ * request. Browser origins are rejected; browser cookies and A2A owner tokens
+ * do not substitute for a reporting credential.
+ * @see SERVICE.md#reporting-setup-contract
+ * @see src/service/task-store.ts
+ */
 import { Router } from "express";
 import express from "express";
 import { z } from "zod";
@@ -7,6 +17,13 @@ import { createReportingMcp } from "./mcp.js";
 import { codexStopOutput } from "./stop-check.js";
 import { DurableTaskStore } from "../service/task-store.js";
 
+/**
+ * Mount beneath /reporting. MCP is stateless, POST-only and closed per request;
+ * a receipt is returned only after the store's report transaction completes.
+ * Stop checks persist execution-local checkId decisions and a bounded budget;
+ * current outcome/cancellation supersedes an old reminder. Exhaustion requests
+ * release and reconciliation, not success or proof of runtime removal.
+ */
 export function reportingRouter(store: DurableTaskStore): Router {
   const router = Router();
   router.use((request, response, next) => {

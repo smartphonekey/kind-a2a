@@ -1,4 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-only
+/**
+ * Allowlisted, credential-free diagnostics crossing the reporting installer boundary.
+ * @module
+ * @see src/service/agyn-reporting-installer.ts
+ * @see src/service/main.ts
+ */
 import { z } from "zod";
 import { AgynRpcError } from "../agyn-client.js";
 import { ReportingDeliveryError } from "./agyn-terminal.js";
@@ -13,6 +19,7 @@ const schema = z.object({ reportingSetupFailed: z.literal(true), stage: stages,
   exitCode: z.number().int().min(0).max(255).optional() }).strict();
 export type SetupStage = z.infer<typeof stages>;
 
+/** Preserve only known delivery/RPC fields; never serialize exception messages, URLs or terminal output. */
 export function setupFailure(stage: SetupStage, error: unknown): z.infer<typeof schema> {
   if (error instanceof ReportingDeliveryError) return schema.parse({ reportingSetupFailed: true, stage, ...error.diagnostic });
   return schema.parse({ reportingSetupFailed: true, stage, ...(error instanceof AgynRpcError &&
@@ -21,7 +28,7 @@ export function setupFailure(stage: SetupStage, error: unknown): z.infer<typeof 
     } : {}) });
 }
 
-// Installer output is untrusted; never copy error messages or arbitrary fields.
+/** Accept only a bounded, strict diagnostic envelope from untrusted installer stdout; otherwise return undefined. */
 export function parseSetupFailure(output: string): z.infer<typeof schema> | undefined {
   if (Buffer.byteLength(output) > 1024) return;
   try { return schema.safeParse(JSON.parse(output)).data; } catch { return; }

@@ -145,3 +145,13 @@ vite.config.ts.timestamp-*
 # AIRA local cluster and controller state
 .state/
 *.sqlite
+
+# Terraform plans/state can contain sensitive configuration. Lock files are public.
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfplan.json
+*.tfvars
+*.tfvars.json
+crash.log

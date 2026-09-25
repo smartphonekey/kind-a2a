@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+name: Agyn Agent Definitions
+on:
+  pull_request:
+    paths: ["infra/**", "scripts/agyn-terraform*", "package*.json", ".nvmrc", ".github/workflows/agyn-agents.yml"]
+  push:
+    branches: [main]
+    paths: ["infra/**", "scripts/agyn-terraform*", "package*.json", ".nvmrc", ".github/workflows/agyn-agents.yml"]
+  workflow_dispatch:
+
+# PRs never receive cluster credentials, Agyn tokens or a privileged runner.
+# Live apply stays with an operator until a reviewed deployment identity and
+# approval environment exist. Do not replace this with pull_request_target.
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: "1.27.1"
+          cache: false
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_version: "1.16.4"
+          terraform_wrapper: false
+      - uses: bufbuild/buf-action@e8b15693be91ae73e965d157c722987338c768b3 # v1
+        with:
+          version: "1.73.0"
+          setup_only: true
+      - run: npm ci --ignore-scripts
+      - run: npm run test:gitops
+      - run: npm run agents:provider
+      - run: npm run agents:check

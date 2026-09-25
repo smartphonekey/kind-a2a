@@ -17,6 +17,10 @@ and report-pointer text has the same license.
 The new `tooling/code-map/` navigation tools/tests, repository `AGENTS.md`,
 `docs/catalog.json` and `skills/code-map/` skill source are AGPL-3.0-only.
 
+The new `infra/` Terraform definitions, runtime instructions, provider build
+manifest, `scripts/agyn-terraform*` tools/tests and
+`.github/workflows/agyn-agents.yml` are also AGPL-3.0-only.
+
 Moving documents into the archive does not relicense their original contents.
 The [archived licensing scope](docs/archive/2026-09-25/LICENSING.md) preserves
 the grant that applied before the cleanup; other pre-existing material keeps

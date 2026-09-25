@@ -40,6 +40,7 @@ code does not require adopting this tooling.
 | Reporting MCP | API/Gateway or a focused service, by agreement | Authenticated execution-scoped reports; commit before ACK; no model-selected task identity |
 | Persistence and Stop policy | `agynio/agynd-cli` | Runtime-neutral lifecycle policy, with small CLI-specific config/hook adapters |
 | Claude session selection | `agynio/claude-sdk-go` | Forward explicit session/resume options; no A2A state machine or retry policy |
+| Native agent definitions | `agynio/terraform-provider-agyn` | Native `model_name`, environment-owned images and legacy compatibility; no A2A controller |
 | Workload/volume lifecycle | API, registry, native runner and orchestrator | Separate dependent contracts, migrations and per-repository tests |
 | Wire forwarding | Gateway | Generated compatibility and exact RPC/JSON contract checks |
 | Session export | Separate proposal | Credential-safe artifacts, access, retention and deletion before analytics |
@@ -57,6 +58,7 @@ workflow policy or session-analysis pipeline.
 | `spk-ai/agynd-cli` | `fix/shell-title-worker-lifetime` / `2aac6e7` | Shell worker ownership |
 | `spk-ai/agynd-cli` | `fix/claude-error-results` / `1b1dd62` | SDK error handling |
 | `spk-ai/claude-sdk-go` | `feat/session-resumption` / `0cdc814` | Native session selection |
+| `spk-ai/terraform-provider-agyn` | `feat/native-agent-model` / `bada84c` | Native model create/update/import, with loopback Terraform regression tests |
 
 Claude daemon `feat/claude-session-persistence` (`f29925c`) is a dependent review
 unit; review the SDK session change first. Keep these ownership decisions separate

@@ -1,0 +1,8 @@
+{
+  "repository": "https://github.com/spk-ai/terraform-provider-agyn.git",
+  "revision": "bada84cf18249fda6d21d9ea8be8c9e2b54ab771",
+  "upstreamVersion": "0.12.0",
+  "api": "buf.build/agynio/api:86d6f772d2cb48c48eb5485e865031a5",
+  "protobufPlugin": "buf.build/protocolbuffers/go:v1.36.11",
+  "connectPlugin": "buf.build/connectrpc/go:v1.19.1"
+}

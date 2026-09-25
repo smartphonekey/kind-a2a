@@ -74,6 +74,51 @@ separate candidate deployment. Daemon/SDK integration and independent review
 units are described in [CONTRIBUTING-AGYN.md](CONTRIBUTING-AGYN.md); this inventory
 is not yet a complete reproducible production release manifest.
 
+## Agent Definitions In Git
+
+Use Agyn's Terraform provider for agent classes; the existing execution service
+still owns per-task instances, thread recovery and workload release. Review the
+[Git definitions](infra/agyn/agents.tf) and [module boundary](infra/modules/a2a-agents/main.tf),
+then use the [plan/apply helper](scripts/agyn-terraform.mjs). Changes to existing
+profiles require a new versioned profile; do not repoint stored task identities.
+
+Upstream provider v0.12.0 lacks native `model_name` support. The
+[build manifest](infra/agyn/provider-source.json) pins our focused fork fix and
+API generators. This is an explicit project-local development override, not a
+signed provider release. It does not change global Terraform configuration;
+replace it with an upstream release after acceptance.
+
+Prerequisites: the repository's Node runtime, Terraform 1.16.x, Go with race-test
+support, Buf, and access to the pinned public sources. Build and validate without
+cluster credentials, then select the local backend and verified Gateway CA:
+
+```sh
+npm run agents:provider
+npm run test:gitops
+npm run agents:check
+export KUBE_CONFIG_PATH="$PWD/.state/agyn-kubeconfig"
+export SSL_CERT_FILE="$HOME/.agyn/local/certs/agyn-local-ca.pem"
+npm run agents:plan -- --profile local
+```
+
+Review the saved private plan/log and printed digest before applying that exact
+plan. Run the helper with `--help` for apply/render arguments. New profiles also
+require explicit create approval. Keep plans, logs, tokens and state out of Git
+and public CI artifacts. The Agyn operator token is passed only through the
+process environment, separately from provider subscriptions.
+
+Terraform uses a separate Kubernetes Secret state and Lease lock in namespace
+`aira-a2a`. It does not adopt the application's PVC. Back up this state with
+encrypted off-node retention; deleting the namespace can lose agent ownership.
+State access needs a reviewed least-privilege deployment identity before CI apply.
+
+The [CI workflow](.github/workflows/agyn-agents.yml) validates definitions and
+mock tests without live credentials. Live approval/runner integration is not
+enabled. A successful Terraform apply alone does not publish a profile in the
+running A2A app: render a candidate service config from Terraform outputs, then
+use the drained configuration rollout below. Rendering never removes existing
+bindings or overwrites its input. No automatic app restart is performed.
+
 ## Packaging And Upgrades
 
 Build with the reviewed [image recipe](ops/Dockerfile.a2a-service) and

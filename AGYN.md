@@ -26,6 +26,10 @@ support, valid subscription bindings, explicit resource bounds and the intended
 network allowances. Workloads must reach the configured reporting endpoint.
 Do not repoint a profile used by existing tasks; introduce a new versioned ID.
 
+Manage these definitions through the [reviewed Terraform workflow](KUBERNETES.md#agent-definitions-in-git).
+Compatible environments and subscription bindings are prerequisites, not created
+by the agent-definition module.
+
 The native configuration and installation owners are
 [agent-config](src/reporting/agent-config.ts) and
 [agyn-reporting-installer](src/service/agyn-reporting-installer.ts).

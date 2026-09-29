@@ -116,8 +116,10 @@ another cluster or attach existing workspace volumes implicitly.
 The [production gates](PRODUCTION.md) still apply after Kubernetes is running.
 
 First verify the Rescue SSH host key against the provisioning email and inspect
-hardware, disk identities, existing data and SMART reports. Robot access is the
-recovery prerequisite; a Hetzner Cloud project invitation does not grant it.
+hardware, disk identities, existing data and SMART reports. Normally, verify
+Robot Rescue/Reset access first; a Hetzner Cloud project invitation does not
+grant it. Proceeding without that recovery path requires explicit owner
+acceptance that a failed boot may need the server owner or Hetzner support.
 Use Hetzner's [installimage](https://docs.hetzner.com/robot/dedicated-server/operating-systems/installimage/)
 only after explicit approval of the exact disks and partition/RAID plan. Keep
 that destructive, one-time operation separate from the repeatable host playbook.
@@ -148,6 +150,14 @@ denial over IPv4 and IPv6, API/Pod networking, restricted admission, persistent
 volume recovery and a host reboot before deploying agents. Hardware KVM access
 does not prove that an Android emulator can boot or that hostile APKs are isolated.
 
+Use the [disposable acceptance helper](ops/hetzner/acceptance.py) for the live
+checks. Read its `--help`, select the explicit host/key/known-hosts and private
+receipt paths, then run `create`. It retains owned fixtures for an independently
+approved reboot; run `verify --after-reboot` before `cleanup` with the same
+receipt. Keep receipts private and retain failed runs rather than relabeling
+them. The helper's public-port probes cover the supplied address only; IPv4
+success does not establish IPv6 coverage when the operator lacks an IPv6 route.
+
 Local etcd snapshots are not off-node backups and do not contain application
 volume contents. Before cutover, choose an encrypted off-server destination,
 back up the server token/configuration and all application data, and complete
@@ -155,3 +165,10 @@ the replacement-node restore drill described above. Mirrored HDDs are not a
 substitute for backups; measure disk latency and emulator capacity before
 admitting parallel work. Do not label this host production-ready based only on
 successful OS/Kubernetes installation.
+
+An encrypted bootstrap copy on an operator PC, tested in an agentless container
+with no network, can establish datastore readability and archived-file integrity.
+It does not establish automated retention, replacement-node workload recovery or
+an Agyn recovery point. Keep its passphrase separate from the archive in the
+approved secret-manager configuration. Server administrator keys must not be
+injected into ordinary agent environments, even when stored in a shared config.

@@ -31,6 +31,9 @@ export type Session = {
   subject: string;
   profiles: Profile[];
   defaultProfile: string;
+  authentication?: "cloudflare-access";
+  displayName?: string;
+  logoutUrl?: string;
 };
 /** Paused states end the browser stream but are not terminal task outcomes. */
 export const waiting = (task?: A2ATask) =>
@@ -184,42 +187,55 @@ export class TaskClient extends A2AClient {
       const bound = this.task
         ? { ...message, taskId: this.task.id, contextId: this.task.contextId }
         : message;
-      for await (const event of super.streamMessage(
+      let stream = super.streamMessage(
         bound,
         configuration,
         metadata,
         signal,
-      )) {
-        if (event.type === "task") this.task = event.task;
-        if (event.type === "statusUpdate" && this.task)
-          this.task = {
-            ...this.task,
-            status: event.event.status,
-            metadata: { ...this.task.metadata, ...event.event.metadata },
-          };
-        if (event.type === "artifactUpdate" && this.task) {
-          const artifacts = [...(this.task.artifacts ?? [])];
-          const index = artifacts.findIndex(
-            (a) => a.artifactId === event.event.artifact.artifactId,
-          );
-          const artifact =
-            event.event.append && index >= 0
-              ? {
-                  ...event.event.artifact,
-                  parts: [
-                    ...artifacts[index].parts,
-                    ...event.event.artifact.parts,
-                  ],
-                }
-              : event.event.artifact;
-          if (index >= 0) artifacts[index] = artifact;
-          else artifacts.push(artifact);
-          this.task = { ...this.task, artifacts };
+      );
+      for (;;) {
+        for await (const event of stream) {
+          if (event.type === "task") this.task = event.task;
+          if (event.type === "statusUpdate" && this.task)
+            this.task = {
+              ...this.task,
+              status: event.event.status,
+              metadata: { ...this.task.metadata, ...event.event.metadata },
+            };
+          if (event.type === "artifactUpdate" && this.task) {
+            const artifacts = [...(this.task.artifacts ?? [])];
+            const index = artifacts.findIndex(
+              (a) => a.artifactId === event.event.artifact.artifactId,
+            );
+            const artifact =
+              event.event.append && index >= 0
+                ? {
+                    ...event.event.artifact,
+                    parts: [
+                      ...artifacts[index].parts,
+                      ...event.event.artifact.parts,
+                    ],
+                  }
+                : event.event.artifact;
+            if (index >= 0) artifacts[index] = artifact;
+            else artifacts.push(artifact);
+            this.task = { ...this.task, artifacts };
+          }
+          if (this.task) this.onTask(this.task);
+          yield event;
+          // A paused task does not need an open browser request (nor a running Pod).
+          if (waiting(this.task) || terminal(this.task)) return;
         }
-        if (this.task) this.onTask(this.task);
-        yield event;
-        // A paused task does not need an open browser request (nor a running Pod).
-        if (waiting(this.task) || terminal(this.task)) break;
+        if (!this.task || signal?.aborted) return;
+        // A clean EOF can be an ingress authorization window. Only subscribe:
+        // never replay the original send, even when its acknowledgement was lost.
+        await new Promise<void>((resolve, reject) => {
+          const abort = () => { clearTimeout(timer); reject(signal?.reason); };
+          const timer = setTimeout(() => { signal?.removeEventListener("abort", abort); resolve(); }, 100);
+          signal?.addEventListener("abort", abort, { once: true });
+          if (signal?.aborted) { signal.removeEventListener("abort", abort); abort(); }
+        });
+        stream = super.subscribeToTask(this.task.id, signal);
       }
     } finally {
       this.streaming = false;

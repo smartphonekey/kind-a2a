@@ -56,10 +56,26 @@ Keep browser and machine authentication separate. Do not persist service tokens
 in frontend storage or expose provider/subscription credentials through the UI.
 Maintain same-origin access; do not add a cross-origin proxy to bypass it.
 
-For remote access, arrange trusted TLS termination, configure an HTTPS origin,
-preserve the configured Host and disable streaming response buffering at the
-reverse proxy. Do not expose this trusted-local setup directly to the public
-internet. It is not a multi-node HA deployment.
+For the remote workspace, use Cloudflare Access with the existing Google IdP
+and only `@smartphonekey.com` accounts. The hostname is `agents.spkey.co`;
+see [deployment prerequisites](KUBERNETES.md#cloudflare-access). Do not distribute
+the local operator credential to browser users. The [identity adapter](src/service/cloudflare-access.ts)
+and [Tunnel definition](infra/cloudflare/main.tf) own the verification contract.
+
+Tasks are private per Access identity. Existing operator-owned tasks are not
+automatically reassigned, and recreating an Access user does not transfer their
+old tasks. Any ownership transfer needs a separate audited migration. Google
+sign-in grants no reconciliation authority or provider credentials.
+
+Access-side revocation is checked at the edge on each request, not by offline
+JWT verification. Streams reconnect through the edge at most once per minute;
+revocation also depends on Cloudflare's propagation delay. Logout invalidates
+the current token locally and uses Cloudflare's logout route, which signs the
+user out of other Access applications too. It does not cancel running tasks.
+
+Remote HTTPS does not remove the trusted-local boundary: the connector-to-app
+and workload-reporting hops use cluster HTTP. Their NetworkPolicies are not TLS
+or hostile-code isolation. This remains a single-node installation, not HA.
 
 Workload reporting access and provider credential rotation remain separate from
 web sign-in; follow [service setup](SERVICE.md#run-requirements) and

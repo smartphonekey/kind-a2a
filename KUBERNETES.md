@@ -74,6 +74,49 @@ separate candidate deployment. Daemon/SDK integration and independent review
 units are described in [CONTRIBUTING-AGYN.md](CONTRIBUTING-AGYN.md); this inventory
 is not yet a complete reproducible production release manifest.
 
+## Cloudflare Access
+
+The approved public workspace is `https://agents.spkey.co/ui/`, restricted to
+Google accounts on `smartphonekey.com`. Use a dedicated managed Tunnel, not a
+Quick Tunnel or an existing application's connector. The existing Google IdP
+and Access organization belong to the operator; this stack does not own them.
+The operator selected Google sign-in without an additional Cloudflare MFA
+challenge. Google account requirements remain unchanged; this stack does not
+alter organization-wide MFA settings.
+
+The [Terraform root](infra/cloudflare/main.tf) is separate from Agyn agent state.
+It requires Terraform 1.16.x and a short-lived Cloudflare token restricted to
+SPK's Access applications/policies and Tunnels plus DNS changes on `spkey.co`.
+Inject `CLOUDFLARE_API_TOKEN` privately; review an exact saved plan before applying.
+Never upload plans, state or credentials to CI. Its local bootstrap state at
+`.state/cloudflare-access/terraform.tfstate` needs encrypted off-node backup;
+loss of the workstation must not lose infrastructure ownership.
+
+```sh
+terraform -chdir=infra/cloudflare init
+terraform -chdir=infra/cloudflare validate
+terraform -chdir=infra/cloudflare test
+terraform -chdir=infra/cloudflare plan -out=../../.state/cloudflare-access/deploy.tfplan
+terraform -chdir=infra/cloudflare apply ../../.state/cloudflare-access/deploy.tfplan
+```
+
+Use the [additive manifest factory](scripts/cloudflare-manifests.mjs) for the
+connector namespace and app network rules. Supply the connector token separately
+in its referenced Kubernetes Secret; it is not an account-wide API token. Revoke
+the bootstrap API token after provisioning. Secret rotation requires a connector
+restart; retain the old connector until its replacement is healthy.
+
+Merge the Terraform `browser` output into the private app configuration, keeping
+its assets path and all unrelated settings. Perform a drained configuration/image
+rollout, preserving the existing Secret and PVC. Never replace the service with
+fresh-install manifests. The machine and reporting routes stay internal; their
+credentials and URLs are unchanged. The loopback forward remains an operator
+health/machine-API path, not a bypass around Google browser authentication.
+
+Two connectors tolerate a connector restart, not node loss. Keep the explicit
+cluster HTTP exception and the [browser trust boundary](WEB.md#browser-boundary)
+visible; Cloudflare does not make the agent sandboxes production-safe.
+
 ## Agent Definitions In Git
 
 Use Agyn's Terraform provider for agent classes; the existing execution service

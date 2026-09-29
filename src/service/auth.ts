@@ -7,6 +7,7 @@
  */
 import { createHash, timingSafeEqual } from "node:crypto";
 import { readFile, lstat } from "node:fs/promises";
+import type { IncomingHttpHeaders } from "node:http";
 import { z } from "zod";
 import type { Scope } from "./task-store.js";
 
@@ -14,6 +15,17 @@ import type { Scope } from "./task-store.js";
 export type Principal = Scope & { canReconcile: boolean };
 /** Return no principal for invalid credentials; reject when authentication cannot be evaluated. */
 export type Authorize = (authorization: string | undefined) => Promise<Principal | undefined>;
+/** Browser identity is separate from machine credentials; display names never determine ownership. */
+export type BrowserIdentity = {
+  principal: Principal; displayName: string; expiresAt: number; credentialId: string;
+};
+export type BrowserAuthentication = {
+  mode: "cloudflare-access";
+  authenticate: (headers: IncomingHttpHeaders) => Promise<BrowserIdentity | undefined>;
+  revoke: (identity: BrowserIdentity) => void;
+  logoutUrl: string;
+  maxStreamMs: number;
+};
 const credentialsSchema = z.array(z.object({
   sha256: z.string().regex(/^[a-f0-9]{64}$/), tenant: z.string().min(1).max(256),
   subject: z.string().min(1).max(256), canReconcile: z.boolean().default(false),

@@ -82,6 +82,10 @@ Existing local restore tests and same-node PVC retention do not meet this gate.
 
 ### 4. Transport And Credential Operations
 
+The [Cloudflare browser boundary](WEB.md#browser-boundary) is narrower than this
+gate: internal reporting and the connector's app hop still use cluster HTTP.
+Do not count Google sign-in as provider-credential rotation or sandbox hardening.
+
 - [ ] Deploy and verify HTTPS/ingress for remote browser, A2A and reporting traffic,
   preserving origin checks, SSE streaming, timeouts and backpressure.
 - [ ] Test provider/execution/browser credential expiry, revocation and rotation,

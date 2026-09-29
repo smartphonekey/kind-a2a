@@ -110,16 +110,28 @@ function Brand() {
 function App() {
   const [session, setSession] = useState<Session | null>();
   const [loginError, setLoginError] = useState("");
+  const [externalLogin, setExternalLogin] = useState(false);
   const loadSession = useCallback(async () => {
     const response = await fetch("/web-api/session", {
       credentials: "same-origin",
+      redirect: "manual",
     });
+    if (response.type === "opaqueredirect" || response.status === 403 ||
+        (response.ok && !response.headers.get("content-type")?.includes("application/json"))) {
+      setExternalLogin(true);
+      setSession(null);
+      return;
+    }
     if (response.status === 401) {
+      const body = await response.json().catch(() => ({}));
+      if (body.authentication === "cloudflare-access") setExternalLogin(true);
       setSession(null);
       return;
     }
     if (!response.ok) throw new Error("Service unavailable.");
-    setSession((await response.json()) as Session);
+    const current = (await response.json()) as Session;
+    setExternalLogin(current.authentication === "cloudflare-access");
+    setSession(current);
   }, []);
   useEffect(() => {
     void loadSession().catch(() => {
@@ -143,6 +155,7 @@ function App() {
   if (session === null)
     return (
       <Login
+        external={externalLogin}
         error={loginError}
         onLogin={async (token) => {
           await api("login", { token });
@@ -157,6 +170,8 @@ function App() {
       onLogout={async () => {
         await api("logout", {});
         setSession(null);
+        if (session.authentication === "cloudflare-access")
+          location.assign("/cdn-cgi/access/logout");
       }}
     />
   );
@@ -164,9 +179,11 @@ function App() {
 function Login({
   onLogin,
   error,
+  external,
 }: {
   onLogin: (token: string) => Promise<void>;
   error: string;
+  external: boolean;
 }) {
   const [token, setToken] = useState("");
   const [failure, setFailure] = useState("");
@@ -177,6 +194,7 @@ function Login({
       <form
         onSubmit={(event) => {
           event.preventDefault();
+          if (external) { location.reload(); return; }
           setBusy(true);
           setFailure("");
           void onLogin(token)
@@ -189,7 +207,7 @@ function Login({
       >
         <Bot size={30} />
         <h1>Agent Workspace</h1>
-        <label htmlFor="token">Access token</label>
+        {!external && <><label htmlFor="token">Access token</label>
         <input
           id="token"
           type="password"
@@ -198,13 +216,13 @@ function Login({
           value={token}
           onChange={(e) => setToken(e.target.value)}
           required
-        />
+        /></>}
         {(failure || error) && (
           <p className="error" role="alert">
             {failure || error}
           </p>
         )}
-        <button className="primary" disabled={busy || !token.trim()}>
+        <button className="primary" disabled={busy || (!external && !token.trim())}>
           {busy ? <LoaderCircle className="spin" size={16} /> : null}Sign in
         </button>
         <a
@@ -449,9 +467,9 @@ function Workspace({
         <div className="sidebar-bottom">
           <span className="identity">
             <span className="avatar">
-              {session.subject.slice(0, 1).toUpperCase()}
+              {(session.displayName ?? session.subject).slice(0, 1).toUpperCase()}
             </span>
-            <span>{session.subject}</span>
+            <span>{session.displayName ?? session.subject}</span>
           </span>
           <button
             className="icon"

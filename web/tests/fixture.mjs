@@ -6,6 +6,17 @@ import { createServiceApp } from "../../dist/service/http.js";
 import { DurableTaskStore } from "../../dist/service/task-store.js";
 import { ExecutionWorker } from "../../dist/service/worker.js";
 import { serviceCard } from "../../dist/service/card.js";
+import { cloudflareAccessAuthentication } from "../../dist/service/cloudflare-access.js";
+import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from "jose";
+
+const accessMode = process.env.A2A_FIXTURE_ACCESS === 'true';
+const port = accessMode ? 8095 : 8094;
+const origin = `http://127.0.0.1:${port}`;
+const accessConfig = { issuer: 'https://fixture.cloudflareaccess.com', audience: 'a'.repeat(64),
+  tenant: 'browser-test', emailDomains: ['smartphonekey.com'] };
+const keys = accessMode ? await generateKeyPair('RS256', { extractable: true }) : undefined;
+const authentication = keys ? { ...cloudflareAccessAuthentication(accessConfig,
+  createLocalJWKSet({ keys: [{ ...await exportJWK(keys.publicKey), kid: 'fixture' }] })), maxStreamMs: 250 } : undefined;
 
 const scope = {
   tenant: "browser-test",
@@ -71,14 +82,15 @@ const worker = new ExecutionWorker(store, driver, {
 });
 const app = createServiceApp({
   store,
-  card: serviceCard("http://127.0.0.1:8094"),
+  card: serviceCard(origin),
   profileId: "codex",
   pollMs: 25,
   authorize: async (authorization) =>
     authorization === `Bearer ${token}` ? scope : undefined,
   signal: stopping.signal,
   browser: {
-    origin: "http://127.0.0.1:8094",
+    origin,
+    authentication,
     assetsPath: new URL("../dist/", import.meta.url).pathname,
     profiles: [
       { id: "codex", name: "Codex fixture" },
@@ -86,13 +98,32 @@ const app = createServiceApp({
     ],
   },
 });
-const server = createServer((request, response) => {
+const server = createServer(async (request, response) => {
+  if (accessMode) {
+    const url = new URL(request.url, origin);
+    if (url.pathname === '/__fixture/login') {
+      const user = url.searchParams.get('user') === 'bob' ? 'bob' : 'alice';
+      const now = Math.floor(Date.now() / 1000);
+      const jwt = await new SignJWT({ iss: accessConfig.issuer, aud: [accessConfig.audience], sub: user,
+        email: `${user}@smartphonekey.com`, type: 'app', exp: now + 3600, iat: now, nbf: now })
+        .setProtectedHeader({ alg: 'RS256', kid: 'fixture' }).sign(keys.privateKey);
+      response.setHeader('set-cookie', `fixture_access=${jwt}; HttpOnly; SameSite=Lax; Path=/`);
+      response.end('signed in'); return;
+    }
+    if (url.pathname === '/cdn-cgi/access/logout') {
+      response.setHeader('set-cookie', 'fixture_access=; Max-Age=0; HttpOnly; Path=/');
+      response.end('Signed out'); return;
+    }
+    const jwt = request.headers.cookie?.split(';').map(v => v.trim()).find(v => v.startsWith('fixture_access='))?.slice(15);
+    delete request.headers['cf-access-jwt-assertion'];
+    if (jwt) request.headers['cf-access-jwt-assertion'] = jwt;
+  }
   if (request.url === "/__fixture/calls" && request.method === "GET") {
     response.setHeader("content-type", "application/json");
     response.end(JSON.stringify(calls));
   } else app(request, response);
 });
-server.listen(8094, "127.0.0.1", () => worker.start());
+server.listen(port, "127.0.0.1", () => worker.start());
 async function stop() {
   if (stopping.signal.aborted) return;
   stopping.abort();

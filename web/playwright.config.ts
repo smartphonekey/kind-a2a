@@ -22,9 +22,14 @@ export default defineConfig({
       },
     },
   ],
-  webServer: {
+  webServer: [{
     command: "node tests/fixture.mjs",
     url: "http://127.0.0.1:8094/healthz",
     reuseExistingServer: false,
-  },
+  }, {
+    command: "node tests/fixture.mjs",
+    env: { A2A_FIXTURE_ACCESS: "true" },
+    url: "http://127.0.0.1:8095/healthz",
+    reuseExistingServer: false,
+  }],
 });

@@ -20,7 +20,7 @@ import { restStatusFor, toRestErrorBody } from "@a2a-js/sdk/errors";
 import { z } from "zod";
 import { CHECK_AUTH, DurableA2AHandler, PRINCIPAL, SIGNAL } from "./a2a.js";
 import type { HttpOptions } from "./http.js";
-import type { Principal } from "./auth.js";
+import type { BrowserAuthentication, BrowserIdentity, Principal } from "./auth.js";
 import { SseWriter } from "./sse-writer.js";
 
 /** Profile mounts choose defaults for new tasks only; existing tasks retain their stored profile. */
@@ -29,6 +29,7 @@ export type BrowserOptions = {
   assetsPath: string;
   profiles: readonly { id: string; name?: string }[];
   sessionTtlMs?: number;
+  authentication?: BrowserAuthentication;
 };
 type Session = { authorization: string; principal: Principal; expires: number };
 const cookieName = "aira_session";
@@ -45,6 +46,8 @@ const loginSchema = z
  * SDK REST routes are exposed, keeping every stream on the bounded SSE writer.
  * An HTTPS origin assumes trusted TLS termination; it is not evidence that the
  * incoming connection was encrypted or that the reverse proxy is authenticated.
+ * External authentication replaces the token exchange and must verify every
+ * browser request, including assets. It never falls back to bearer cookies.
  */
 export function browserRouter(options: HttpOptions, browser: BrowserOptions) {
   const origin = new URL(browser.origin);
@@ -68,6 +71,10 @@ export function browserRouter(options: HttpOptions, browser: BrowserOptions) {
   )
     throw new Error("invalid browser profiles");
   const router = express.Router();
+  const authentication = browser.authentication;
+  if (authentication && (!Number.isSafeInteger(authentication.maxStreamMs) ||
+      authentication.maxStreamMs <= 0 || authentication.maxStreamMs > 60_000))
+    throw new Error("external browser streams must reauthorize within one minute");
   const sessions = new Map<string, Session>();
   const active = new Map<string, number>();
   let loginWindow = 0,
@@ -103,10 +110,13 @@ export function browserRouter(options: HttpOptions, browser: BrowserOptions) {
       "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
     );
     // Never trust forwarded Host/Origin headers; a reverse proxy must preserve the configured Host.
+    const loginNavigation = authentication && request.method === "GET" &&
+      ["/", "/ui", "/ui/"].includes(request.path) &&
+      request.headers["sec-fetch-mode"] === "navigate" && request.headers["sec-fetch-dest"] === "document";
     if (
       request.headers.host !== origin.host ||
       (request.headers.origin && request.headers.origin !== origin.origin) ||
-      request.headers["sec-fetch-site"] === "cross-site"
+      (request.headers["sec-fetch-site"] === "cross-site" && !loginNavigation)
     ) {
       response.sendStatus(403);
       return;
@@ -124,6 +134,21 @@ export function browserRouter(options: HttpOptions, browser: BrowserOptions) {
     }
     next();
   });
+  router.use(async (request, response, next) => {
+    if (!authentication) { next(); return; }
+    try {
+      const identity = await authentication.authenticate(request.headers);
+      if (!identity) {
+        response.status(401).json({ authentication: authentication.mode });
+        return;
+      }
+      response.locals.browserIdentity = identity;
+      next();
+    } catch {
+      response.status(503).json({ error: "authentication service unavailable" });
+    }
+  });
+  router.get("/", (_request, response) => response.redirect(302, "/ui/"));
   router.use(
     "/ui",
     express.static(browser.assetsPath, {
@@ -140,6 +165,7 @@ export function browserRouter(options: HttpOptions, browser: BrowserOptions) {
     }),
   );
   router.post("/web-api/login", async (request, response) => {
+    if (authentication) { response.sendStatus(404); return; }
     if (Date.now() - loginWindow >= 60_000) {
       loginWindow = Date.now();
       loginAttempts = 0;
@@ -180,6 +206,12 @@ export function browserRouter(options: HttpOptions, browser: BrowserOptions) {
     response.json({ subject: principal.subject });
   });
   router.post("/web-api/logout", (request, response) => {
+    if (authentication) {
+      try { authentication.revoke(response.locals.browserIdentity as BrowserIdentity); }
+      catch { response.sendStatus(503); return; }
+      response.sendStatus(204);
+      return;
+    }
     sessions.delete(sessionId(request));
     cookie(response, "", 0);
     response.sendStatus(204);
@@ -188,6 +220,13 @@ export function browserRouter(options: HttpOptions, browser: BrowserOptions) {
     const id = sessionId(request),
       session = sessions.get(id);
     const check = async () => {
+      if (authentication) {
+        const expected = response.locals.browserIdentity as BrowserIdentity;
+        const current = await authentication.authenticate(request.headers);
+        return current && current.expiresAt > Date.now() &&
+          current.principal.tenant === expected.principal.tenant &&
+          current.principal.subject === expected.principal.subject ? current.principal : undefined;
+      }
       if (
         !session ||
         sessions.get(id) !== session ||
@@ -237,6 +276,11 @@ export function browserRouter(options: HttpOptions, browser: BrowserOptions) {
   router.get("/web-api/session", (_request, response) =>
     response.json({
       subject: response.locals.browserPrincipal.subject,
+      ...(authentication ? {
+        authentication: authentication.mode,
+        displayName: (response.locals.browserIdentity as BrowserIdentity).displayName,
+        logoutUrl: authentication.logoutUrl,
+      } : {}),
       profiles: browser.profiles,
       defaultProfile: options.profileId,
     }),
@@ -257,7 +301,7 @@ export function browserRouter(options: HttpOptions, browser: BrowserOptions) {
           scheme: {
             $case: "apiKeySecurityScheme",
             value: {
-              name: cookieName,
+              name: authentication ? "CF_Authorization" : cookieName,
               location: "cookie",
               description: "Same-origin browser session",
             },
@@ -337,6 +381,16 @@ export function browserRouter(options: HttpOptions, browser: BrowserOptions) {
         ? /^\/tasks\/([^/]+):subscribe$/.exec(request.path)
         : null;
       if (streamRoute || subscription) {
+        if (authentication) {
+          // A fresh subscription crosses Access again. Ending observation never
+          // cancels execution or authorizes resending a message.
+          const timer = setTimeout(() => {
+            if (!response.headersSent) response.status(503);
+            response.end();
+            abort();
+          }, authentication.maxStreamMs);
+          response.once("close", () => clearTimeout(timer));
+        }
         void (async () => {
           let writer: SseWriter | undefined;
           try {

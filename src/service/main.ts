@@ -25,6 +25,7 @@ import { fileAuthorizer } from "./auth.js";
 import { serviceCard } from "./card.js";
 import { requireSqliteWalFix } from "./sqlite-runtime.js";
 import { parseSetupFailure } from "./setup-diagnostics.js";
+import { cloudflareAccessAuthentication, cloudflareAccessSchema } from "./cloudflare-access.js";
 
 const pathSchema = z.string().refine(isAbsolute, "absolute path required");
 /** "trusted-local" acknowledges an operator trust boundary; it does not verify agent isolation. */
@@ -37,7 +38,8 @@ const schema = z.object({
   profiles: z.array(z.object({ id: z.string().min(1).max(128), agentId: z.string().uuid() }).strict()).min(1).max(100),
   concurrency: z.number().int().min(1).max(32).default(2),
   turnTimeoutMs: z.number().int().min(1000).max(43_200_000).default(600_000),
-  browser: z.object({ origin: z.string().url(), assetsPath: pathSchema }).strict().optional()
+  browser: z.object({ origin: z.string().url(), assetsPath: pathSchema,
+    cloudflareAccess: cloudflareAccessSchema.optional() }).strict().optional()
 }).strict();
 
 function required(name: string): string {
@@ -88,7 +90,9 @@ const worker = new ExecutionWorker(store, driver, { concurrency: config.concurre
   turnTimeoutMs: config.turnTimeoutMs, onError: event => console.error(JSON.stringify({ kind: "worker.error", ...event })) });
 const server = createServer(createServiceApp({ store, card: serviceCard(config.publicUrl), profileId: config.defaultProfile,
   authorize: fileAuthorizer(config.credentialsFile), signal: stopping.signal,
-  ...(config.browser ? { browser: { ...config.browser, profiles: config.profiles.map(({ id }) => ({ id })) } } : {}) }));
+  ...(config.browser ? { browser: { origin: config.browser.origin, assetsPath: config.browser.assetsPath,
+    ...(config.browser.cloudflareAccess ? { authentication: cloudflareAccessAuthentication(config.browser.cloudflareAccess) } : {}),
+    profiles: config.profiles.map(({ id }) => ({ id })) } } : {}) }));
 server.requestTimeout = 30_000;
 server.headersTimeout = 10_000;
 server.maxHeadersCount = 100;

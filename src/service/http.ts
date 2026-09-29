@@ -56,7 +56,7 @@ export function createServiceApp(options: HttpOptions) {
   if (options.browser) {
     const browser = browserRouter(options, options.browser);
     app.use((request, response, next) => {
-      if (request.path === "/ui" || request.path.startsWith("/ui/") || request.path.startsWith("/web-api/")) {
+      if (request.path === "/" || request.path === "/ui" || request.path.startsWith("/ui/") || request.path.startsWith("/web-api/")) {
         browser(request, response, next);
       } else next();
     });

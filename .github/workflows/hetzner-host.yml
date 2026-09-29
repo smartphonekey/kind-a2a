@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+name: Hetzner Host Profile
+on:
+  pull_request:
+  push:
+    branches: [main]
+    paths: ["ops/hetzner/**", ".github/workflows/hetzner-host.yml"]
+permissions:
+  contents: read
+jobs:
+  host-profile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - run: python3 -m venv .state/host-tools
+      - run: .state/host-tools/bin/pip install -r ops/hetzner/requirements.txt
+      - run: .state/host-tools/bin/python -m unittest discover -s ops/hetzner -p 'test_*.py'
+      - run: .state/host-tools/bin/ansible-playbook --syntax-check -i ops/hetzner/inventory.example.yml ops/hetzner/bootstrap.yml
+      # No SSH credentials, server changes or private evidence in hosted CI.

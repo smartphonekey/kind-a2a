@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+apiVersion: audit.k8s.io/v1
+kind: Policy
+omitStages: [RequestReceived]
+rules:
+  # Do not place request bodies, Secret values or provider prompts in audit logs.
+  - level: Metadata

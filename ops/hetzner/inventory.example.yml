@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+---
+# Copy into a private operator directory. Never put credentials in this example.
+all:
+  children:
+    hetzner:
+      hosts:
+        a2a-hz-01:
+          ansible_host: 192.0.2.10
+      vars:
+        ansible_user: root
+        ansible_python_interpreter: /usr/bin/python3
+        operator_user: agyn-admin
+        operator_public_key_file: /private/operator_ed25519.pub
+        ansible_ssh_private_key_file: /private/operator_ed25519
+        ansible_ssh_common_args: -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/private/known_hosts
+        # Re-running may restart Kubernetes; approval is only valid after draining.
+        maintenance_approved: false

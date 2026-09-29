@@ -96,8 +96,62 @@ and inspect side effects before authorizing another turn.
 
 ## Backup And Restore Scope
 
+Use only trusted database sources: restoring a dump can execute database code
+supplied by its source. Run rehearsals in an isolated, newly owned environment
+without access to the installed stack, host mounts or production credentials.
+Keep admission closed and fence the old owner before a real restore. Dumps and
+workspace/session archives remain sensitive even when their receipts are redacted.
+
 Terraform state is separate from app databases and workspaces; back up all of
 them with encrypted off-node retention. Keep admission closed and fence the old
 writer during restores. Same-node PVC retention, mirrored disks and an etcd
 snapshot alone are not a whole-stack backup. Require a replacement-node restore
 drill and report its actual scope using [ACCEPTANCE.md](ACCEPTANCE.md).
+
+## Hetzner Host Bootstrap
+
+The [host playbook](ops/hetzner/bootstrap.yml) provisions a separate bare-metal
+node; it does not migrate or expose the installed Agyn/A2A stack. Do not join
+another cluster or attach existing workspace volumes implicitly.
+The [production gates](PRODUCTION.md) still apply after Kubernetes is running.
+
+First verify the Rescue SSH host key against the provisioning email and inspect
+hardware, disk identities, existing data and SMART reports. Robot access is the
+recovery prerequisite; a Hetzner Cloud project invitation does not grant it.
+Use Hetzner's [installimage](https://docs.hetzner.com/robot/dedicated-server/operating-systems/installimage/)
+only after explicit approval of the exact disks and partition/RAID plan. Keep
+that destructive, one-time operation separate from the repeatable host playbook.
+Capture the installed OS's new SSH host key through the verified Rescue session
+before rebooting; never bypass host-key verification to get past a reinstall.
+
+Ansible uses the [pinned environment](ops/hetzner/requirements.txt) and upstream
+K3s installer/binary checksums. Supply a private inventory shaped like the
+[example](ops/hetzner/inventory.example.yml), with a dedicated SSH key and pinned
+known-hosts file. Do not pass provider credentials or clone another node's keys.
+Run the model-free checks first:
+
+```sh
+uv venv .state/host-tools --python 3.12
+uv pip install --python .state/host-tools/bin/python -r ops/hetzner/requirements.txt
+.state/host-tools/bin/python -m unittest discover -s ops/hetzner -p 'test_*.py'
+.state/host-tools/bin/ansible-playbook --syntax-check \
+  -i ops/hetzner/inventory.example.yml ops/hetzner/bootstrap.yml
+.state/host-tools/bin/ansible-playbook \
+  -i .state/hetzner/inventory.yml ops/hetzner/bootstrap.yml
+```
+
+The first run establishes the operator account from bootstrap root access.
+Subsequent runs must connect as that operator, after draining and explicitly
+approving maintenance. Check mode and hosted CI are not live acceptance.
+Keep the Kubernetes API behind SSH/private administration, and verify external
+denial over IPv4 and IPv6, API/Pod networking, restricted admission, persistent
+volume recovery and a host reboot before deploying agents. Hardware KVM access
+does not prove that an Android emulator can boot or that hostile APKs are isolated.
+
+Local etcd snapshots are not off-node backups and do not contain application
+volume contents. Before cutover, choose an encrypted off-server destination,
+back up the server token/configuration and all application data, and complete
+the replacement-node restore drill described above. Mirrored HDDs are not a
+substitute for backups; measure disk latency and emulator capacity before
+admitting parallel work. Do not label this host production-ready based only on
+successful OS/Kubernetes installation.

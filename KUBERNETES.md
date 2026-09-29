@@ -9,7 +9,11 @@ not a production release; release gates are in [PRODUCTION.md](PRODUCTION.md).
 
 ## Access
 
-Open **http://127.0.0.1:8084/ui/**. The owner-scoped A2A access token is in:
+Open **https://agents.spkey.co/ui/** and use Google sign-in with a
+`@smartphonekey.com` account. No A2A token is needed for the browser.
+
+The loopback operator/machine API remains `http://127.0.0.1:8084`, not a browser
+sign-in bypass. Its owner-scoped A2A access token is in:
 
 ```text
 /home/alex/work/aira-a2a-lab/.state/agyn-upstream-deploy-94iKDb/access-token
@@ -31,12 +35,12 @@ curl --fail http://127.0.0.1:8084/readyz
 
 The host service on port 8083 has a separate database and credentials. It is not
 a replica or failover target for the Kubernetes app, and it has not received
-the app-only `d8952aa` rollout. Do not copy a database and start another writer.
+the Cloudflare rollout. Do not copy a database and start another writer.
 
 ## Installed App
 
-- App source `d8952aabce2bf2d7f6efaa9998d49f658d6d541c`, image
-  `docker.io/library/aira-a2a-service@sha256:5e772d0c375eec76ddbc3d7ce56ac1675e8d873ae8105f3d2ade148c7f550804`.
+- App source `ecfbab5`, image
+  `docker.io/library/aira-a2a-service@sha256:a104f390b1aa4d8c484c962c4d643be29aadc09ce763a3b1576ea091c25ca8a3`.
   The recorded running SQLite version is 3.53.4.
 - Preserve PVC `aira-a2a-data` and configuration Secret `aira-a2a-config` in
   namespace `aira-a2a`; the database is `/data/private/tasks.sqlite`.
@@ -241,6 +245,13 @@ local overlay is not a substitute for production packaging.
 ## Credentials And Recovery
 
 Provider credentials belong to Agyn subscription bindings, not browser login.
+Browser users share the operator-provisioned provider accounts and execution
+budget, even though task ownership is private. Google authentication does not
+provide each user with a separate Codex or Claude subscription.
+The installed Codex binding contains only an access token, valid until
+October 8, 2026 at 07:37 UTC. Renew that binding from the matching authorized
+account before expiry; the workstation refresh token is intentionally not copied
+to agent runtimes. This is manual rotation, not a durable credential broker.
 Claude's existing secret-manager token was synchronized into its Agyn binding.
 Future secret-manager rotations must also update Agyn; automatic propagation
 and the existing token's expiry have not been established. See the

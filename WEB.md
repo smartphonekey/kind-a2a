@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 # A2A Web Workspace
 
-For the installed app at `http://127.0.0.1:8084/ui/`, use
+For the installed app at `https://agents.spkey.co/ui/`, use
 [Kubernetes access](KUBERNETES.md#access). The host instance below has separate
 state and credentials; it is not a replica or failover target.
 

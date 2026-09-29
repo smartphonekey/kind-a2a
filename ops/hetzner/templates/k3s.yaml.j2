@@ -1,0 +1,30 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# A single etcd member provides snapshots, not high availability.
+cluster-init: true
+node-name: {{ inventory_hostname | to_json }}
+node-ip: {{ ansible_host | to_json }}
+advertise-address: {{ ansible_host | to_json }}
+tls-san:
+  - 127.0.0.1
+write-kubeconfig-mode: "0600"
+secrets-encryption: true
+protect-kernel-defaults: true
+disable:
+  - traefik
+  - servicelb
+etcd-snapshot-schedule-cron: "17 */6 * * *"
+etcd-snapshot-retention: 12
+kubelet-arg:
+  - "system-reserved=cpu=500m,memory=1Gi"
+  - "kube-reserved=cpu=500m,memory=1Gi"
+  - "eviction-hard=memory.available<1Gi,nodefs.available<15%,imagefs.available<15%"
+  - "pod-max-pids=1024"
+  - "max-pods=80"
+kube-apiserver-arg:
+  - "admission-control-config-file=/etc/rancher/k3s/admission.yaml"
+  - "audit-log-path=/var/lib/rancher/k3s/server/logs/audit.log"
+  - "audit-policy-file=/etc/rancher/k3s/audit-policy.yaml"
+  - "audit-log-maxage=14"
+  - "audit-log-maxbackup=5"
+  - "audit-log-maxsize=100"
+  - "service-account-extend-token-expiration=false"

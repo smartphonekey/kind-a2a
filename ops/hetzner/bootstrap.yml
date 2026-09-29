@@ -1,0 +1,268 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+---
+- name: Establish key-only operator access without reinstalling the OS
+  hosts: hetzner
+  become: true
+  gather_facts: true
+  tasks:
+    - name: Require the reviewed single-node Ubuntu profile
+      ansible.builtin.assert:
+        that:
+          - groups['hetzner'] | length == 1
+          - ansible_facts['distribution'] == 'Ubuntu'
+          - ansible_facts['distribution_version'] == '24.04'
+          - ansible_facts['architecture'] == 'x86_64'
+          - ansible_facts['hostname'] != 'rescue'
+          - operator_user is match('^[a-z][a-z0-9-]{0,30}$')
+          - operator_user != 'root'
+    - name: Inspect previous cluster state
+      ansible.builtin.stat:
+        path: /var/lib/rancher/k3s/server
+      register: cluster_state
+    - name: Inspect host ownership marker
+      ansible.builtin.stat:
+        path: /etc/a2a-host-profile
+      register: profile_marker
+    - name: Read existing ownership marker
+      ansible.builtin.slurp:
+        src: /etc/a2a-host-profile
+      when: profile_marker.stat.exists
+      register: profile_content
+    - name: Refuse unowned clusters or unapproved maintenance
+      ansible.builtin.assert:
+        that:
+          - not cluster_state.stat.exists or profile_marker.stat.exists
+          - not profile_marker.stat.exists or (profile_content.content | b64decode | trim) == 'kind-a2a/hetzner-v1'
+          - not cluster_state.stat.exists or maintenance_approved | default(false) | bool
+        fail_msg: Existing clusters require this profile and explicit drained maintenance approval.
+    - name: Create the operator account
+      ansible.builtin.user:
+        name: "{{ operator_user }}"
+        shell: /bin/bash
+        create_home: true
+        password_lock: true
+    - name: Create protected operator SSH directory
+      ansible.builtin.file:
+        path: "/home/{{ operator_user }}/.ssh"
+        state: directory
+        owner: "{{ operator_user }}"
+        group: "{{ operator_user }}"
+        mode: "0700"
+    - name: Authorize the supplied operator public key
+      ansible.builtin.lineinfile:
+        path: "/home/{{ operator_user }}/.ssh/authorized_keys"
+        line: "{{ lookup('ansible.builtin.file', operator_public_key_file) }}"
+        create: true
+        owner: "{{ operator_user }}"
+        group: "{{ operator_user }}"
+        mode: "0600"
+    - name: Permit key-authenticated operator administration
+      ansible.builtin.copy:
+        dest: /etc/sudoers.d/a2a-operator
+        content: "{{ operator_user }} ALL=(ALL:ALL) NOPASSWD: ALL\n"
+        owner: root
+        group: root
+        mode: "0440"
+        validate: /usr/sbin/visudo -cf %s
+
+- name: Install the private Kubernetes host through the verified operator account
+  hosts: hetzner
+  become: true
+  gather_facts: true
+  vars:
+    ansible_user: "{{ operator_user }}"
+  vars_files:
+    - versions.yml
+  handlers:
+    - name: Reload SSH
+      ansible.builtin.service:
+        name: ssh
+        state: reloaded
+    - name: Apply host firewall
+      ansible.builtin.command: /usr/sbin/nft -f /etc/a2a-host-firewall.nft
+      changed_when: true
+    - name: Restart K3s
+      ansible.builtin.systemd_service:
+        name: k3s
+        state: restarted
+        enabled: true
+        daemon_reload: true
+  tasks:
+    - name: Prove the SSH identity before disabling bootstrap login
+      ansible.builtin.command: id -un
+      become: false
+      register: ssh_identity
+      changed_when: false
+      failed_when: ssh_identity.stdout != operator_user
+    - name: Prove operator sudo access before disabling bootstrap login
+      ansible.builtin.command: id -u
+      register: operator_id
+      changed_when: false
+      failed_when: operator_id.stdout != '0'
+    - name: Install host prerequisites
+      ansible.builtin.apt:
+        name: [ca-certificates, curl, nftables, jq, python3, openssh-server, smartmontools, mdadm, unattended-upgrades]
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+    - name: Apply distribution updates during the approved maintenance window
+      ansible.builtin.apt:
+        upgrade: dist
+    - name: Require key-only SSH and disable root login
+      ansible.builtin.copy:
+        dest: /etc/ssh/sshd_config.d/00-a2a.conf
+        content: |
+          PasswordAuthentication no
+          KbdInteractiveAuthentication no
+          PermitRootLogin no
+          PubkeyAuthentication yes
+          X11Forwarding no
+        mode: "0600"
+        validate: /usr/sbin/sshd -t -f %s
+      notify: Reload SSH
+    - name: Inspect the effective SSH configuration
+      ansible.builtin.command: /usr/sbin/sshd -T
+      register: ssh_config
+      changed_when: false
+    - name: Reject conflicting SSH authentication settings
+      ansible.builtin.assert:
+        that:
+          - "'passwordauthentication no' in ssh_config.stdout_lines"
+          - "'kbdinteractiveauthentication no' in ssh_config.stdout_lines"
+          - "'permitrootlogin no' in ssh_config.stdout_lines"
+          - "'pubkeyauthentication yes' in ssh_config.stdout_lines"
+    - name: Retire the emailed root password
+      ansible.builtin.user:
+        name: root
+        password_lock: true
+    - name: Configure kubelet kernel defaults
+      ansible.builtin.copy:
+        dest: /etc/sysctl.d/90-a2a-kubelet.conf
+        content: |
+          vm.panic_on_oom=0
+          vm.overcommit_memory=1
+          kernel.panic=10
+          kernel.panic_on_oops=1
+          net.ipv4.ip_forward=1
+        mode: "0644"
+      register: sysctl_config
+    - name: Apply kernel defaults
+      ansible.builtin.command: sysctl --system
+      when: sysctl_config.changed
+      changed_when: true
+    - name: Require swap to be absent
+      ansible.builtin.command: swapon --show --noheadings
+      register: swap_state
+      changed_when: false
+      failed_when: swap_state.stdout | length > 0
+    - name: Install the isolated host firewall
+      ansible.builtin.copy:
+        src: files/host-firewall.nft
+        dest: /etc/a2a-host-firewall.nft
+        mode: "0600"
+        validate: /usr/sbin/nft --check --file %s
+      notify: Apply host firewall
+    - name: Install the firewall service without a global flush operation
+      ansible.builtin.copy:
+        src: files/a2a-host-firewall.service
+        dest: /etc/systemd/system/a2a-host-firewall.service
+        mode: "0644"
+    - name: Enable host firewall before starting Kubernetes
+      ansible.builtin.systemd_service:
+        name: a2a-host-firewall
+        enabled: true
+        state: started
+        daemon_reload: true
+    - name: Commit SSH and firewall changes before downloading Kubernetes
+      ansible.builtin.meta: flush_handlers
+    - name: Create Kubernetes service override directory
+      ansible.builtin.file:
+        path: /etc/systemd/system/k3s.service.d
+        state: directory
+        mode: "0755"
+    - name: Refuse Kubernetes startup without the host firewall
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/k3s.service.d/10-a2a-firewall.conf
+        mode: "0644"
+        content: |
+          [Unit]
+          Requires=a2a-host-firewall.service
+          After=a2a-host-firewall.service
+      notify: Restart K3s
+    - name: Create private Kubernetes configuration directory
+      ansible.builtin.file:
+        path: /etc/rancher/k3s
+        state: directory
+        mode: "0700"
+    - name: Install metadata-only audit policy
+      ansible.builtin.copy:
+        src: files/audit-policy.yaml
+        dest: /etc/rancher/k3s/audit-policy.yaml
+        mode: "0600"
+      notify: Restart K3s
+    - name: Enforce restricted pods by default
+      ansible.builtin.copy:
+        src: files/admission.yaml
+        dest: /etc/rancher/k3s/admission.yaml
+        mode: "0600"
+      notify: Restart K3s
+    - name: Configure the single-node server
+      ansible.builtin.template:
+        src: templates/k3s.yaml.j2
+        dest: /etc/rancher/k3s/config.yaml
+        mode: "0600"
+      notify: Restart K3s
+    - name: Download the exact K3s binary
+      ansible.builtin.get_url:
+        url: "https://github.com/k3s-io/k3s/releases/download/{{ k3s_version | urlencode }}/k3s"
+        dest: /usr/local/bin/k3s
+        checksum: "sha256:{{ k3s_sha256 }}"
+        mode: "0755"
+        timeout: 120
+      register: k3s_binary
+      notify: Restart K3s
+    - name: Download the matching upstream service installer
+      ansible.builtin.get_url:
+        url: "https://raw.githubusercontent.com/k3s-io/k3s/{{ k3s_version }}/install.sh"
+        dest: /usr/local/sbin/a2a-k3s-install
+        checksum: "sha256:{{ k3s_installer_sha256 }}"
+        mode: "0700"
+      register: k3s_installer
+    - name: Inspect installed service
+      ansible.builtin.stat:
+        path: /etc/systemd/system/k3s.service
+      register: k3s_service
+    - name: Install the service using the verified upstream installer
+      ansible.builtin.command: /usr/local/sbin/a2a-k3s-install
+      environment:
+        INSTALL_K3S_SKIP_DOWNLOAD: "true"
+        INSTALL_K3S_SKIP_START: "true"
+        INSTALL_K3S_EXEC: server
+        INSTALL_K3S_VERSION: "{{ k3s_version }}"
+      when: not k3s_service.stat.exists or k3s_binary.changed or k3s_installer.changed
+      changed_when: true
+      notify: Restart K3s
+    - name: Record explicit host ownership
+      ansible.builtin.copy:
+        dest: /etc/a2a-host-profile
+        content: "kind-a2a/hetzner-v1\n"
+        mode: "0600"
+    - name: Start Kubernetes after all verified inputs are installed
+      ansible.builtin.meta: flush_handlers
+    - name: Ensure Kubernetes is running even when configuration is unchanged
+      ansible.builtin.systemd_service:
+        name: k3s
+        state: started
+        enabled: true
+        daemon_reload: true
+    - name: Wait for the API to become healthy
+      ansible.builtin.command: /usr/local/bin/k3s kubectl get --raw=/readyz
+      register: api_ready
+      changed_when: false
+      retries: 60
+      delay: 5
+      until: api_ready.rc == 0 and api_ready.stdout == 'ok'
+    - name: Wait for the node to become ready
+      ansible.builtin.command:
+        argv: [/usr/local/bin/k3s, kubectl, wait, "node/{{ inventory_hostname }}", --for=condition=Ready, --timeout=180s]
+      changed_when: false

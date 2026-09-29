@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+---
+# Deliberately separate from the older local lab. A new host does not upgrade it.
+k3s_version: v1.35.8+k3s1
+k3s_sha256: 12f81c9bb5b71e098a4f7a2d187e350902a9339a6c3d5e56c20a03f7a417e07f
+k3s_installer_sha256: 8598e002e61d658fed7b7542fc6d2c66d8da6eae69e088830105d2ee1ffb6d91

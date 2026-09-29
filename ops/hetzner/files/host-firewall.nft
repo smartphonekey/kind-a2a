@@ -1,0 +1,25 @@
+#!/usr/sbin/nft -f
+# SPDX-License-Identifier: AGPL-3.0-only
+# Replace only our table atomically; never flush Kubernetes' managed rules.
+table inet a2a_host {}
+delete table inet a2a_host
+table inet a2a_host {
+  chain input {
+    type filter hook input priority 0; policy drop;
+    ct state invalid drop
+    ct state established,related accept
+    iifname "lo" accept
+    meta l4proto { icmp, ipv6-icmp } accept
+    tcp dport 22 ct state new accept
+    # Pods reach the node and API through the CNI, not through the public NIC.
+    iifname { "cni0", "flannel.1" } ip saddr 10.42.0.0/16 accept
+  }
+  chain public_forward {
+    type filter hook forward priority -10; policy accept;
+    ct state invalid drop
+    ct state established,related accept
+    # NodePort/hostPort DNAT bypasses input. Only the fixed Flannel profile may
+    # originate forwarding; accepted traffic still traverses the CNI's chains.
+    iifname != { "cni0", "flannel.1" } drop
+  }
+}

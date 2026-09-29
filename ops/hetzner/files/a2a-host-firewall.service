@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+[Unit]
+Description=Host and public ingress firewall for the private A2A Kubernetes node
+Before=k3s.service
+After=network-pre.target
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/a2a-host-firewall.nft
+ExecReload=/usr/sbin/nft -f /etc/a2a-host-firewall.nft
+# No ExecStop: stopping this unit must not expose the host or flush CNI rules.
+
+[Install]
+WantedBy=multi-user.target

@@ -82,6 +82,46 @@ test("automatic deployment has no implicit repository authority", () => {
   }
 });
 
+test("unprotected deployment requires an explicit exception and a private push payload", () => {
+  const c = context();
+  c.env.GITHUB_REF_PROTECTED = "false";
+  c.event.repository.private = true;
+  const policy = { ...expected, branchProtection: "private-repository-exception" };
+  assert.doesNotThrow(() => assertAutoApplyContext(c.env, c.event, c.checkout, policy));
+  for (const privateValue of [false, undefined, "true", 1]) {
+    c.event.repository.private = privateValue;
+    assert.throws(() => assertAutoApplyContext(c.env, c.event, c.checkout, policy));
+  }
+  c.event.repository.private = true;
+  for (const branchProtection of ["required", false, true, "optional", null]) {
+    assert.throws(() => assertAutoApplyContext(c.env, c.event, c.checkout, { ...expected, branchProtection }));
+  }
+  delete c.env.GITHUB_REF_PROTECTED;
+  assert.throws(() => assertAutoApplyContext(c.env, c.event, c.checkout, policy));
+});
+
+test("the private branch exception retains event, checkout and activation checks", () => {
+  const policy = { ...expected, branchProtection: "private-repository-exception" };
+  for (const change of [
+    c => c.env.GITHUB_EVENT_NAME = "pull_request",
+    c => c.env.GITHUB_REPOSITORY = "other/infra",
+    c => c.env.GITHUB_REF = "refs/heads/topic",
+    c => c.env.GITHUB_WORKFLOW_REF = "other/infra/.github/workflows/agyn-agents.yml@refs/heads/main",
+    c => c.env.AGYN_AUTO_APPLY_ENABLED = "false",
+    c => c.event.repository.full_name = "other/infra",
+    c => c.event.forced = true,
+    c => c.event.deleted = true,
+    c => c.checkout.dirty = true,
+    c => c.checkout.remoteHead = "b".repeat(40),
+  ]) {
+    const c = context();
+    c.env.GITHUB_REF_PROTECTED = "false";
+    c.event.repository.private = true;
+    change(c);
+    assert.throws(() => assertAutoApplyContext(c.env, c.event, c.checkout, policy));
+  }
+});
+
 const credentials = () => ({
   KUBE_HOST: "https://cluster.example.test", KUBE_TOKEN: "scoped-test-token", AGYN_API_TOKEN: "agyn-test-token",
   KUBE_CLUSTER_CA_CERT_DATA: "-----BEGIN CERTIFICATE-----\ntest", AGYN_GATEWAY_CA_PEM: "-----BEGIN CERTIFICATE-----\ntest",

@@ -2,28 +2,34 @@
 /**
  * Fail-closed context checks for automatic application of merged definitions.
  * @module
- * @remarks Environment variables are not authentication. GitHub's protected
+ * @remarks Environment variables are not authentication. GitHub's deployment
  * environment and workflow-restricted, single-job runner enforce that boundary.
  * @see scripts/agyn-terraform.mjs
  * @remarks The private configuration repository owns the expected deployment
  * identity. Public CI validates code only and has no deployment credentials.
  */
-/** Merge approval replaces the separate plan approval, never the plan policy. */
+/** Branch policy is an operator decision; it never relaxes the plan policy. */
 export function assertAutoApplyContext(env, event, { head, remoteHead, dirty }, expected) {
-  const { repository, branch, workflow: workflowPath } = expected ?? {};
+  const { repository, branch, workflow: workflowPath, branchProtection = "required" } = expected ?? {};
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository ?? "") ||
       !/^[A-Za-z0-9_-]+$/.test(branch ?? "") ||
-      !/^\.github\/workflows\/[A-Za-z0-9_-]+\.ya?ml$/.test(workflowPath ?? "")) {
-    throw new Error("An explicit configuration repository, protected branch and workflow are required");
+      !/^\.github\/workflows\/[A-Za-z0-9_-]+\.ya?ml$/.test(workflowPath ?? "") ||
+      !["required", "private-repository-exception"].includes(branchProtection)) {
+    throw new Error("An explicit configuration repository, branch, workflow and valid branch policy are required");
   }
+  // Missing/private-looking repository names are not evidence of visibility.
+  // GitHub's push payload must confirm the operator's private-repository exception.
+  const acceptsUnprotected = branchProtection === "private-repository-exception" && event?.repository?.private === true;
   const ref = `refs/heads/${branch}`;
   const workflow = `${repository}/${workflowPath}@${ref}`;
   if (env.GITHUB_ACTIONS !== "true" || env.GITHUB_EVENT_NAME !== "push" ||
       env.GITHUB_REPOSITORY !== repository || env.GITHUB_REF !== ref ||
-      env.GITHUB_REF_PROTECTED !== "true" || env.GITHUB_WORKFLOW_REF !== workflow ||
+      (env.GITHUB_REF_PROTECTED !== "true" && !(env.GITHUB_REF_PROTECTED === "false" && acceptsUnprotected)) ||
+      (branchProtection === "private-repository-exception" && !acceptsUnprotected) ||
+      env.GITHUB_WORKFLOW_REF !== workflow ||
       env.AGYN_AUTO_APPLY_ENABLED !== "true" || !/^[0-9a-f]{40}$/.test(env.GITHUB_SHA ?? "") ||
       !/^[1-9][0-9]*$/.test(env.GITHUB_RUN_ID ?? "")) {
-    throw new Error("Auto-apply requires the enabled deployment workflow on its protected branch");
+    throw new Error("Auto-apply requires the enabled deployment workflow and its declared branch policy");
   }
   if (event?.repository?.full_name !== repository || event.ref !== ref ||
       event.after !== env.GITHUB_SHA || event.deleted !== false || event.forced !== false) {

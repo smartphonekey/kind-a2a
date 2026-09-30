@@ -4,7 +4,9 @@
  * @module
  * @remarks These resources never replace the app Deployment, Secret or PVC.
  * The caller creates the connector-only token Secret out of band. The HTTP
- * origin hop remains an explicit trusted-local exception, not hostile-code TLS.
+ * origin hop is cluster HTTP, not end-to-end TLS or hostile-code isolation.
+ * Test deployments stay scaled to zero; production requires an explicit node
+ * so applying these manifests to the workstation cannot expose it by accident.
  * @see infra/cloudflare/main.tf
  * @see scripts/cloudflare-manifests.test.mjs
  */
@@ -17,7 +19,12 @@ export const cloudflareCidrs = ['173.245.48.0/20', '103.21.244.0/22', '103.22.20
   '188.114.96.0/20', '197.234.240.0/22', '198.41.128.0/17', '162.158.0.0/15',
   '104.16.0.0/13', '104.24.0.0/14', '172.64.0.0/13', '131.0.72.0/22'];
 
-export function cloudflareManifests({ image = cloudflaredImage } = {}) {
+export function cloudflareManifests({ environment, nodeName, image = cloudflaredImage } = {}) {
+  assert(['test', 'production'].includes(environment), 'explicit test or production environment required');
+  if (environment === 'production') {
+    assert(typeof nodeName === 'string' && nodeName.length <= 253 && /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/.test(nodeName),
+      'explicit production node name required');
+  }
   assert(/^[a-z0-9][a-z0-9./:_-]*@sha256:[a-f0-9]{64}$/.test(image), 'digest-pinned connector image required');
   const namespace = 'aira-a2a-edge', name = 'kind-a2a-tunnel';
   const labels = { 'app.kubernetes.io/name': name, 'app.kubernetes.io/part-of': 'aira-a2a' };
@@ -29,7 +36,8 @@ export function cloudflareManifests({ image = cloudflaredImage } = {}) {
   const certificates = { to: cloudflareCidrs.map(cidr => ({ ipBlock: { cidr } })), ports: [{ protocol: 'TCP', port: 443 }] };
   return [
     { apiVersion: 'v1', kind: 'Namespace', metadata: { name: namespace, labels: { ...labels,
-      'pod-security.kubernetes.io/enforce': 'restricted', 'pod-security.kubernetes.io/enforce-version': 'v1.33' } } },
+      'pod-security.kubernetes.io/enforce': 'restricted',
+      'pod-security.kubernetes.io/enforce-version': environment === 'production' ? 'v1.35' : 'v1.33' } } },
     { apiVersion: 'v1', kind: 'ServiceAccount', metadata: meta(), automountServiceAccountToken: false },
     { apiVersion: 'v1', kind: 'ResourceQuota', metadata: meta(), spec: { hard: {
       'count/pods': '3', 'requests.cpu': '250m', 'requests.memory': '256Mi', 'limits.cpu': '1', 'limits.memory': '768Mi' } } },
@@ -44,10 +52,11 @@ export function cloudflareManifests({ image = cloudflaredImage } = {}) {
       ingress: [{ from: [{ namespaceSelector: ns(namespace), podSelector: { matchLabels: labels } }],
         ports: [{ protocol: 'TCP', port: 8080 }] }], egress: [certificates] } },
     { apiVersion: 'apps/v1', kind: 'Deployment', metadata: meta(), spec: {
-      replicas: 2, revisionHistoryLimit: 2, selector: { matchLabels: labels },
+      replicas: environment === 'production' ? 2 : 0, revisionHistoryLimit: 2, selector: { matchLabels: labels },
       strategy: { type: 'RollingUpdate', rollingUpdate: { maxUnavailable: 0, maxSurge: 1 } },
       template: { metadata: { labels, annotations: { 'sidecar.istio.io/inject': 'false' } }, spec: {
         serviceAccountName: name, automountServiceAccountToken: false, enableServiceLinks: false,
+        ...(environment === 'production' ? { nodeSelector: { 'kubernetes.io/hostname': nodeName } } : {}),
         terminationGracePeriodSeconds: 45,
         securityContext: { runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, fsGroup: 65532,
           seccompProfile: { type: 'RuntimeDefault' } },

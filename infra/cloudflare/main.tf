@@ -98,7 +98,8 @@ resource "cloudflare_zero_trust_tunnel_cloudflared_config" "ui" {
     ingress = [{
       hostname = var.hostname
       path     = "^/(ui(/.*)?|web-api/.*)?$"
-      # Explicit trusted-local HTTP hop, confined by Kubernetes NetworkPolicy.
+      # Cluster HTTP is not end-to-end TLS, including on the production target.
+      # The origin's additive NetworkPolicy must precede its public deployment.
       service = "http://aira-a2a.aira-a2a.svc.cluster.local:8080"
       origin_request = {
         http_host_header = var.hostname

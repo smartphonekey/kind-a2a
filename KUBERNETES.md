@@ -26,8 +26,11 @@ local test deployment until a separately verified migration changes it.
 
 ## Access
 
-Open **https://agents.spkey.co/ui/** and use Google sign-in with a
-`@smartphonekey.com` account. No A2A token is needed for the browser.
+The public hostname is **https://agents.spkey.co/ui/**, protected by Google
+sign-in for `@smartphonekey.com`. Its Tunnel connectors run on Hetzner, but the
+A2A origin is not deployed there yet, so the public UI is unavailable. Do not
+route it back to the workstation test cluster as a fallback. No A2A token is
+needed for browser sign-in once the production origin is deployed.
 
 The loopback operator/machine API remains `http://127.0.0.1:8084`, not a browser
 sign-in bypass. Its owner-scoped A2A access token is in:
@@ -122,10 +125,25 @@ terraform -chdir=infra/cloudflare apply ../../.state/cloudflare-access/deploy.tf
 ```
 
 Use the [additive manifest factory](scripts/cloudflare-manifests.mjs) for the
-connector namespace and app network rules. Supply the connector token separately
-in its referenced Kubernetes Secret; it is not an account-wide API token. Revoke
-the bootstrap API token after provisioning. Secret rotation requires a connector
-restart; retain the old connector until its replacement is healthy.
+connector namespace and app network rules. Select `environment: 'production'`
+and the verified Hetzner `nodeName` explicitly; test manifests keep connectors
+disabled. Supply the connector token separately in its referenced Kubernetes
+Secret; it is not an account-wide API token. Revoke temporary bootstrap API
+tokens after provisioning. Secret rotation requires a connector restart;
+routine rotations retain the old connector until its replacement is healthy.
+
+The workstation's A2A connector credential has been rotated and its rejection
+verified; the test VM remains stopped. Two connectors now run on Hetzner using
+the existing Tunnel, DNS record and Access configuration. Their credential is
+stored in the approved Doppler `ai-agents/dev` configuration as
+`HETZNER_A2A_CLOUDFLARE_TOKEN`; never inject the full configuration into agents.
+Unrelated workstation tunnels are not part of this migration.
+
+The production connector namespace is installed independently of the A2A app.
+Deploy the production origin and the factory's additive app-side NetworkPolicy
+before expecting browser traffic to work. Connector readiness proves a Cloudflare
+connection, not origin readiness, user authentication or task execution. The
+cluster HTTP origin hop is still an explicit security limitation on production.
 
 Merge the Terraform `browser` output into the private app configuration, keeping
 its assets path and all unrelated settings. Perform a drained configuration/image
@@ -136,7 +154,8 @@ health/machine-API path, not a bypass around Google browser authentication.
 
 Two connectors tolerate a connector restart, not node loss. Keep the explicit
 cluster HTTP exception and the [browser trust boundary](WEB.md#browser-boundary)
-visible; Cloudflare does not make the agent sandboxes production-safe.
+visible; the production cluster designation and Cloudflare do not make the agent
+sandboxes production-safe.
 
 ## Agent Definitions In Git
 

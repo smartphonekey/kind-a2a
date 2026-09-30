@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-only
 """Model-free guardrails; live host, networking and recovery checks are separate."""
 from pathlib import Path
+import io
 import json
 import re
 import tempfile
@@ -10,7 +11,7 @@ from unittest.mock import patch
 
 from jinja2 import Environment, StrictUndefined
 import yaml
-from acceptance import Check, IMAGE, network_denied, pod
+from acceptance import Check, IMAGE, main, network_denied, pod
 
 ROOT = Path(__file__).parent
 
@@ -74,7 +75,7 @@ class HostProfileTests(unittest.TestCase):
         environment = Environment(undefined=StrictUndefined)
         environment.filters["to_json"] = json.dumps
         template = environment.from_string((ROOT / "templates/k3s.yaml.j2").read_text())
-        config = yaml.safe_load(template.render(inventory_hostname="a2a-hz-01", ansible_host="192.0.2.10"))
+        config = yaml.safe_load(template.render(inventory_hostname="production-node", ansible_host="192.0.2.10"))
         self.assertEqual(config["node-ip"], "192.0.2.10")
         self.assertEqual(config["tls-san"], ["127.0.0.1"])
         self.assertTrue(config["cluster-init"])
@@ -146,6 +147,14 @@ class HostProfileTests(unittest.TestCase):
         with patch("acceptance.socket.create_connection", side_effect=OSError("Network is unreachable")):
             with self.assertRaisesRegex(OSError, "unreachable"):
                 checker.denied_port(6443)
+
+    def test_acceptance_requires_an_explicit_node_before_connecting(self):
+        args = ["acceptance.py", "create", "--host", "192.0.2.10", "--key", "key", "--known-hosts", "known", "--receipt", "receipt"]
+        with patch("sys.argv", args), patch("sys.stderr", new=io.StringIO()), patch("acceptance.Check") as check:
+            with self.assertRaises(SystemExit) as result:
+                main()
+            self.assertEqual(result.exception.code, 2)
+            check.assert_not_called()
 
 
 if __name__ == "__main__":

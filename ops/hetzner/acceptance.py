@@ -153,7 +153,7 @@ def main():
     for name in ("host", "key", "known-hosts", "receipt"):
         parser.add_argument("--" + name, required=True)
     parser.add_argument("--user", default="agyn-admin")
-    parser.add_argument("--node", default="a2a-hz-01")
+    parser.add_argument("--node", required=True)
     parser.add_argument("--after-reboot", action="store_true")
     args = parser.parse_args()
     check = Check(args)

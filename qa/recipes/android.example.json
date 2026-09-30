@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "id": "android-instrumentation",
+  "platform": "android",
+  "timeoutMs": 1800000,
+  "environment": {"ANDROID_SDK_ROOT":"/opt/android-sdk", "ANDROID_AVD_HOME":"/workspace/.android/avd"},
+  "steps": [
+    {"id":"emulator-test", "command":["node","/opt/a2a/scripts/qa-android.mjs","qa-test-device","app/build/outputs/apk/debug/app-debug.apk","app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk","com.example.app.test/androidx.test.runner.AndroidJUnitRunner"], "timeoutMs":1800000}
+  ],
+  "evidence": []
+}

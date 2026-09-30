@@ -91,6 +91,13 @@
       "title": "Installation Evidence",
       "purpose": "Private installation-evidence policy and unchanged historical licensing scope.",
       "kind": "historical"
+    },
+    {
+      "id": "qa",
+      "path": "qa/README.md",
+      "title": "A2A QA Agent",
+      "purpose": "Opt-in QA environment prerequisites, application recipe adaptation and evidence acceptance limits.",
+      "kind": "operations"
     }
   ]
 }

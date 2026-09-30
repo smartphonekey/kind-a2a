@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "id": "playwright-web",
+  "platform": "web",
+  "timeoutMs": 900000,
+  "steps": [
+    {"id":"install", "command":["npm","ci","--ignore-scripts"], "timeoutMs":300000},
+    {"id":"build", "command":["npm","run","build"], "timeoutMs":300000},
+    {"id":"browser", "command":["./node_modules/.bin/playwright","test","--reporter=json"], "timeoutMs":300000}
+  ],
+  "evidence": []
+}

@@ -55,6 +55,7 @@ const config = schema.parse(JSON.parse(readFileSync(required("A2A_SERVICE_CONFIG
 if (!config.profiles.some(profile => profile.id === config.defaultProfile)) throw new Error("default profile is missing");
 if (!statSync(config.reportingSetupExecutable).isFile()) throw new Error("reporting setup executable is missing");
 const store = new DurableTaskStore(config.dbPath);
+store.assertNotQuarantined();
 const client = new AgynClient(required("AGYN_GATEWAY_URL"), required("AGYN_TOKEN"), required("AGYN_ORGANIZATION_ID"), required("AGYN_IDENTITY_ID"));
 const driver = new AgynRuntimeDriver(client, config.profiles, async (execution, signal) => {
   const token = store.issueReportingCredential(execution.id, config.turnTimeoutMs + 3_600_000);

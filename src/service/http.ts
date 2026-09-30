@@ -56,7 +56,7 @@ export function createServiceApp(options: HttpOptions) {
   // Reporting shares this listener: a drain must not remove it from Service endpoints.
   app.get("/admissionz", (_request, response) => {
     let open = false;
-    try { open = !options.signal.aborted && options.store.admissionControl().open && (options.ready?.() ?? true); }
+    try { open = !options.signal.aborted && !options.store.restoreQuarantined() && options.store.admissionControl().open && (options.ready?.() ?? true); }
     catch { /* Fail closed without exposing database errors or operator reasons. */ }
     response.status(open ? 200 : 503).json({ open });
   });

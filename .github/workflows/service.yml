@@ -27,4 +27,5 @@ jobs:
       - run: npm run docs:check
       - run: npm run test:code-map:go
       - run: node --test --test-concurrency=2 dist/*.test.js tooling/code-map/*.test.mjs
+      - run: node --test scripts/release-lock.test.mjs
       # Model-free checks only. No credentials, cluster access, deployment or provider calls.

@@ -36,7 +36,10 @@ host and explicit device access, with operator approval. Android AVDs must be
 private/disposable: the adapter wipes the selected AVD. Provision a writable
 per-workspace AVD directory and set ANDROID_AVD_HOME in the reviewed recipe;
 the runner gives commands a fresh HOME. Share neither AVD storage
-nor the adb server with another run. Review [command-line emulator options](https://developer.android.com/studio/run/emulator-commandline).
+nor the adb server with another run. The adapter reserves its host-local emulator
+port with an exclusive lock. A hard-killed run can leave that lock: fail closed
+until an operator verifies removal of the previous compute/emulator and clears
+the reservation. Never infer safe reuse from elapsed time alone. Review [command-line emulator options](https://developer.android.com/studio/run/emulator-commandline).
 iOS requires a separate macOS host with [Xcode and Simulator](https://developer.apple.com/xcode/system-requirements/).
 There is no iOS execution profile here yet; Linux returns blocked for iOS recipes.
 An iOS device/ad-hoc IPA is not a simulator build.

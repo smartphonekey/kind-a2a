@@ -75,4 +75,12 @@ test('Android adapter builds, boots, installs and checks instrumentation in a fa
  assert.equal((await run(t,config,cwd)).report.status,'failed');
  await adb("if(process.argv.includes('devices'))console.log('emulator-5554\\tdevice');");
  assert.equal((await run(t,config,cwd)).report.status,'failed');
+ // A serial acquired during the build must be rejected before spawning/installing.
+ await rm(join(cwd,'build-ran'));
+ await adb("const fs=require('fs');if(process.argv.includes('devices')&&fs.existsSync('build-ran'))console.log('emulator-5554\\tdevice');if(process.argv.includes('install'))fs.writeFileSync('unsafe-install','yes');");
+ assert.equal((await run(t,config,cwd)).report.status,'failed');
+ await assert.rejects(readFile(join(cwd,'unsafe-install')));
+ // Cooperating concurrent workers cannot both claim the same emulator port.
+ const lock=join(tmpdir(),'a2a-qa-android-port-5554.lock');await mkdir(lock);
+ try {assert.equal((await run(t,config,cwd)).report.status,'failed');} finally {await rm(lock,{recursive:true});}
 });

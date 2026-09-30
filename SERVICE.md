@@ -94,6 +94,37 @@ For the executable contract, follow the [installer](src/service/agyn-reporting-i
 to its [terminal delivery](src/service/agyn-terminal.ts) and
 [runtime configuration](src/reporting/agent-config.ts) owners.
 
+## Durable Admission Drain
+
+Before an upgrade, close admission using the local operator CLI. Inspect the
+current generation and supply it with a reason; stale decisions cannot reopen a
+newer drain. Keep reasons free of credentials and private task content.
+
+```sh
+node dist/service/admission-cli.js --db /absolute/private/service/tasks.sqlite --control
+node dist/service/admission-cli.js --db /absolute/private/service/tasks.sqlite --admission closed --expect-generation 0 --reason "Approved maintenance"
+```
+
+A drain persists across process restarts. Existing reservations continue toward
+release, including recovery after lease expiry; queued work cannot start, and
+new submissions are rejected while exact retries remain idempotent. Reporting,
+cancellation and reads remain available. `/admissionz` returns 503 while drained;
+`/readyz` stays healthy so Kubernetes does not disconnect the shared reporting
+listener. Do not use the admission probe as shared Pod readiness. Inspect the
+existing admission command until reservations reach
+zero before stopping workers. A failed or uncertain provider must still be
+reconciled; closing admission does not establish remote-workload fencing.
+
+After the operator verifies the upgrade and retained work, inspect the current
+generation again and explicitly reopen with `--admission open`, that generation,
+and a new reason. Never script an unconditional reopen in startup. Local audit
+rows are not tamper-proof against an operator with database write access.
+
+This is not a restore barrier: restored queued turns may already have executed
+after backup, and reserved work may still exist on the old node. Isolate the
+restored stack and fence/reconcile it before any worker starts, under the full
+[production recovery gate](PRODUCTION.md#3-replacement-node-backup-and-restore).
+
 ## Recovery And Operations
 
 - Inspect side effects and provider identity before reconciling an interrupted

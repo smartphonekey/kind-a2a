@@ -23,6 +23,7 @@ import { ExecutionWorker } from "./worker.js";
 import { createServiceApp } from "./http.js";
 import { fileAuthorizer } from "./auth.js";
 import { serviceCard } from "./card.js";
+import { closeHttpServer } from "./shutdown.js";
 import { requireSqliteWalFix } from "./sqlite-runtime.js";
 import { parseSetupFailure } from "./setup-diagnostics.js";
 import { cloudflareAccessAuthentication, cloudflareAccessSchema } from "./cloudflare-access.js";
@@ -37,6 +38,7 @@ const schema = z.object({
   defaultProfile: z.string().min(1).max(128),
   profiles: z.array(z.object({ id: z.string().min(1).max(128), agentId: z.string().uuid() }).strict()).min(1).max(100),
   concurrency: z.number().int().min(1).max(32).default(2),
+  httpShutdownGraceMs: z.number().int().min(100).max(60_000).default(5000),
   turnTimeoutMs: z.number().int().min(1000).max(43_200_000).default(600_000),
   browser: z.object({ origin: z.string().url(), assetsPath: pathSchema,
     cloudflareAccess: cloudflareAccessSchema.optional() }).strict().optional()
@@ -103,9 +105,9 @@ server.listen(config.port, config.host, () => {
 const shutdown = async () => {
   if (stopping.signal.aborted) return;
   stopping.abort();
-  server.closeAllConnections();
-  await new Promise<void>(resolve => server.close(() => resolve()));
-  await worker.stop();
+  // Stop local scheduling immediately, but allow accepted reporting requests to commit.
+  // The durable leases remain owned until expiry; HTTP drain is not provider fencing.
+  await Promise.all([closeHttpServer(server, config.httpShutdownGraceMs), worker.stop()]);
   store.close();
 };
 process.once("SIGTERM", () => { void shutdown(); });

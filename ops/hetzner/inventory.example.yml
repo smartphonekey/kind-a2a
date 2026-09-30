@@ -5,7 +5,7 @@ all:
   children:
     hetzner:
       hosts:
-        a2a-hz-01:
+        production-node:
           ansible_host: 192.0.2.10
       vars:
         ansible_user: root

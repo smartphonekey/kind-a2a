@@ -151,7 +151,7 @@ volume recovery and a host reboot before deploying agents. Hardware KVM access
 does not prove that an Android emulator can boot or that hostile APKs are isolated.
 
 Use the [disposable acceptance helper](ops/hetzner/acceptance.py) for the live
-checks. Read its `--help`, select the explicit host/key/known-hosts and private
+checks. Read its `--help`, select the explicit host/node/key/known-hosts and private
 receipt paths, then run `create`. It retains owned fixtures for an independently
 approved reboot; run `verify --after-reboot` before `cleanup` with the same
 receipt. Keep receipts private and retain failed runs rather than relabeling

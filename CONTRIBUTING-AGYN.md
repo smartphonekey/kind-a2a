@@ -15,8 +15,8 @@ The Agyn contributions are pushed to forks but remain outside those forks'
 
 Fork `main` branches are used as upstream-tracking bases. Do not merge every
 historical integration branch: many are alternatives, older bases or temporary
-acceptance combinations. Keep the installed revision/image inventory in
-[KUBERNETES.md](KUBERNETES.md#backend-revisions), not a second table here.
+acceptance combinations. Keep the installed revision/image inventory in private
+configuration, following [release pinning requirements](KUBERNETES.md#backend-revisions).
 A production release still needs a complete reproducible multi-repository
 manifest. Pushed, installed, merged and accepted upstream are distinct states.
 

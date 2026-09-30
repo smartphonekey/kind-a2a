@@ -5,7 +5,7 @@ This guide records the external prerequisites and trust decisions for using
 Agyn. The [adapter](src/service/agyn-driver.ts) owns its implementation contract.
 
 A stock Agyn installation alone is not compatible. Use the
-[installed inventory](KUBERNETES.md#backend-revisions), not a generic
+private installed inventory and [release requirements](KUBERNETES.md#backend-revisions), not a generic
 `agyn local upgrade`, to identify the tested combination. Fork/review boundaries
 are in [CONTRIBUTING-AGYN.md](CONTRIBUTING-AGYN.md).
 

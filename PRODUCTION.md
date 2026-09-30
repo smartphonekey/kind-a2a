@@ -22,10 +22,8 @@ for untrusted repositories.
 
 ## Baseline In Place
 
-Baseline results are historical evidence in the
-[September 25 readiness snapshot](docs/archive/2026-09-25/PRODUCTION.md),
-[acceptance record](docs/archive/2026-09-25/ACCEPTANCE.md) and
-[deployment record](docs/archive/2026-09-25/KUBERNETES.md).
+Baseline results are installation-specific evidence retained in private operator
+storage under the [archive policy](docs/archive/README.md).
 Their original failures, corrections and verification limits still apply.
 Neither those results nor the presence of an implementation closes the gates below.
 

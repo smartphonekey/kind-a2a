@@ -68,11 +68,9 @@ execution; do not claim an approval workflow without exercising it.
 
 ## Recorded Evidence
 
-The [archive](docs/archive/README.md) retains dated results and failed receipts.
-The [migration report](docs/archive/2026-09-25/AGYN-WORKSPACE-MIGRATION.md)
-covers the in-place backend upgrade and its Codex checks. The
-[Claude/transport report](docs/archive/2026-09-25/AGYN-CLAUDE-A2A.md) covers the
-separate Claude follow-up and app-only error fix.
+Installation-specific results and failed receipts belong in private operator
+storage under the [archive policy](docs/archive/README.md). Publish only
+credential-free, installation-neutral reproductions with a contribution.
 
 Those records keep their original scope. They are not a substitute for testing
 new source or image combinations, and their private evidence must not be

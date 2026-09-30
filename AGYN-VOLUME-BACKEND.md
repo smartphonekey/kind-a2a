@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 # Backend-Bound Volume Operations
 
-This milestone report is archived: [read the scoped evidence](docs/archive/2026-09-25/AGYN-VOLUME-BACKEND.md).
-For current operation, use [Kubernetes deployment](KUBERNETES.md);
-for remaining release work, use [production readiness](PRODUCTION.md).
+This installation-specific report is retained in private operator storage.
+See the [archive policy](docs/archive/README.md),
+[current deployment guidance](KUBERNETES.md) and [release gates](PRODUCTION.md).

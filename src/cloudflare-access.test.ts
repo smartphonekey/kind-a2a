@@ -10,12 +10,12 @@ import { createServiceApp } from "./service/http.js";
 import { serviceCard } from "./service/card.js";
 import { DurableTaskStore } from "./service/task-store.js";
 
-const config = { issuer: "https://test.cloudflareaccess.com", audience: "a".repeat(64), tenant: "spkey", emailDomains: ["spkey.co"] };
+const config = { issuer: "https://test.cloudflareaccess.com", audience: "a".repeat(64), tenant: "example", emailDomains: ["example.com"] };
 const keys = await generateKeyPair("RS256", { extractable: true });
 const key = createLocalJWKSet({ keys: [{ ...await exportJWK(keys.publicKey), kid: "fixture" }] });
 async function token(overrides: JWTPayload = {}) {
   const now = Math.floor(Date.now() / 1000);
-  return new SignJWT({ iss: config.issuer, aud: [config.audience], sub: "alice-id", email: "alice@spkey.co",
+  return new SignJWT({ iss: config.issuer, aud: [config.audience], sub: "alice-id", email: "alice@example.com",
     exp: now + 3600, iat: now, nbf: now, type: "app", ...overrides })
     .setProtectedHeader({ alg: "RS256", kid: "fixture" }).sign(keys.privateKey);
 }
@@ -25,11 +25,11 @@ test("Access: signed identities are private owners, never operator or service id
   const auth = cloudflareAccessAuthentication(config, key), jwt = await token();
   const alice = await auth.authenticate(headers(jwt));
   assert(alice);
-  assert.equal(alice.displayName, "alice@spkey.co");
-  assert.equal(alice.principal.tenant, "spkey");
+  assert.equal(alice.displayName, "alice@example.com");
+  assert.equal(alice.principal.tenant, "example");
   assert.equal(alice.principal.canReconcile, false);
   assert.match(alice.principal.subject, /^cf:[a-f0-9]{64}$/);
-  const renewed = await auth.authenticate(headers(await token({ email: "renamed@spkey.co" })));
+  const renewed = await auth.authenticate(headers(await token({ email: "renamed@example.com" })));
   assert.equal(renewed?.principal.subject, alice.principal.subject);
   const recreated = await auth.authenticate(headers(await token({ sub: "new-user-id" })));
   assert.notEqual(recreated?.principal.subject, alice.principal.subject);
@@ -42,12 +42,12 @@ test("Access: wrong audience/issuer, forged identity, expiry, service tokens and
   for (const claims of [
     { aud: ["b".repeat(64)] }, { iss: "https://other.cloudflareaccess.com" },
     { exp: now - 1 }, { nbf: now + 60 }, { iat: now + 60 }, { type: "org" },
-    { sub: "" }, { email: "alice@spkey.co.attacker.com" }, { email: "alice@evilspkey.co" },
-    { email: "alice@@spkey.co" }, { email: " alice@spkey.co" }, { email: undefined },
+    { sub: "" }, { email: "alice@example.com.attacker.com" }, { email: "alice@evilexample.com" },
+    { email: "alice@@example.com" }, { email: " alice@example.com" }, { email: undefined },
     { exp: undefined }, { iat: undefined }, { sub: undefined }, { type: undefined },
   ]) assert.equal(await auth.authenticate(headers(await token(claims))), undefined, JSON.stringify(claims));
   for (const value of [undefined, [await token()], "garbage", `${await token()}, ${await token()}`, "a".repeat(17000)]) {
-    assert.equal(await auth.authenticate({ "cf-access-jwt-assertion": value, "cf-access-authenticated-user-email": "alice@spkey.co" }), undefined);
+    assert.equal(await auth.authenticate({ "cf-access-jwt-assertion": value, "cf-access-authenticated-user-email": "alice@example.com" }), undefined);
   }
   const jwt = await token(), parts = jwt.split(".");
   parts[1] = Buffer.from(JSON.stringify({ ...JSON.parse(Buffer.from(parts[1], "base64url").toString()), sub: "admin" })).toString("base64url");
@@ -84,11 +84,11 @@ async function fixture(t: TestContext, maxStreamMs = 60_000) {
 }
 
 test("Access browser: no token fallback, exact origin, private task reads/writes/streams and no machine privileges", async t => {
-  const f = await fixture(t), alice = await token(), bob = await token({ sub: "bob-id", email: "bob@spkey.co" });
+  const f = await fixture(t), alice = await token(), bob = await token({ sub: "bob-id", email: "bob@example.com" });
   for (const path of ["/ui/", "/web-api/session", "/web-api/a2a/tasks"]) {
     assert.equal((await f.request(path)).status, 401);
     assert.equal((await f.request(path, undefined, { headers: { authorization: "Bearer operator", cookie: "aira_session=fake",
-      "cf-access-authenticated-user-email": "alice@spkey.co" } })).status, 401);
+      "cf-access-authenticated-user-email": "alice@example.com" } })).status, 401);
   }
   assert.equal((await f.request("/web-api/session", alice, { headers: { origin: "https://evil.test" } })).status, 403);
   assert.equal((await f.request("/web-api/login", alice, { method: "POST", body: "{}" })).status, 404);
@@ -106,7 +106,7 @@ test("Access browser: no token fallback, exact origin, private task reads/writes
   assert.equal(session.headers.get("set-cookie"), null);
   const identity = await session.json() as any;
   assert.equal(identity.authentication, "cloudflare-access");
-  assert.equal(identity.displayName, "alice@spkey.co");
+  assert.equal(identity.displayName, "alice@example.com");
   assert.equal(identity.canReconcile, undefined);
   const card = await (await f.request("/web-api/a2a/.well-known/agent-card.json", alice)).json() as any;
   assert.equal(card.securitySchemes.session.apiKeySecurityScheme.name, "CF_Authorization");

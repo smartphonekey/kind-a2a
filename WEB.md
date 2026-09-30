@@ -1,9 +1,9 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 # A2A Web Workspace
 
-For the public hostname `https://agents.spkey.co/ui/` and its pending production
-origin, use [Kubernetes access](KUBERNETES.md#access). The host instance below has separate
-state and credentials; it is not a replica or failover target.
+Actual browser origins and installation status belong in private operator
+configuration. See [Kubernetes access](KUBERNETES.md#access). A host instance has
+separate state and credentials; it is not a replica or failover target.
 
 ## Run
 
@@ -33,10 +33,8 @@ A2A_SERVICE_CONFIG_FILE=/absolute/private/service.json npm run start:web
 ```
 
 Open `http://127.0.0.1:8083/ui/` and sign in with an owner-scoped **A2A service
-access token**, not an Agyn, OpenAI or Anthropic token. The current workstation's
-private host files are `.state/a2a-web/service.json` and the mode-0600
-`.state/a2a-web/access-token`; its user unit is `aira-a2a-web.service`.
-These operator files stay outside Git. Restarting requires sign-in again, but
+access token**, not an Agyn, OpenAI or Anthropic token. Keep configuration and
+mode-0600 credential files outside Git. Restarting requires sign-in again, but
 must preserve task history. Do not restart active work merely to rebuild CSS.
 
 For frontend development, run `npm --prefix web run dev`, then reload the same
@@ -56,8 +54,8 @@ Keep browser and machine authentication separate. Do not persist service tokens
 in frontend storage or expose provider/subscription credentials through the UI.
 Maintain same-origin access; do not add a cross-origin proxy to bypass it.
 
-For the remote workspace, use Cloudflare Access with the existing Google IdP
-and only `@smartphonekey.com` accounts. The hostname is `agents.spkey.co`;
+For a remote workspace, use Cloudflare Access with the operator's selected
+Google IdP, explicit allowed domains and exact browser origin;
 see [deployment prerequisites](KUBERNETES.md#cloudflare-access). Do not distribute
 the local operator credential to browser users. The [identity adapter](src/service/cloudflare-access.ts)
 and [Tunnel definition](infra/cloudflare/main.tf) own the verification contract.

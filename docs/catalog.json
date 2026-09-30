@@ -26,7 +26,7 @@
       "id": "deployment",
       "path": "KUBERNETES.md",
       "title": "Kubernetes A2A Deployment",
-      "purpose": "Installed stack inventory, access, coordinated upgrades and backup/restore scope.",
+      "purpose": "Installation-neutral packaging, private configuration ownership, coordinated upgrades and recovery requirements.",
       "kind": "operations"
     },
     {
@@ -89,7 +89,7 @@
       "id": "archive",
       "path": "docs/archive/README.md",
       "title": "Documentation Archive",
-      "purpose": "Historical evidence index; follow selected reports only when needed, never as current operating instructions.",
+      "purpose": "Private installation-evidence policy and unchanged historical licensing scope.",
       "kind": "historical"
     }
   ]

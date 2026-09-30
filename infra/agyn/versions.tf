@@ -10,10 +10,7 @@ terraform {
 
   # Credentials come from KUBE_CONFIG_PATH or KUBE_IN_CLUSTER_CONFIG, never Git.
   # This is a separate state object; it does not adopt the application's PVC.
-  backend "kubernetes" {
-    namespace     = "aira-a2a"
-    secret_suffix = "agent-definitions"
-  }
+  backend "kubernetes" {}
 }
 
 provider "agyn" {
@@ -22,8 +19,7 @@ provider "agyn" {
 }
 
 variable "gateway_url" {
-  type    = string
-  default = "https://gateway.agyn.dev:2496"
+  type = string
   validation {
     condition     = can(regex("^https://[^/?#@]+(:[0-9]+)?/?$", var.gateway_url))
     error_message = "Use the authenticated HTTPS Gateway origin with certificate verification enabled."

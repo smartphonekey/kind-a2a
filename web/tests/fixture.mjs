@@ -13,7 +13,7 @@ const accessMode = process.env.A2A_FIXTURE_ACCESS === 'true';
 const port = accessMode ? 8095 : 8094;
 const origin = `http://127.0.0.1:${port}`;
 const accessConfig = { issuer: 'https://fixture.cloudflareaccess.com', audience: 'a'.repeat(64),
-  tenant: 'browser-test', emailDomains: ['smartphonekey.com'] };
+  tenant: 'browser-test', emailDomains: ['example.com'] };
 const keys = accessMode ? await generateKeyPair('RS256', { extractable: true }) : undefined;
 const authentication = keys ? { ...cloudflareAccessAuthentication(accessConfig,
   createLocalJWKSet({ keys: [{ ...await exportJWK(keys.publicKey), kid: 'fixture' }] })), maxStreamMs: 250 } : undefined;
@@ -105,7 +105,7 @@ const server = createServer(async (request, response) => {
       const user = url.searchParams.get('user') === 'bob' ? 'bob' : 'alice';
       const now = Math.floor(Date.now() / 1000);
       const jwt = await new SignJWT({ iss: accessConfig.issuer, aud: [accessConfig.audience], sub: user,
-        email: `${user}@smartphonekey.com`, type: 'app', exp: now + 3600, iat: now, nbf: now })
+        email: `${user}@example.com`, type: 'app', exp: now + 3600, iat: now, nbf: now })
         .setProtectedHeader({ alg: 'RS256', kid: 'fixture' }).sign(keys.privateKey);
       response.setHeader('set-cookie', `fixture_access=${jwt}; HttpOnly; SameSite=Lax; Path=/`);
       response.end('signed in'); return;

@@ -170,7 +170,7 @@ function main() {
 }
 
 function deploymentContext() {
-  if (!process.env.GITHUB_EVENT_PATH || !args["ci-config"]) throw new Error("Auto-apply requires a private --ci-config and the protected GitHub deployment workflow");
+  if (!process.env.GITHUB_EVENT_PATH || !args["ci-config"]) throw new Error("Auto-apply requires a private --ci-config and its declared GitHub deployment workflow");
   const event = json(process.env.GITHUB_EVENT_PATH);
   const expected = json(args["ci-config"]);
   assertAutoApplyContext(process.env, event, { head: process.env.GITHUB_SHA, remoteHead: process.env.GITHUB_SHA, dirty: false }, expected);

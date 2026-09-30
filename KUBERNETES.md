@@ -7,6 +7,23 @@ The [deployment evidence](docs/archive/README.md#deployment-evidence) establishe
 the inventory below, not current health. This is a **trusted-local deployment**,
 not a production release; release gates are in [PRODUCTION.md](PRODUCTION.md).
 
+## Cluster Roles
+
+The operator-designated environments are:
+
+- **Test:** Kubernetes on the local workstation, including the existing Agyn/A2A installation.
+- **Production:** Kubernetes on the Hetzner dedicated server.
+
+Validate changes locally before promoting them to Hetzner. Before any cluster
+write, select an explicit kubeconfig/context or pinned SSH target and verify
+the cluster identity; do not rely on the shell's current context. Keep test and
+production credentials, state and workspaces separate. Testing does not
+authorize deleting retained tasks or volumes.
+
+These roles do not move workloads, switch the UI's routing or complete the
+production release gates. The installed-app inventory below still describes the
+local test deployment until a separately verified migration changes it.
+
 ## Access
 
 Open **https://agents.spkey.co/ui/** and use Google sign-in with a

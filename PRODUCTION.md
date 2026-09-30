@@ -8,6 +8,9 @@ Historical milestones are in the [archive](docs/archive/README.md), not this che
 
 ## First Deployment Target
 
+Use the [designated production cluster](KUBERNETES.md#cluster-roles).
+Environment designation does not waive any release gate below.
+
 Single-node self-hosted Kubernetes with tested backup and restore. Multi-node HA
 is not required for this first release. Task isolation, durable workspaces,
 parallel work across tasks, serialized same-task turns and compute release

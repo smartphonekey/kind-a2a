@@ -1,8 +1,8 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
 # A2A Web Workspace
 
-For the installed app at `https://agents.spkey.co/ui/`, use
-[Kubernetes access](KUBERNETES.md#access). The host instance below has separate
+For the public hostname `https://agents.spkey.co/ui/` and its pending production
+origin, use [Kubernetes access](KUBERNETES.md#access). The host instance below has separate
 state and credentials; it is not a replica or failover target.
 
 ## Run

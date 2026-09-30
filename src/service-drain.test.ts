@@ -94,3 +94,28 @@ test("drain CLI: requires explicit generation/reason and cannot mix limit and co
   assert.equal(run("--admission", "open", "--expect-generation", "0", "--reason", "stale").status, 1);
   assert.equal(f.store.admissionControl().open, false);
 });
+
+test("drain: reporting and cancellation release reservations without activating queued work", async t => {
+  for (const canceled of [false, true]) {
+    await t.test(canceled ? "cancellation" : "reported outcome", t => {
+      const f = fixture(t);
+      const first = f.store.submit(scope, message(), "agent");
+      const lease = f.store.claim("worker", 60_000, 2)!.lease;
+      f.store.bind(lease, { instanceId: "instance", threadId: "thread", profileId: "agent" });
+      f.store.beginDispatch(lease);
+      f.store.dispatched(lease, "request");
+      const queued = f.store.submit(scope, message(), "agent");
+      f.store.changeAdmissionControl(0, false, "maintenance");
+      if (canceled) f.store.requestCancel(scope, first.task.id);
+      else f.store.report("instance", first.execution.id, { eventId: "done", kind: "outcome", outcome: "turn_done", message: "done" });
+      f.store.releasing(lease);
+      assert.throws(() => f.store.settle(lease, { stopped: false }));
+      assert.equal(f.store.admission().reserved, 1);
+      f.store.settle(lease, { stopped: true });
+      assert.equal(f.store.admission().reserved, 0);
+      assert.equal(f.store.claim("next", 60_000, 2), undefined);
+      assert.equal(f.store.execution(queued.execution.id)?.phase, "queued");
+      assert.equal(f.store.admissionControl().open, false);
+    });
+  }
+});

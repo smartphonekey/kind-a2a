@@ -39,6 +39,9 @@ The skill owns the workflow; CLI help and MCP schemas own their argument syntax.
 
 ## Operational Scope
 
+Follow the [cluster roles and targeting rules](KUBERNETES.md#cluster-roles)
+before deployment or Kubernetes operations.
+
 Use [ACCEPTANCE.md](ACCEPTANCE.md) for verification. For comment-only work, also
 check code-token/directive equivalence, unchanged migration bytes and affected
 Markdown links. Report actual results and skipped or failed checks.

@@ -26,6 +26,7 @@ const json = file => JSON.parse(readFileSync(file, "utf8"));
 const options = parseArgs({ allowPositionals: true, options: {
   profile: { type: "string" }, "allow-create": { type: "boolean", default: false },
   plan: { type: "string" }, approve: { type: "string" },
+  vars: { type: "string" }, backend: { type: "string" }, "ci-config": { type: "string" },
   config: { type: "string" }, out: { type: "string" }, help: { type: "boolean" },
 } });
 const [command] = options.positionals;
@@ -41,7 +42,9 @@ const usage = `Usage: node scripts/agyn-terraform.mjs <command> [options]
                                 Generate a candidate A2A config from managed profiles
 Requires agents:provider first. Manual live commands require KUBE_CONFIG_PATH or
 KUBE_IN_CLUSTER_CONFIG=true; token via AGYN_API_TOKEN or an explicit --profile.
-CI deploy uses its protected environment's dedicated tokens, HTTPS origins and CAs.
+All live commands require --vars PRIVATE_JSON and --backend PRIVATE_HCL.
+CI deploy also requires --ci-config FILE from the private configuration checkout,
+GH_TOKEN for a read-only branch check, and dedicated deployment credentials.
 Custom Gateway CAs use SSL_CERT_FILE. No TLS verification bypass is supported.`;
 
 if (args.help || !command) {
@@ -59,9 +62,17 @@ function main() {
     check: [], deploy: [], plan: ["profile", "allow-create"],
     apply: ["profile", "plan", "approve", "allow-create"], render: ["config", "out"],
   }[command];
+  if (command !== "check") allowed.push("vars", "backend");
+  if (command === "deploy") allowed.push("ci-config");
   for (const [key, value] of Object.entries(args)) {
     if (value && !allowed.includes(key)) throw new Error(`Unexpected --${key} for ${command}`);
   }
+  if (command !== "check" && (!args.vars || !args.backend)) throw new Error("Live commands require explicit --vars and --backend files from private configuration");
+  if (args.vars) args.vars = path.resolve(args.vars);
+  if (args.backend) args.backend = path.resolve(args.backend);
+  if (args["ci-config"]) args["ci-config"] = path.resolve(args["ci-config"]);
+  const variables = args.vars ? json(args.vars) : {};
+  if (args.backend) readFileSync(args.backend);
   const deployment = command === "deploy" ? deploymentContext() : undefined;
   const allowCreate = command === "deploy" || args["allow-create"];
   process.umask(0o077);
@@ -74,7 +85,8 @@ function main() {
   dev_overrides { "agynio/agyn" = ${JSON.stringify(path.dirname(receipt.binary))} }
   direct {}
 }\n`, { mode: 0o600 });
-  const env = command === "deploy" ? autoApplyEnvironment(process.env) : { ...process.env };
+  const supplied = { ...process.env, ...(args.vars ? { TF_VAR_gateway_url: variables.gateway_url } : {}) };
+  const env = command === "deploy" ? autoApplyEnvironment(supplied) : supplied;
   // Hidden CLI arguments/logging could change the reviewed action or expose data.
   for (const key of Object.keys(env)) if (key.startsWith("TF_") && key !== "TF_VAR_gateway_url") delete env[key];
   Object.assign(env, { TF_CLI_CONFIG_FILE: cliConfig, TF_INPUT: "0", TF_IN_AUTOMATION: "1", TF_WORKSPACE: "default" });
@@ -107,7 +119,8 @@ function main() {
   }
   if (!deployment && !env.KUBE_CONFIG_PATH && env.KUBE_IN_CLUSTER_CONFIG !== "true") throw new Error("Select an explicit Kubernetes backend with KUBE_CONFIG_PATH or KUBE_IN_CLUSTER_CONFIG=true");
   if (env.KUBE_CONFIG_PATH) env.KUBE_CONFIG_PATH = path.resolve(env.KUBE_CONFIG_PATH);
-  env.TF_DATA_DIR = path.join(state, "live-data");
+  // Distinct input locations must not reuse another installation's backend cache.
+  env.TF_DATA_DIR = path.join(state, `live-${digest(JSON.stringify([args.vars, args.backend])).slice(0, 16)}`);
   if (command === "plan" || command === "apply" || deployment) {
     if (args.profile) {
       try {
@@ -128,7 +141,7 @@ function main() {
       throw new Error("Plan, source, provider, target or approval changed; create and review a new plan");
     }
   }
-  tf(directory, ["init", "-input=false", "-no-color", "-reconfigure"]);
+  tf(directory, ["init", "-input=false", "-no-color", "-reconfigure", `-backend-config=${args.backend}`]);
   if (command === "render") {
     if (!args.config || !args.out || path.resolve(args.config) === path.resolve(args.out)) throw new Error("Render requires --config and a different, new --out file");
     const profiles = terraformProfiles(JSON.parse(tf(directory, ["output", "-json"])));
@@ -138,7 +151,7 @@ function main() {
     return;
   }
   if (command === "plan" || deployment) {
-    tf(directory, ["plan", "-input=false", "-no-color", "-lock-timeout=60s", "-detailed-exitcode", `-out=${savedPlan}`], [0, 2]);
+    tf(directory, ["plan", "-input=false", "-no-color", "-lock-timeout=60s", `-var-file=${args.vars}`, "-detailed-exitcode", `-out=${savedPlan}`], [0, 2]);
   }
   const plan = JSON.parse(tf(directory, ["show", "-json", savedPlan]));
   const review = reviewAgentPlan(plan, { allowCreate });
@@ -157,16 +170,18 @@ function main() {
 }
 
 function deploymentContext() {
-  if (!process.env.GITHUB_EVENT_PATH) throw new Error("Auto-apply is only available in the protected GitHub deployment workflow");
+  if (!process.env.GITHUB_EVENT_PATH || !args["ci-config"]) throw new Error("Auto-apply requires a private --ci-config and the protected GitHub deployment workflow");
   const event = json(process.env.GITHUB_EVENT_PATH);
-  assertAutoApplyContext(process.env, event, { head: process.env.GITHUB_SHA, remoteHead: process.env.GITHUB_SHA, dirty: false });
-  const git = argv => execFileSync("git", argv, { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
-  const remote = git(["ls-remote", "--exit-code", "https://github.com/smartphonekey/kind-a2a.git", "refs/heads/main"]);
+  const expected = json(args["ci-config"]);
+  assertAutoApplyContext(process.env, event, { head: process.env.GITHUB_SHA, remoteHead: process.env.GITHUB_SHA, dirty: false }, expected);
+  const git = argv => execFileSync("git", argv, { cwd: path.dirname(args["ci-config"]), encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
+  const remote = execFileSync("gh", ["api", `repos/${expected.repository}/git/ref/heads/${expected.branch}`, "--jq", ".object.sha"],
+    { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
   return assertAutoApplyContext(process.env, event, {
     head: git(["rev-parse", "HEAD"]),
-    remoteHead: /^([0-9a-f]{40})\trefs\/heads\/main$/.exec(remote)?.[1],
+    remoteHead: remote,
     dirty: git(["status", "--porcelain", "--untracked-files=normal"]) !== "",
-  });
+  }, expected);
 }
 
 // Detect edits between review and apply, including ignored tfvars and external
@@ -188,6 +203,9 @@ function sourceDigest(env, receipt) {
     entries.push([name, digest(readFileSync(path.join(root, "scripts", name)))]);
   }
   entries.push(["provider", receipt.binarySha256]);
+  for (const key of ["vars", "backend", "ci-config"]) {
+    if (args[key]) entries.push([key, args[key], digest(readFileSync(args[key]))]);
+  }
   for (const key of Object.keys(env).filter(key => key.startsWith("KUBE_") || key === "TF_VAR_gateway_url" || key === "SSL_CERT_FILE").sort()) {
     entries.push([key, env[key]]);
   }

@@ -18,36 +18,33 @@ test("agent-definition validation reports on every pull request without deployme
   assert.equal(validate.environment, undefined);
 });
 
-test("agent-definition deployment remains opt-in and limited to matching main pushes", () => {
+test("public CI has no live deployment job or environment", () => {
   assert.deepEqual(workflow.on.push, {
     branches: ["main"],
     paths: ["infra/**", "scripts/agyn-terraform*", "package*.json", ".nvmrc", ".github/workflows/agyn-agents.yml"],
   });
-  const apply = workflow.jobs.apply;
-  assert.equal(apply.if, "github.repository == 'smartphonekey/kind-a2a' && " +
-    "github.event_name == 'push' && github.ref == 'refs/heads/main' && " +
-    "vars.AGYN_AUTO_APPLY_ENABLED == 'true'");
-  assert.equal(apply.needs, "validate");
-  assert.equal(apply.environment, "agyn-agents");
-  assert.equal(apply["runs-on"].group, "agyn-deploy");
+  assert.deepEqual(Object.keys(workflow.jobs), ["validate"]);
+  assert.equal(workflow.jobs.apply, undefined);
+  assert.doesNotMatch(JSON.stringify(workflow), /secrets\.|self-hosted|agents:deploy/);
 });
 
 const sha = "a".repeat(40);
+const expected = { repository: "example/infra", branch: "main", workflow: ".github/workflows/agyn-agents.yml" };
 const context = () => ({
   env: {
     GITHUB_ACTIONS: "true", GITHUB_EVENT_NAME: "push", GITHUB_REF: "refs/heads/main",
-    GITHUB_REF_PROTECTED: "true", GITHUB_REPOSITORY: "smartphonekey/kind-a2a", GITHUB_SHA: sha,
-    GITHUB_WORKFLOW_REF: "smartphonekey/kind-a2a/.github/workflows/agyn-agents.yml@refs/heads/main",
+    GITHUB_REF_PROTECTED: "true", GITHUB_REPOSITORY: "example/infra", GITHUB_SHA: sha,
+    GITHUB_WORKFLOW_REF: "example/infra/.github/workflows/agyn-agents.yml@refs/heads/main",
     GITHUB_RUN_ID: "42", AGYN_AUTO_APPLY_ENABLED: "true",
   },
-  event: { ref: "refs/heads/main", after: sha, repository: { full_name: "smartphonekey/kind-a2a" }, deleted: false, forced: false },
+  event: { ref: "refs/heads/main", after: sha, repository: { full_name: "example/infra" }, deleted: false, forced: false },
   checkout: { head: sha, remoteHead: sha, dirty: false },
 });
 
 test("auto-apply accepts the current protected main push, recording provenance", () => {
   const c = context();
-  assert.deepEqual(assertAutoApplyContext(c.env, c.event, c.checkout), {
-    revision: sha, run: "https://github.com/smartphonekey/kind-a2a/actions/runs/42",
+  assert.deepEqual(assertAutoApplyContext(c.env, c.event, c.checkout, expected), {
+    revision: sha, run: "https://github.com/example/infra/actions/runs/42",
   });
 });
 
@@ -74,9 +71,16 @@ for (const [name, change] of [
 ]) {
   test(`auto-apply rejects ${name}`, () => {
     const c = context(); change(c);
-    assert.throws(() => assertAutoApplyContext(c.env, c.event, c.checkout));
+    assert.throws(() => assertAutoApplyContext(c.env, c.event, c.checkout, expected));
   });
 }
+
+test("automatic deployment has no implicit repository authority", () => {
+  const c = context();
+  for (const invalid of [undefined, {}, { ...expected, repository: "../infra" }, { ...expected, branch: "main/../other" }, { ...expected, workflow: "elsewhere.yml" }]) {
+    assert.throws(() => assertAutoApplyContext(c.env, c.event, c.checkout, invalid));
+  }
+});
 
 const credentials = () => ({
   KUBE_HOST: "https://cluster.example.test", KUBE_TOKEN: "scoped-test-token", AGYN_API_TOKEN: "agyn-test-token",

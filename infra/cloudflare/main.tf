@@ -8,47 +8,47 @@ terraform {
     }
   }
   # Bootstrap state is private and separate from Agyn's agent-definition state.
-  backend "local" {
-    path = "../../.state/cloudflare-access/terraform.tfstate"
-  }
+  backend "local" {}
 }
 
 provider "cloudflare" {} # CLOUDFLARE_API_TOKEN is injected, never committed.
 
 variable "account_id" {
-  type    = string
-  default = "bde62145dece065be00562f51e0f20d2"
+  type = string
 }
 variable "zone_id" {
-  type    = string
-  default = "941dc8cc573be8b605f5989e9841dd45"
+  type = string
 }
 variable "hostname" {
-  type    = string
-  default = "agents.spkey.co"
+  type = string
   validation {
     condition     = can(regex("^[a-z0-9][a-z0-9.-]*\\.[a-z]{2,}$", var.hostname))
     error_message = "Use an exact DNS hostname, not a wildcard or path."
   }
 }
 variable "team_name" {
-  type    = string
-  default = "spkey"
+  type = string
   validation {
     condition     = can(regex("^[a-z0-9]+(?:-[a-z0-9]+)*$", var.team_name))
     error_message = "Use the existing Cloudflare Access team name."
   }
 }
 variable "google_idp_id" {
-  type    = string
-  default = "035befdf-182f-40df-8d86-a2b9a93eb918"
+  type = string
 }
 variable "email_domains" {
-  type    = set(string)
-  default = ["smartphonekey.com"]
+  type = set(string)
   validation {
     condition     = length(var.email_domains) > 0 && alltrue([for domain in var.email_domains : can(regex("^[a-z0-9]+(?:[.-][a-z0-9]+)*\\.[a-z]{2,}$", domain))])
     error_message = "Specify the approved Google email domains explicitly."
+  }
+}
+
+variable "tenant" {
+  type = string
+  validation {
+    condition     = can(regex("^[A-Za-z0-9_-]{1,128}$", var.tenant))
+    error_message = "Use the existing A2A tenant identity; changing it does not migrate task owners."
   }
 }
 
@@ -132,7 +132,7 @@ output "browser" {
     cloudflareAccess = {
       issuer       = "https://${var.team_name}.cloudflareaccess.com"
       audience     = cloudflare_zero_trust_access_application.ui.aud
-      tenant       = "spkey"
+      tenant       = var.tenant
       emailDomains = sort(tolist(var.email_domains))
     }
   }

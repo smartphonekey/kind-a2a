@@ -5,20 +5,25 @@
  * @remarks Environment variables are not authentication. GitHub's protected
  * environment and workflow-restricted, single-job runner enforce that boundary.
  * @see scripts/agyn-terraform.mjs
- * @see .github/workflows/agyn-agents.yml
+ * @remarks The private configuration repository owns the expected deployment
+ * identity. Public CI validates code only and has no deployment credentials.
  */
-const repository = "smartphonekey/kind-a2a";
-const ref = "refs/heads/main";
-const workflow = `${repository}/.github/workflows/agyn-agents.yml@${ref}`;
-
 /** Merge approval replaces the separate plan approval, never the plan policy. */
-export function assertAutoApplyContext(env, event, { head, remoteHead, dirty }) {
+export function assertAutoApplyContext(env, event, { head, remoteHead, dirty }, expected) {
+  const { repository, branch, workflow: workflowPath } = expected ?? {};
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository ?? "") ||
+      !/^[A-Za-z0-9_-]+$/.test(branch ?? "") ||
+      !/^\.github\/workflows\/[A-Za-z0-9_-]+\.ya?ml$/.test(workflowPath ?? "")) {
+    throw new Error("An explicit configuration repository, protected branch and workflow are required");
+  }
+  const ref = `refs/heads/${branch}`;
+  const workflow = `${repository}/${workflowPath}@${ref}`;
   if (env.GITHUB_ACTIONS !== "true" || env.GITHUB_EVENT_NAME !== "push" ||
       env.GITHUB_REPOSITORY !== repository || env.GITHUB_REF !== ref ||
       env.GITHUB_REF_PROTECTED !== "true" || env.GITHUB_WORKFLOW_REF !== workflow ||
       env.AGYN_AUTO_APPLY_ENABLED !== "true" || !/^[0-9a-f]{40}$/.test(env.GITHUB_SHA ?? "") ||
       !/^[1-9][0-9]*$/.test(env.GITHUB_RUN_ID ?? "")) {
-    throw new Error("Auto-apply requires the enabled main-push deployment workflow on protected main");
+    throw new Error("Auto-apply requires the enabled deployment workflow on its protected branch");
   }
   if (event?.repository?.full_name !== repository || event.ref !== ref ||
       event.after !== env.GITHUB_SHA || event.deleted !== false || event.forced !== false) {

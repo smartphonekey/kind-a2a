@@ -2,7 +2,13 @@
 mock_provider "cloudflare" {}
 
 variables {
-  email_domains = ["smartphonekey.com"]
+  account_id    = "11111111111111111111111111111111"
+  zone_id       = "22222222222222222222222222222222"
+  hostname      = "agents.example.com"
+  team_name     = "example"
+  google_idp_id = "11111111-1111-4111-8111-111111111111"
+  tenant        = "example"
+  email_domains = ["example.com"]
 }
 
 override_resource {
@@ -42,6 +48,6 @@ run "reject_empty_membership" {
 
 run "reject_wildcard_hostname" {
   command = plan
-  variables { hostname = "*.spkey.co" }
+  variables { hostname = "*.example.com" }
   expect_failures = [var.hostname]
 }

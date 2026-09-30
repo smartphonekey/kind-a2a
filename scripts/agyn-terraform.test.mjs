@@ -31,6 +31,9 @@ function fixture(t, { ci = false, actions = ["no-op"], advanceMain = false, fail
   writeFileSync(path.join(dir, "infra/agyn/provider-source.json"), "{}");
   writeFileSync(path.join(dir, "infra/agyn/agents.tf"), "# test definitions\n");
   writeFileSync(path.join(dir, "kubeconfig"), "explicit test target");
+  writeFileSync(path.join(dir, "inputs.json"), JSON.stringify({ gateway_url: "https://gateway.example.test" }));
+  writeFileSync(path.join(dir, "backend.hcl"), 'namespace = "fixture"\nsecret_suffix = "agents"\n');
+  writeFileSync(path.join(dir, "ci.json"), JSON.stringify({ repository: "example/infra", branch: "main", workflow: ".github/workflows/agyn-agents.yml" }));
   writeFileSync(path.join(dir, ".state/agyn-terraform/provider.json"), JSON.stringify({ sourceSha256: hash("{}"), binary, binarySha256: hash("test binary") }));
   const planValue = structuredClone(fixturePlan);
   planValue.resource_changes[0].change.actions = actions;
@@ -39,12 +42,16 @@ function fixture(t, { ci = false, actions = ["no-op"], advanceMain = false, fail
     delete planValue.resource_changes[0].change.importing;
     planValue.resource_changes[0].change.after.environment_id = identity;
   }
-  writeFileSync(path.join(dir, "event.json"), JSON.stringify({ ref: "refs/heads/main", after: "a".repeat(40), repository: { full_name: "smartphonekey/kind-a2a" }, deleted: false, forced: false }));
+  writeFileSync(path.join(dir, "event.json"), JSON.stringify({ ref: "refs/heads/main", after: "a".repeat(40), repository: { full_name: "example/infra" }, deleted: false, forced: false }));
   writeFileSync(path.join(dir, "bin/git"), `#!${process.execPath}
 const fs = require('node:fs');
 const command = process.argv[2];
 if (command === 'rev-parse') console.log('a'.repeat(40));
 if (command === 'ls-remote') console.log((fs.existsSync(process.env.FIXTURE_DIR + '/advanced') ? 'b' : 'a').repeat(40) + '\\trefs/heads/main');
+`, { mode: 0o700 });
+  writeFileSync(path.join(dir, "bin/gh"), `#!${process.execPath}
+const fs = require('node:fs');
+console.log((fs.existsSync(process.env.FIXTURE_DIR + '/advanced') ? 'b' : 'a').repeat(40));
 `, { mode: 0o700 });
   // The fake CLI records only invocations; it never starts a provider or cluster.
   writeFileSync(path.join(dir, "bin/terraform"), `#!${process.execPath}
@@ -63,14 +70,16 @@ if (command === 'apply') {
   if (${failApply}) process.exit(1);
 }
 `, { mode: 0o700 });
-  const run = (...args) => spawnSync(process.execPath, [path.join(dir, "scripts/agyn-terraform.mjs"), ...args], {
+  const run = (...args) => spawnSync(process.execPath, [path.join(dir, "scripts/agyn-terraform.mjs"), ...args,
+    "--vars", path.join(dir, "inputs.json"), "--backend", path.join(dir, "backend.hcl"),
+    ...(args[0] === "deploy" ? ["--ci-config", path.join(dir, "ci.json")] : [])], {
     cwd: dir, encoding: "utf8", env: {
       ...process.env, PATH: `${path.join(dir, "bin")}:${process.env.PATH}`, FIXTURE_DIR: dir,
       KUBE_CONFIG_PATH: path.join(dir, "kubeconfig"), AGYN_API_TOKEN: "fixture-secret-do-not-log",
       ...(ci ? {
         GITHUB_ACTIONS: "true", GITHUB_EVENT_NAME: "push", GITHUB_REF: "refs/heads/main", GITHUB_REF_PROTECTED: "true",
-        GITHUB_REPOSITORY: "smartphonekey/kind-a2a", GITHUB_SHA: "a".repeat(40), GITHUB_RUN_ID: "42",
-        GITHUB_WORKFLOW_REF: "smartphonekey/kind-a2a/.github/workflows/agyn-agents.yml@refs/heads/main",
+        GITHUB_REPOSITORY: "example/infra", GITHUB_SHA: "a".repeat(40), GITHUB_RUN_ID: "42",
+        GITHUB_WORKFLOW_REF: "example/infra/.github/workflows/agyn-agents.yml@refs/heads/main",
         GITHUB_EVENT_PATH: path.join(dir, "event.json"), AGYN_AUTO_APPLY_ENABLED: "true",
         KUBE_HOST: "https://cluster.example.test", KUBE_TOKEN: "fixture-kube-token",
         KUBE_CLUSTER_CA_CERT_DATA: "-----BEGIN CERTIFICATE-----\ntest", AGYN_GATEWAY_CA_PEM: "-----BEGIN CERTIFICATE-----\ntest",
@@ -96,6 +105,8 @@ test("CI deploy plans and applies a versioned create without separate human appr
   assert.equal(receipt.deployment.revision, "a".repeat(40));
   const calls = readFileSync(path.join(f.dir, "calls"), "utf8").trim().split("\n").map(JSON.parse);
   assert.deepEqual(calls.map(args => args[1]), ["init", "plan", "show", "apply"]);
+  assert.ok(calls[0].includes(`-backend-config=${path.join(f.dir, "backend.hcl")}`));
+  assert.ok(calls[1].includes(`-var-file=${path.join(f.dir, "inputs.json")}`));
   assert.equal(calls[1].find(arg => arg.startsWith("-out=")).slice(5), calls[3].at(-1));
   assert.doesNotMatch(result.stdout + result.stderr, /fixture-secret|fixture-kube-token/);
 });
@@ -127,6 +138,14 @@ test("local invocation cannot use the CI automatic approval path", t => {
   assert.equal(existsSync(path.join(f.dir, "calls")), false);
 });
 
+test("live commands refuse an implicit installation before starting Terraform", t => {
+  const f = fixture(t);
+  const result = spawnSync(process.execPath, [path.join(f.dir, "scripts/agyn-terraform.mjs"), "plan"], { encoding: "utf8" });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /explicit --vars and --backend/);
+  assert.equal(existsSync(path.join(f.dir, "calls")), false);
+});
+
 test("apply requires the exact reviewed plan and writes private evidence", t => {
   const f = fixture(t);
   const p = f.plan();
@@ -144,6 +163,8 @@ for (const [name, mutate] of [
   ["source", f => appendFileSync(path.join(f.dir, "infra/agyn/agents.tf"), "# changed\n")],
   ["backend", f => appendFileSync(path.join(f.dir, "kubeconfig"), " changed")],
   ["provider", f => appendFileSync(path.join(f.dir, "provider"), " changed")],
+  ["private variables", f => appendFileSync(path.join(f.dir, "inputs.json"), " ")],
+  ["private backend", f => appendFileSync(path.join(f.dir, "backend.hcl"), "# changed\n")],
 ]) {
   test(`changed ${name} prevents apply`, t => {
     const f = fixture(t);

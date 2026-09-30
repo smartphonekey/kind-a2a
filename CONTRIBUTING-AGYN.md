@@ -68,7 +68,7 @@ These are review candidates, not the full runnable release. The Codex fix belong
 around daemon state handling, not a bundle of A2A changes to
 `agyn-runtime-codex`. Independent fixes, diagnostics, dependency graphs and test
 commands are preserved in the
-[archived contribution catalog](docs/archive/2026-09-25/CONTRIBUTING-AGYN.md).
+private contribution evidence; see the [archive policy](docs/archive/README.md).
 
 ## Submission Workflow
 

@@ -4,7 +4,7 @@ import test from 'node:test';
 import { cloudflareManifests, cloudflareCidrs } from './cloudflare-manifests.mjs';
 import { asKubernetesClientObject } from './k8s-manifests.mjs';
 
-const production = { environment: 'production', nodeName: 'a2a-hz-01' };
+const production = { environment: 'production', nodeName: 'production-node' };
 
 test('Tunnel manifests: isolated connectors, no host/platform credentials, explicit image and bounded resources', () => {
   const objects = cloudflareManifests(production);
@@ -14,7 +14,7 @@ test('Tunnel manifests: isolated connectors, no host/platform credentials, expli
   assert.equal(deployment.metadata.namespace, 'aira-a2a-edge');
   assert.equal(deployment.spec.replicas, 2);
   const spec = deployment.spec.template.spec, container = spec.containers[0];
-  assert.deepEqual(spec.nodeSelector, { 'kubernetes.io/hostname': 'a2a-hz-01' });
+  assert.deepEqual(spec.nodeSelector, { 'kubernetes.io/hostname': 'production-node' });
   assert.equal(objects.find(x => x.kind === 'Namespace').metadata.labels['pod-security.kubernetes.io/enforce-version'], 'v1.35');
   assert.equal(spec.automountServiceAccountToken, false);
   assert.equal(spec.securityContext.seccompProfile.type, 'RuntimeDefault');

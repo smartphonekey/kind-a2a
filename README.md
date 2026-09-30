@@ -5,12 +5,13 @@ An Agyn-backed A2A execution service with an assistant-ui web workspace.
 
 **Status: trusted local lab, not production-ready.** See
 [production readiness](PRODUCTION.md) for release criteria,
-[deployment](KUBERNETES.md) for the installed revisions and
+[deployment](KUBERNETES.md) for packaging and ownership rules, and
 [verification and acceptance](ACCEPTANCE.md) for procedures and evidence limits.
 
-## Use The Installed App
+## Deploy And Operate
 
-Use [Kubernetes access](KUBERNETES.md#access) for the installed app. A
+Actual installation values belong in private configuration. Follow
+[Kubernetes prerequisites](KUBERNETES.md#access). A
 [host installation](WEB.md) is separate, not a second replica of that service.
 
 ## Architecture
@@ -48,12 +49,12 @@ For a separately configured host installation, follow [WEB.md](WEB.md).
 ## Source And Release Status
 
 See [contribution status](CONTRIBUTING-AGYN.md#repository-status) for review branches
-and the [deployment inventory](KUBERNETES.md#backend-revisions) for the tested stack.
-Checking out only `main` in every repository will not reproduce that installation.
+and [release pinning requirements](KUBERNETES.md#backend-revisions).
+Checking out only `main` in every repository is not a reproducible release.
 
 The earlier kind/ACP and lightweight Agyn adapters remain in source for
 comparison. They are not the current durable service and their commands are
 not deployment or rollback instructions for it.
 
-Milestone reports, failed attempts and legacy instructions are retained in the
-[documentation archive](docs/archive/README.md), outside the current runbooks.
+Installation evidence belongs in private operator storage; see the
+[archive policy](docs/archive/README.md).

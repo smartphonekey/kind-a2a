@@ -152,6 +152,10 @@ export class DurableTaskStore {
         WHEN OLD.phase='queued' AND NEW.phase NOT IN ('queued','settled','uncertain')
           AND (SELECT open FROM admission_control WHERE id=1)=0
         BEGIN SELECT RAISE(ABORT, 'execution admission is closed'); END;
+      CREATE TRIGGER IF NOT EXISTS execution_admission_new_execution
+        BEFORE INSERT ON task_executions
+        WHEN (SELECT open FROM admission_control WHERE id=1)=0
+        BEGIN SELECT RAISE(ABORT, 'execution admission is closed'); END;
       CREATE TRIGGER IF NOT EXISTS execution_admission_capacity
         BEFORE UPDATE OF phase ON task_executions
         WHEN OLD.phase='queued' AND NEW.phase NOT IN ('queued','settled','uncertain')
@@ -359,12 +363,13 @@ export class DurableTaskStore {
       throw new TaskStoreError("invalid", "snapshot digest and bounded quarantine reason required");
     }
     this.transaction(() => {
-      this.db.prepare("INSERT INTO restore_quarantine VALUES(1,?,?,?)").run(snapshotSha256, reason.trim(), this.clock());
+      const at = this.clock();
+      this.db.prepare("INSERT INTO restore_quarantine VALUES(1,?,?,?)").run(snapshotSha256, reason.trim(), at);
       const generation = this.admissionControl().generation + 1;
       this.db.prepare("UPDATE admission_control SET generation=?,open=0,reason=?,changed_at=? WHERE id=1")
-        .run(generation, "Offline restored copy; reconciliation required", this.clock());
+        .run(generation, "Offline restored copy; reconciliation required", at);
       this.db.prepare("INSERT INTO admission_control_audit VALUES(?,0,?,?)")
-        .run(generation, "Offline restored copy; reconciliation required", this.clock());
+        .run(generation, "Offline restored copy; reconciliation required", at);
     });
   }
 

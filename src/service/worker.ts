@@ -43,6 +43,7 @@ export class ExecutionWorker {
       if (!Number.isSafeInteger(value) || value < 1) throw new Error("worker limits must be positive integers");
     }
     if (options.leaseMs < options.pollMs * 3) throw new Error("lease must allow at least three poll intervals");
+    this.store.assertNotQuarantined();
     this.workerId = options.workerId ?? randomUUID();
     this.store.configureAdmission(options.concurrency);
   }

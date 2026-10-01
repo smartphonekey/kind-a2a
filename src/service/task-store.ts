@@ -131,6 +131,13 @@ export class DurableTaskStore {
       CREATE TABLE IF NOT EXISTS execution_admission (
         id INTEGER PRIMARY KEY CHECK(id=1), max_active INTEGER NOT NULL CHECK(max_active>0)
       );
+      CREATE TABLE IF NOT EXISTS restore_quarantine (
+        id INTEGER PRIMARY KEY CHECK(id=1), snapshot_sha256 TEXT NOT NULL, reason TEXT NOT NULL, created_at INTEGER NOT NULL
+      );
+      CREATE TRIGGER IF NOT EXISTS restore_quarantine_claims
+        BEFORE UPDATE OF worker_id,generation ON task_executions
+        WHEN EXISTS(SELECT 1 FROM restore_quarantine WHERE id=1)
+        BEGIN SELECT RAISE(ABORT, 'restored database is quarantined'); END;
       CREATE TABLE IF NOT EXISTS admission_control (
         id INTEGER PRIMARY KEY CHECK(id=1), generation INTEGER NOT NULL,
         open INTEGER NOT NULL CHECK(open IN (0,1)), reason TEXT NOT NULL, changed_at INTEGER NOT NULL
@@ -203,6 +210,7 @@ export class DurableTaskStore {
           .run(scope.tenant, scope.subject, namespace, value, hash, execution.id);
         return { task: this.get(scope, execution.taskId), execution, duplicate: true };
       }
+      this.assertNotQuarantined();
       if (!this.admissionControl().open) throw new TaskStoreError("capacity", "execution admission is closed");
       const existing = message.taskId ? this.get(scope, message.taskId) : undefined;
       if (existing && terminal.has(existing.status!.state)) throw new TaskStoreError("conflict", "terminal tasks cannot resume");
@@ -345,6 +353,29 @@ export class DurableTaskStore {
     return { maxActive: row.max_active === null ? null : Number(row.max_active), reserved: Number(row.reserved) };
   }
 
+  /** Offline restored-copy guard; it neither stops nor fences a live provider. No automatic release API exists. */
+  quarantineRestoredCopy(snapshotSha256: string, reason: string): void {
+    if (!/^[a-f0-9]{64}$/.test(snapshotSha256) || !reason.trim() || reason.length > 4096) {
+      throw new TaskStoreError("invalid", "snapshot digest and bounded quarantine reason required");
+    }
+    this.transaction(() => {
+      this.db.prepare("INSERT INTO restore_quarantine VALUES(1,?,?,?)").run(snapshotSha256, reason.trim(), this.clock());
+      const generation = this.admissionControl().generation + 1;
+      this.db.prepare("UPDATE admission_control SET generation=?,open=0,reason=?,changed_at=? WHERE id=1")
+        .run(generation, "Offline restored copy; reconciliation required", this.clock());
+      this.db.prepare("INSERT INTO admission_control_audit VALUES(?,0,?,?)")
+        .run(generation, "Offline restored copy; reconciliation required", this.clock());
+    });
+  }
+
+  restoreQuarantined(): boolean {
+    return Boolean(this.db.prepare("SELECT id FROM restore_quarantine WHERE id=1").get());
+  }
+
+  assertNotQuarantined(): void {
+    if (this.restoreQuarantined()) throw new TaskStoreError("conflict", "restored database is quarantined; automatic execution is disabled");
+  }
+
   admissionControl(): AdmissionControl {
     const row = this.db.prepare("SELECT generation,open,reason,changed_at FROM admission_control WHERE id=1").get() as Row;
     return { generation: Number(row.generation), open: row.open === 1, reason: String(row.reason), changedAt: Number(row.changed_at) };
@@ -393,6 +424,7 @@ export class DurableTaskStore {
       throw new TaskStoreError("invalid", "invalid worker lease or concurrency limit");
     }
     return this.transaction(() => {
+      if (this.restoreQuarantined()) return undefined;
       // Check on every claim so already-open workers cannot bypass an operator change.
       this.assertAdmissionLimit(maxActive);
       const now = this.clock();

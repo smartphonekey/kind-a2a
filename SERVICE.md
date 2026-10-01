@@ -125,6 +125,30 @@ after backup, and reserved work may still exist on the old node. Isolate the
 restored stack and fence/reconcile it before any worker starts, under the full
 [production recovery gate](PRODUCTION.md#3-replacement-node-backup-and-restore).
 
+## Offline Snapshot Rehearsal
+
+For a trusted, private A2A database, the [snapshot CLI](src/service/snapshot-cli.ts)
+creates a WAL-consistent snapshot in a fresh private directory and verifies
+SQLite integrity. The source is opened read-only; this does not coordinate a
+recoverable boundary with Agyn databases or task workspaces.
+
+```sh
+node dist/service/snapshot-cli.js --db /absolute/private/service/tasks.sqlite --output-root /absolute/private/rehearsals
+```
+
+The finished copy is permanently quarantined against service/worker startup and
+new or recovered claims. It is deliberately unsuitable for direct deployment:
+queued turns may have executed after the snapshot. Ordinary admission reopening
+cannot clear the quarantine. There is no supported automatic release command.
+A failed/interrupted run preserves incomplete output; do not select hidden
+pending files or treat missing receipts as success. Keep the directory private,
+encrypt off-node copies under an approved backup policy, and retain failures.
+
+This rehearses SQLite consistency and replay prevention only. Full recovery still
+requires the [whole-stack scope](KUBERNETES.md#backup-and-restore-scope), old-owner
+fencing, reconciled provider state, credentials and an authorized continuation.
+Do not remove the hold with ad hoc SQL to make a restore start.
+
 ## Recovery And Operations
 
 - Inspect side effects and provider identity before reconciling an interrupted

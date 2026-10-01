@@ -81,9 +81,11 @@ node --test scripts/qa-runner.test.mjs
 
 ## Evidence and acceptance
 
-The runner returns a private fresh output directory in the durable workspace.
-Retain it there or in an approved artifact store, and apply an operator retention
-policy. Logs are bounded and may contain app secrets: never
+The runner returns a private fresh output directory outside the input checkout,
+in a sibling `.a2a-qa-runs` directory. Keep the checkout and its sibling state on
+the task durable volume, or retain evidence in an approved artifact store.
+Apply an operator retention policy. Run state is rejected inside the Git worktree,
+including when a command runs from a nested subdirectory. Logs are bounded and may contain app secrets: never
 publish them automatically. Explicit repository evidence paths are hashed, not
 uploaded or certified as fresh; recipes must remove old test outputs first.
 Screenshots, traces, videos, JUnit/XML and APKs remain private. The existing

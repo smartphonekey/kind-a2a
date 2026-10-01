@@ -125,3 +125,10 @@ test('ambient Git overrides cannot move evidence inside the command checkout', a
    assert.equal(output.startsWith(repo+'/'),false);assert.equal(await readFile(join(output,'home','marker'),'utf8'),'retained');
  } finally {for(const [key,value] of Object.entries(original)){if(value===undefined)delete process.env[key];else process.env[key]=value;}}
 });
+
+test('Git discovery must return an enclosing worktree', async t => {
+ const {mkdir}=await import('node:fs/promises');const {execFileSync}=await import('node:child_process');const root=await workspace(t);
+ const repo=join(root,'repo');await mkdir(repo);execFileSync('git',['init',repo],{stdio:'ignore'});
+ const other=join(root,'other');await mkdir(other);execFileSync('git',['-C',repo,'config','core.worktree',other]);
+ await assert.rejects(()=>runQa(recipe([step('')]),repo),/does not contain the QA workspace/);
+});

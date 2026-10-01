@@ -106,6 +106,7 @@ export async function runQa(recipeInput, workspaceInput, { signal, stateRoot } =
     if (repositoryExpected) throw new Error('Cannot safely resolve Git worktree for QA run state');
     // A materialized source archive need not contain Git metadata.
   }
+  if (!inside(checkout, workspace)) throw new Error('Git worktree does not contain the QA workspace');
   const base = resolve(stateRoot ?? join(dirname(checkout), '.a2a-qa-runs'));
   if (inside(checkout, base)) throw new Error('QA run state must be outside the command checkout');
   await mkdir(base, { recursive: true, mode: 0o700 });

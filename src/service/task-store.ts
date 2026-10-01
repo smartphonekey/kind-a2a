@@ -39,6 +39,8 @@ export type Submission = { task: Task; execution: Execution; duplicate: boolean 
 export type StoreOptions = { clock?: () => number; maxQueuedPerTask?: number; maxPendingPerOwner?: number };
 /** Database-wide claimed execution count; queued, settled and stopped-uncertain executions reserve no slot. */
 export type Admission = { maxActive: number | null; reserved: number };
+/** Durable admission switch; closing does not fence or stop already admitted workloads. */
+export type AdmissionControl = { generation: number; open: boolean; reason: string; changedAt: number };
 
 export class TaskStoreError extends Error {
   constructor(readonly code: "not_found" | "conflict" | "invalid" | "capacity" | "stale_lease", message: string) {
@@ -129,6 +131,20 @@ export class DurableTaskStore {
       CREATE TABLE IF NOT EXISTS execution_admission (
         id INTEGER PRIMARY KEY CHECK(id=1), max_active INTEGER NOT NULL CHECK(max_active>0)
       );
+      CREATE TABLE IF NOT EXISTS admission_control (
+        id INTEGER PRIMARY KEY CHECK(id=1), generation INTEGER NOT NULL,
+        open INTEGER NOT NULL CHECK(open IN (0,1)), reason TEXT NOT NULL, changed_at INTEGER NOT NULL
+      );
+      INSERT OR IGNORE INTO admission_control VALUES(1,0,1,'Initial trusted-local admission',0);
+      CREATE TABLE IF NOT EXISTS admission_control_audit (
+        generation INTEGER PRIMARY KEY, open INTEGER NOT NULL CHECK(open IN (0,1)),
+        reason TEXT NOT NULL, changed_at INTEGER NOT NULL
+      );
+      CREATE TRIGGER IF NOT EXISTS execution_admission_closed
+        BEFORE UPDATE OF phase ON task_executions
+        WHEN OLD.phase='queued' AND NEW.phase NOT IN ('queued','settled','uncertain')
+          AND (SELECT open FROM admission_control WHERE id=1)=0
+        BEGIN SELECT RAISE(ABORT, 'execution admission is closed'); END;
       CREATE TRIGGER IF NOT EXISTS execution_admission_capacity
         BEFORE UPDATE OF phase ON task_executions
         WHEN OLD.phase='queued' AND NEW.phase NOT IN ('queued','settled','uncertain')
@@ -187,6 +203,7 @@ export class DurableTaskStore {
           .run(scope.tenant, scope.subject, namespace, value, hash, execution.id);
         return { task: this.get(scope, execution.taskId), execution, duplicate: true };
       }
+      if (!this.admissionControl().open) throw new TaskStoreError("capacity", "execution admission is closed");
       const existing = message.taskId ? this.get(scope, message.taskId) : undefined;
       if (existing && terminal.has(existing.status!.state)) throw new TaskStoreError("conflict", "terminal tasks cannot resume");
       if (existing?.metadata?.cancellationRequested || existing?.metadata?.recoveryRequired) {
@@ -328,6 +345,29 @@ export class DurableTaskStore {
     return { maxActive: row.max_active === null ? null : Number(row.max_active), reserved: Number(row.reserved) };
   }
 
+  admissionControl(): AdmissionControl {
+    const row = this.db.prepare("SELECT generation,open,reason,changed_at FROM admission_control WHERE id=1").get() as Row;
+    return { generation: Number(row.generation), open: row.open === 1, reason: String(row.reason), changedAt: Number(row.changed_at) };
+  }
+
+  /** Operator-only local API. Compare-and-set and audit commit atomically across all workers. */
+  changeAdmissionControl(expectedGeneration: number, open: boolean, reason: string): AdmissionControl {
+    if (!Number.isSafeInteger(expectedGeneration) || expectedGeneration < 0 || expectedGeneration >= Number.MAX_SAFE_INTEGER ||
+        typeof open !== "boolean" || typeof reason !== "string" || !reason.trim() || reason.length > 4096) {
+      throw new TaskStoreError("invalid", "admission change requires a generation, boolean and bounded reason");
+    }
+    return this.transaction(() => {
+      const current = this.admissionControl();
+      if (current.generation !== expectedGeneration) throw new TaskStoreError("conflict", "admission generation changed; inspect before retrying");
+      const generation = current.generation + 1;
+      const at = this.clock();
+      this.db.prepare("UPDATE admission_control SET generation=?,open=?,reason=?,changed_at=? WHERE id=1")
+        .run(generation, Number(open), reason.trim(), at);
+      this.db.prepare("INSERT INTO admission_control_audit VALUES(?,?,?,?)").run(generation, Number(open), reason.trim(), at);
+      return this.admissionControl();
+    });
+  }
+
   /** Compare-and-set an initialized ceiling only with zero reservations; preserve queued work and retained state. */
   changeAdmissionLimit(expected: number, maxActive: number): Admission {
     this.validateAdmissionLimit(expected);
@@ -360,6 +400,7 @@ export class DurableTaskStore {
         AND lease_until<=? ORDER BY created_at,ordinal LIMIT 1`).get(now) as Row | undefined;
       const recovered = Boolean(row);
       if (!row) {
+        if (!this.admissionControl().open) return undefined;
         if (this.admission().reserved >= maxActive) return undefined;
         row = this.db.prepare(`SELECT e.id FROM task_executions e WHERE e.phase='queued' AND NOT EXISTS
           (SELECT 1 FROM task_executions p WHERE p.task_id=e.task_id AND p.ordinal<e.ordinal AND p.phase!='settled')

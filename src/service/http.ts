@@ -48,8 +48,17 @@ export function createServiceApp(options: HttpOptions) {
   });
   app.get("/healthz", (_request, response) => response.json({ ok: true }));
   app.get("/readyz", (_request, response) => {
-    const ready = !options.signal.aborted && (options.ready?.() ?? true);
+    let ready = false;
+    try { options.store.admissionControl(); ready = !options.signal.aborted && (options.ready?.() ?? true); }
+    catch { /* A failed database probe must fail readiness closed. */ }
     response.status(ready ? 200 : 503).json({ ready });
+  });
+  // Reporting shares this listener: a drain must not remove it from Service endpoints.
+  app.get("/admissionz", (_request, response) => {
+    let open = false;
+    try { open = !options.signal.aborted && options.store.admissionControl().open && (options.ready?.() ?? true); }
+    catch { /* Fail closed without exposing database errors or operator reasons. */ }
+    response.status(open ? 200 : 503).json({ open });
   });
   app.get("/.well-known/agent-card.json", (_request, response) => response.json(AgentCard.toJSON(options.card)));
   app.use("/reporting", reportingRouter(options.store));

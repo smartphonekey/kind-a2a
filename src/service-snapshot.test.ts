@@ -21,6 +21,24 @@ function fixture(t: TestContext) {
   return { directory, path, store };
 }
 
+test("snapshot: quarantine state and audit share one transition timestamp", t => {
+  const f = fixture(t);
+  let clock = 1000;
+  const copy = new DurableTaskStore(f.path, { clock: () => ++clock });
+  try {
+    copy.quarantineRestoredCopy("a".repeat(64), "verified offline copy");
+    const db = new DatabaseSync(f.path);
+    try {
+      const quarantine = db.prepare("SELECT created_at FROM restore_quarantine WHERE id=1").get()!;
+      const audit = db.prepare("SELECT changed_at FROM admission_control_audit WHERE generation=1").get()!;
+      assert.equal(copy.admissionControl().changedAt, 1001);
+      assert.equal(quarantine.created_at, 1001);
+      assert.equal(audit.changed_at, 1001);
+      assert.equal(clock, 1001);
+    } finally { db.close(); }
+  } finally { copy.close(); }
+});
+
 test("snapshot: WAL-consistent copy retains state but blocks new and recovered claims", async t => {
   const f = fixture(t);
   const first = f.store.submit(scope, message(), "agent");

@@ -79,6 +79,26 @@ test("drain: database trigger also rejects queued activation from an old writer"
   assert.equal(f.store.execution(queued.execution.id)?.phase, "queued");
 });
 
+test("drain: mixed-version writers cannot insert latent work while admission is closed", t => {
+  const f = fixture(t);
+  const input = message();
+  const existing = f.store.submit(scope, input, "agent");
+  const legacy = new DatabaseSync(f.path);
+  t.after(() => legacy.close());
+  f.store.changeAdmissionControl(0, false, "maintenance");
+  const legacyExecutionId = randomUUID();
+  for (const phase of ["queued", "provisioning"]) {
+    assert.throws(() => legacy.prepare(`INSERT INTO task_executions
+      (id,task_id,ordinal,phase,message_json,end_task,created_at) VALUES(?,?,?,?,?,0,?)`)
+      .run(legacyExecutionId, existing.task.id, 2, phase, JSON.stringify(message()), 1000), /admission is closed/);
+  }
+  assert.equal(f.store.submit(scope, input, "agent").execution.id, existing.execution.id);
+  assert.equal(f.store.execution(legacyExecutionId), undefined);
+  f.store.changeAdmissionControl(1, true, "maintenance complete");
+  assert.equal(f.store.claim("worker", 1000, 2)?.execution.id, existing.execution.id);
+  assert.equal(f.store.claim("worker-two", 1000, 2), undefined);
+});
+
 test("drain CLI: requires explicit generation/reason and cannot mix limit and control changes", t => {
   const f = fixture(t);
   const command = new URL("./service/admission-cli.js", import.meta.url);

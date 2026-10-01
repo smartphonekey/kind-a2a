@@ -5,10 +5,10 @@
  * @see qa/README.md
  */
 import { constants } from 'node:fs';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdir, readFile, writeFile, realpath, lstat, open } from 'node:fs/promises';
-import { resolve, relative, isAbsolute, join } from 'node:path';
+import { mkdir, writeFile, realpath, lstat, open } from 'node:fs/promises';
+import { resolve, relative, isAbsolute, join, dirname } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const envKeys = new Set(['PATH', 'ANDROID_HOME', 'ANDROID_SDK_ROOT', 'ANDROID_AVD_HOME', 'JAVA_HOME', 'DISPLAY', 'ANDROID_SERIAL']);
@@ -31,6 +31,24 @@ export function validateRecipe(recipe) {
     ids.add(step.id);
   }
   return recipe;
+}
+
+/** Refuse symlinks, FIFOs/devices and oversized data before allocation or parse. */
+export async function readRecipe(path) {
+  const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile() || stat.size > 65_536) throw new Error('Recipe must be a bounded regular file');
+    const bytes = Buffer.alloc(65_537);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const { bytesRead } = await handle.read(bytes, offset, bytes.length - offset, offset);
+      if (!bytesRead) break;
+      offset += bytesRead;
+    }
+    if (offset > 65_536) throw new Error('Recipe exceeds limit');
+    return validateRecipe(JSON.parse(bytes.subarray(0, offset).toString('utf8')));
+  } finally { await handle.close(); }
 }
 
 /** Private bounded logs stay local. The public summary omits commands, environment and output. */
@@ -59,14 +77,42 @@ export function executeStep(step, { cwd, env, signal, timeoutMs, logLimit = 1_04
   });
 }
 
-export async function runQa(recipeInput, workspaceInput, { signal } = {}) {
+export async function runQa(recipeInput, workspaceInput, { signal, stateRoot } = {}) {
   const recipe = validateRecipe(recipeInput);
   if (!['linux', 'darwin'].includes(process.platform)) throw new Error('QA runner requires POSIX process groups');
   const workspace = await realpath(workspaceInput);
   if (!(await lstat(workspace)).isDirectory()) throw new Error('Workspace must be a directory');
-  // Exclusive fresh output in the durable workspace avoids pre-created output symlinks.
+  // Commands may legitimately git clean the entire repository, including when
+  // invoked from a subdirectory. Keep HOME, reports and logs outside that tree.
+  let repositoryExpected = false;
+  for (let directory = workspace; ; directory = dirname(directory)) {
+    try {
+      const marker = join(directory, '.git');
+      const info = await lstat(marker);
+      if (!info.isDirectory()) { repositoryExpected = true; break; }
+      // An empty reserved .git directory is not a repository. Real Git dirs
+      // have HEAD; errors inspecting one still fail closed.
+      await lstat(join(marker, 'HEAD')); repositoryExpected = true; break;
+    }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
+    if (dirname(directory) === directory) break;
+  }
+  let checkout = workspace;
+  try {
+    checkout = await realpath(execFileSync('git', ['-C', workspace, 'rev-parse', '--show-toplevel'],
+      { encoding: 'utf8', timeout: 5000, maxBuffer: 8192, stdio: ['ignore', 'pipe', 'ignore'],
+        env: { PATH: process.env.PATH ?? '/usr/bin:/bin', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' } }).trim());
+  } catch {
+    if (repositoryExpected) throw new Error('Cannot safely resolve Git worktree for QA run state');
+    // A materialized source archive need not contain Git metadata.
+  }
+  if (!inside(checkout, workspace)) throw new Error('Git worktree does not contain the QA workspace');
+  const base = resolve(stateRoot ?? join(dirname(checkout), '.a2a-qa-runs'));
+  if (inside(checkout, base)) throw new Error('QA run state must be outside the command checkout');
+  await mkdir(base, { recursive: true, mode: 0o700 });
+  if ((await realpath(base)) !== base || !(await lstat(base)).isDirectory()) throw new Error('Unsafe QA run state directory');
   const { mkdtemp } = await import('node:fs/promises');
-  const output = await mkdtemp(join(workspace, '.a2a-qa-'));
+  const output = await mkdtemp(join(base, 'run-'));
   await mkdir(join(output, 'home'), { mode: 0o700 });
   const env = { PATH: process.env.PATH ?? '/usr/bin:/bin', LANG: 'C.UTF-8', CI: '1', ...recipe.environment,
     HOME: join(output, 'home'), QA_OUTPUT_DIR: output };
@@ -118,9 +164,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
   process.once('SIGTERM', () => controller.abort()); process.once('SIGINT', () => controller.abort());
   try {
     if (process.argv.length !== 4) throw new Error('Usage: node scripts/qa-runner.mjs <trusted-recipe.json> <workspace>');
-    const bytes = await readFile(process.argv[2]);
-    if (bytes.length > 65_536) throw new Error('Recipe exceeds limit');
-    const { report, output } = await runQa(JSON.parse(bytes), process.argv[3], { signal: controller.signal });
+    const recipe = await readRecipe(process.argv[2]);
+    const { report, output } = await runQa(recipe, process.argv[3], { signal: controller.signal });
     console.log(JSON.stringify({ status: report.status, report: join(output, 'report.json') }));
     process.exitCode = report.status === 'passed' ? 0 : 1;
   } catch { console.error('QA runner blocked: check recipe, workspace and runtime prerequisites'); process.exitCode = 2; }

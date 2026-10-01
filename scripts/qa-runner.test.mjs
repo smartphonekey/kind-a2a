@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, writeFile, symlink, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { validateRecipe, executeStep, runQa } from './qa-runner.mjs';
+import { validateRecipe, readRecipe, executeStep, runQa } from './qa-runner.mjs';
 const step = (code, id = 'test') => ({ id, command: [process.execPath, '-e', code], timeoutMs: 1000 });
 const recipe = steps => ({ version: 1, id: 'fixture', platform: 'web', timeoutMs: 4000, steps, evidence: [] });
 async function workspace(t) { const p = await mkdtemp(join(tmpdir(), 'qa-test-')); t.after(() => rm(p, { recursive: true, force: true })); return p; }
@@ -83,4 +83,52 @@ test('Android adapter builds, boots, installs and checks instrumentation in a fa
  // Cooperating concurrent workers cannot both claim the same emulator port.
  const lock=join(tmpdir(),'a2a-qa-android-port-5554.lock');await mkdir(lock);
  try {assert.equal((await run(t,config,cwd)).report.status,'failed');} finally {await rm(lock,{recursive:true});}
+});
+
+test('recipe input is bounded and rejects symlinks and FIFO before reading', async t => {
+ const {execFileSync}=await import('node:child_process');const root=await workspace(t);
+ const valid=join(root,'valid.json');await writeFile(valid,JSON.stringify(recipe([step('')])));
+ assert.equal((await readRecipe(valid)).version,1);
+ const large=join(root,'large.json');await writeFile(large,' '.repeat(65_537));await assert.rejects(()=>readRecipe(large));
+ const link=join(root,'link.json');await symlink(valid,link);await assert.rejects(()=>readRecipe(link));
+ const fifo=join(root,'fifo');execFileSync('mkfifo',[fifo]);await assert.rejects(()=>readRecipe(fifo));
+});
+test('git clean from a nested checkout cannot remove run HOME, logs or report', async t => {
+ const {execFileSync}=await import('node:child_process');const {mkdir}=await import('node:fs/promises');const root=await workspace(t);
+ const repo=join(root,'repo');await mkdir(repo);execFileSync('git',['init',repo],{stdio:'ignore'});
+ const nested=join(repo,'app');await mkdir(nested);await writeFile(join(nested,'.keep'),'fixture');execFileSync('git',['-C',repo,'add','app/.keep']);
+ const config=recipe([step("require('fs').writeFileSync(process.env.HOME+'/marker','retained');require('child_process').execFileSync('git',['-C','..','clean','-fdx']);console.log('cleaned')")]);
+ const {report,output}=await run(t,config,nested);assert.equal(report.status,'passed');
+ assert.equal(await readFile(join(output,'home','marker'),'utf8'),'retained');assert.match(await readFile(join(output,'test.log'),'utf8'),/cleaned/);
+ assert.equal(JSON.parse(await readFile(join(output,'report.json'),'utf8')).status,'passed');
+ await assert.rejects(()=>runQa(config,nested,{stateRoot:join(repo,'state')}));
+});
+
+test('Git discovery failure cannot place run state inside an enclosing checkout', async t => {
+ const {mkdir}=await import('node:fs/promises');const {execFileSync}=await import('node:child_process');const root=await workspace(t);
+ const repo=join(root,'repo');await mkdir(repo);execFileSync('git',['init',repo],{stdio:'ignore'});
+ await writeFile(join(repo,'.git','config'),'invalid configuration!');
+ const nested=join(repo,'app');await mkdir(nested);
+ // A malformed repository must fail closed, not be treated as a source archive.
+ await assert.rejects(()=>runQa(recipe([step('')]),nested),/Cannot safely resolve Git worktree/);
+});
+
+test('ambient Git overrides cannot move evidence inside the command checkout', async t => {
+ const {mkdir}=await import('node:fs/promises');const {execFileSync}=await import('node:child_process');const root=await workspace(t);
+ const repo=join(root,'repo');await mkdir(repo);execFileSync('git',['init',repo],{stdio:'ignore'});
+ const nested=join(repo,'app');await mkdir(nested);await writeFile(join(nested,'.keep'),'fixture');execFileSync('git',['-C',repo,'add','app/.keep']);
+ const original={GIT_DIR:process.env.GIT_DIR,GIT_WORK_TREE:process.env.GIT_WORK_TREE};
+ process.env.GIT_DIR=join(repo,'.git');process.env.GIT_WORK_TREE=nested;
+ try {
+   const config=recipe([step("require('fs').writeFileSync(process.env.HOME+'/marker','retained');require('child_process').execFileSync('git',['-C','..','clean','-fdx'])")]);
+   const {report,output}=await run(t,config,nested);assert.equal(report.status,'passed');
+   assert.equal(output.startsWith(repo+'/'),false);assert.equal(await readFile(join(output,'home','marker'),'utf8'),'retained');
+ } finally {for(const [key,value] of Object.entries(original)){if(value===undefined)delete process.env[key];else process.env[key]=value;}}
+});
+
+test('Git discovery must return an enclosing worktree', async t => {
+ const {mkdir}=await import('node:fs/promises');const {execFileSync}=await import('node:child_process');const root=await workspace(t);
+ const repo=join(root,'repo');await mkdir(repo);execFileSync('git',['init',repo],{stdio:'ignore'});
+ const other=join(root,'other');await mkdir(other);execFileSync('git',['-C',repo,'config','core.worktree',other]);
+ await assert.rejects(()=>runQa(recipe([step('')]),repo),/does not contain the QA workspace/);
 });

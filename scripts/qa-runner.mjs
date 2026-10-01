@@ -100,7 +100,8 @@ export async function runQa(recipeInput, workspaceInput, { signal, stateRoot } =
   let checkout = workspace;
   try {
     checkout = await realpath(execFileSync('git', ['-C', workspace, 'rev-parse', '--show-toplevel'],
-      { encoding: 'utf8', timeout: 5000, maxBuffer: 8192, stdio: ['ignore', 'pipe', 'ignore'] }).trim());
+      { encoding: 'utf8', timeout: 5000, maxBuffer: 8192, stdio: ['ignore', 'pipe', 'ignore'],
+        env: { PATH: process.env.PATH ?? '/usr/bin:/bin', GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' } }).trim());
   } catch {
     if (repositoryExpected) throw new Error('Cannot safely resolve Git worktree for QA run state');
     // A materialized source archive need not contain Git metadata.

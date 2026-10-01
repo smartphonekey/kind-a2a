@@ -112,3 +112,16 @@ test('Git discovery failure cannot place run state inside an enclosing checkout'
  // A malformed repository must fail closed, not be treated as a source archive.
  await assert.rejects(()=>runQa(recipe([step('')]),nested),/Cannot safely resolve Git worktree/);
 });
+
+test('ambient Git overrides cannot move evidence inside the command checkout', async t => {
+ const {mkdir}=await import('node:fs/promises');const {execFileSync}=await import('node:child_process');const root=await workspace(t);
+ const repo=join(root,'repo');await mkdir(repo);execFileSync('git',['init',repo],{stdio:'ignore'});
+ const nested=join(repo,'app');await mkdir(nested);await writeFile(join(nested,'.keep'),'fixture');execFileSync('git',['-C',repo,'add','app/.keep']);
+ const original={GIT_DIR:process.env.GIT_DIR,GIT_WORK_TREE:process.env.GIT_WORK_TREE};
+ process.env.GIT_DIR=join(repo,'.git');process.env.GIT_WORK_TREE=nested;
+ try {
+   const config=recipe([step("require('fs').writeFileSync(process.env.HOME+'/marker','retained');require('child_process').execFileSync('git',['-C','..','clean','-fdx'])")]);
+   const {report,output}=await run(t,config,nested);assert.equal(report.status,'passed');
+   assert.equal(output.startsWith(repo+'/'),false);assert.equal(await readFile(join(output,'home','marker'),'utf8'),'retained');
+ } finally {for(const [key,value] of Object.entries(original)){if(value===undefined)delete process.env[key];else process.env[key]=value;}}
+});

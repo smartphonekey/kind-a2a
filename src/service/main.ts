@@ -23,6 +23,7 @@ import { ExecutionWorker } from "./worker.js";
 import { createServiceApp } from "./http.js";
 import { fileAuthorizer } from "./auth.js";
 import { serviceCard } from "./card.js";
+import { closeHttpServer } from "./shutdown.js";
 import { requireSqliteWalFix } from "./sqlite-runtime.js";
 import { parseSetupFailure } from "./setup-diagnostics.js";
 import { cloudflareAccessAuthentication, cloudflareAccessSchema } from "./cloudflare-access.js";
@@ -37,6 +38,7 @@ const schema = z.object({
   defaultProfile: z.string().min(1).max(128),
   profiles: z.array(z.object({ id: z.string().min(1).max(128), agentId: z.string().uuid() }).strict()).min(1).max(100),
   concurrency: z.number().int().min(1).max(32).default(2),
+  httpShutdownGraceMs: z.number().int().min(100).max(60_000).default(5000),
   turnTimeoutMs: z.number().int().min(1000).max(43_200_000).default(600_000),
   browser: z.object({ origin: z.string().url(), assetsPath: pathSchema,
     cloudflareAccess: cloudflareAccessSchema.optional() }).strict().optional()
@@ -53,6 +55,7 @@ const config = schema.parse(JSON.parse(readFileSync(required("A2A_SERVICE_CONFIG
 if (!config.profiles.some(profile => profile.id === config.defaultProfile)) throw new Error("default profile is missing");
 if (!statSync(config.reportingSetupExecutable).isFile()) throw new Error("reporting setup executable is missing");
 const store = new DurableTaskStore(config.dbPath);
+store.assertNotQuarantined();
 const client = new AgynClient(required("AGYN_GATEWAY_URL"), required("AGYN_TOKEN"), required("AGYN_ORGANIZATION_ID"), required("AGYN_IDENTITY_ID"));
 const driver = new AgynRuntimeDriver(client, config.profiles, async (execution, signal) => {
   const token = store.issueReportingCredential(execution.id, config.turnTimeoutMs + 3_600_000);
@@ -103,9 +106,9 @@ server.listen(config.port, config.host, () => {
 const shutdown = async () => {
   if (stopping.signal.aborted) return;
   stopping.abort();
-  server.closeAllConnections();
-  await new Promise<void>(resolve => server.close(() => resolve()));
-  await worker.stop();
+  // Stop local scheduling immediately, but allow accepted reporting requests to commit.
+  // The durable leases remain owned until expiry; HTTP drain is not provider fencing.
+  await Promise.all([closeHttpServer(server, config.httpShutdownGraceMs), worker.stop()]);
   store.close();
 };
 process.once("SIGTERM", () => { void shutdown(); });

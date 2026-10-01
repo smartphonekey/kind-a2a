@@ -44,6 +44,17 @@ test("service HTTP: auth, tenant isolation, scoped list/replay/cancel, validatio
   assert(first.result?.task?.id, JSON.stringify(first));
   const taskId = first.result.task.id as string;
   assert.equal((await rpc("SendMessage", send)).result.task.id, taskId);
+  assert.equal((await fetch(`${base}/readyz`)).status, 200);
+  store.changeAdmissionControl(0, false, "maintenance");
+  assert.equal((await fetch(`${base}/readyz`)).status, 200);
+  assert.equal((await fetch(`${base}/admissionz`)).status, 503);
+  assert.equal((await fetch(`${base}/healthz`)).status, 200);
+  assert.equal((await rpc("SendMessage", send)).result.task.id, taskId);
+  assert.equal((await rpc("SendMessage", send, "bob")).error.code, -32029);
+  assert.equal((await rpc("GetTask", { id: taskId })).result.id, taskId);
+  store.changeAdmissionControl(1, true, "maintenance complete");
+  assert.equal((await fetch(`${base}/admissionz`)).status, 200);
+  assert.equal((await fetch(`${base}/readyz`)).status, 200);
   assert.notEqual((await rpc("SendMessage", send, "bob")).result.task.id, taskId);
   assert.equal((await rpc("GetTask", { id: taskId }, "bob")).error.code, -32001);
   assert.equal((await rpc("CancelTask", { id: taskId }, "bob")).error.code, -32001);

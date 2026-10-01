@@ -34,6 +34,31 @@ configuration. The [contribution guide](CONTRIBUTING-AGYN.md) identifies code
 owners, not a deployable release. Updating every fork to `main` is not an upgrade
 procedure. Locally imported image names do not establish registry availability.
 
+## Offline Release Identity Verification
+
+The [release-lock verifier](scripts/release-lock.mjs) binds a reviewed private
+lock to clean exact source commits, tracked dependency/API/schema/build inputs,
+and local digest-addressed OCI manifests/configs/layers for selected platforms. It never fetches a
+branch, builds code, publishes images or deploys an installation.
+
+```sh
+node scripts/release-lock.mjs /private/release-lock.json /private/release-sources /private/release-oci
+node --test scripts/release-lock.test.mjs
+```
+
+Keep source checkouts under their lock IDs and exported OCI content under
+`blobs/sha256`. The schema and executable fixtures own the input contract.
+Populate it from the complete reviewed contribution combination, not fork main
+or a guessed image tag. Capture API/schema owner inputs and consumer dependencies;
+keep migration bytes immutable and validate upgrade/rollback compatibility
+separately. Include every service and runtime needed by the private installation.
+
+Passing means the declared source and OCI bytes match, including source labels.
+It does not establish that image labels are truthful build provenance, that the
+component inventory is complete, or that APIs/migrations interoperate. Retain
+reviewed build attestations and run the real combined acceptance matrix before
+promotion. No deployable production lock is shipped by this repository.
+
 ## Cloudflare Access
 
 [The Terraform root](infra/cloudflare/main.tf) requires explicit account, zone,

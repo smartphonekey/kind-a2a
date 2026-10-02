@@ -7,7 +7,6 @@
  * origin hop is cluster HTTP, not end-to-end TLS or hostile-code isolation.
  * Test deployments stay scaled to zero; production requires an explicit node
  * so applying these manifests to the workstation cannot expose it by accident.
- * @see infra/cloudflare/main.tf
  * @see scripts/cloudflare-manifests.test.mjs
  */
 import assert from 'node:assert/strict';

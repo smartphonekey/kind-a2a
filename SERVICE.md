@@ -66,6 +66,19 @@ Use the [admission CLI](src/service/admission-cli.ts) against the existing datab
 Other databases and workloads created directly in Agyn are outside this budget.
 Resource isolation and sustained-load validation remain production gates.
 
+## Profile Endpoints And Limits
+
+Each configured profile is also served at `/agents/<profile>/a2a`, with its own
+agent card under that prefix; `/a2a` keeps the default profile. An endpoint
+selects the profile of new tasks only. Owner credentials are not limited to
+profiles yet: any valid credential may use every profile endpoint.
+
+A profile may override the turn deadline and the reporting setup deadline in
+the [startup schema](src/service/main.ts). Size the setup deadline for a cold
+image pull on the target node. Compute admission remains one shared ceiling
+across all profiles; per-profile admission is not implemented, so a profile that
+must run one task at a time needs `concurrency: 1` or its own service database.
+
 ## Client Authentication
 
 Provision owner-scoped A2A credentials using the format maintained in

@@ -24,9 +24,13 @@ export interface RuntimeDriver {
   release(execution: Execution, signal: AbortSignal): Promise<{ stopped: boolean }>;
 }
 
-/** Concurrency is both a local job limit and the durable ceiling shared by every worker on this database. */
+/**
+ * Concurrency is both a local job limit and the durable ceiling shared by every worker on this database.
+ * profileTurnTimeoutMs overrides turnTimeoutMs for executions of the named profiles; it does not change admission.
+ */
 export type WorkerOptions = {
   concurrency: number; leaseMs: number; pollMs: number; turnTimeoutMs: number;
+  profileTurnTimeoutMs?: ReadonlyMap<string, number>;
   workerId?: string; onError?: (error: { executionId: string; phase: string; retrying: boolean }) => void;
 };
 
@@ -39,7 +43,7 @@ export class ExecutionWorker {
 
   /** Initialize or verify shared admission immediately, even with no queued work or provider calls. */
   constructor(private readonly store: DurableTaskStore, private readonly driver: RuntimeDriver, private readonly options: WorkerOptions) {
-    for (const value of [options.concurrency, options.leaseMs, options.pollMs, options.turnTimeoutMs]) {
+    for (const value of [options.concurrency, options.leaseMs, options.pollMs, options.turnTimeoutMs, ...(options.profileTurnTimeoutMs?.values() ?? [])]) {
       if (!Number.isSafeInteger(value) || value < 1) throw new Error("worker limits must be positive integers");
     }
     if (options.leaseMs < options.pollMs * 3) throw new Error("lease must allow at least three poll intervals");
@@ -105,7 +109,7 @@ export class ExecutionWorker {
             this.store.dispatched(lease, requestId);
           } else if (execution.phase === "dispatching") {
             this.store.markUncertain(lease, "Dispatch acknowledgement missing; automatic resend is disabled");
-          } else if (!execution.startedAt || Date.now() - execution.startedAt >= this.options.turnTimeoutMs ||
+          } else if (!execution.startedAt || Date.now() - execution.startedAt >= this.turnTimeoutMs(execution) ||
               await this.driver.observe(execution, signal) === "interrupted") {
             this.store.markUncertain(lease, "Execution interrupted or deadline exceeded before a durable outcome");
           } else await this.pause(signal);
@@ -126,6 +130,10 @@ export class ExecutionWorker {
       clearInterval(heartbeat);
       // Do not settle on process exit. The next owner reconciles the recorded phase after lease expiry.
     }
+  }
+
+  private turnTimeoutMs(execution: Execution): number {
+    return this.options.profileTurnTimeoutMs?.get(execution.profileId) ?? this.options.turnTimeoutMs;
   }
 
   private async pause(signal: AbortSignal): Promise<void> {

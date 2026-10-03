@@ -323,3 +323,26 @@ test("Claude installation validates both files before mutation and acknowledges 
     executionId: submitted.execution.id, instanceId, reportingConfigured: true
   });
 });
+
+test("Agyn installer rejects setup deadlines outside its bounds before contacting the gateway", async t => {
+  let requests = 0;
+  const server = createServer((request, response) => { requests++; request.resume(); response.writeHead(503).end("{}"); });
+  server.listen(0, "127.0.0.1"); await once(server, "listening");
+  t.after(async () => { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); });
+  const address = server.address(); assert(address && typeof address !== "string");
+  for (const setupTimeoutMs of [19_999, 600_001, "120000"]) {
+    const setup = { executionId: randomUUID(), instanceId: randomUUID(), threadId: randomUUID(), requestId: randomUUID(),
+      retiredRequestIds: [], profileId: "test", setupTimeoutMs, reporting: { url: "https://reporting.invalid", token: "A".repeat(43) } };
+    const child: ChildProcessWithoutNullStreams = spawn(process.execPath, [new URL("./service/agyn-reporting-installer.js", import.meta.url).pathname], {
+      env: { ...process.env, AGYN_GATEWAY_URL: `http://127.0.0.1:${address.port}`, AGYN_TOKEN: "test-gateway",
+        AGYN_ORGANIZATION_ID: randomUUID(), AGYN_IDENTITY_ID: randomUUID() }, timeout: 5000, killSignal: "SIGKILL"
+    });
+    const exited = once(child, "close");
+    let output = "";
+    child.stdout.on("data", (chunk: Buffer) => { output += chunk; }); child.stderr.resume();
+    child.stdin.end(JSON.stringify(setup));
+    assert.deepEqual(await exited, [1, null], String(setupTimeoutMs));
+    assert.equal(JSON.parse(output).stage, "input", String(setupTimeoutMs));
+  }
+  assert.equal(requests, 0);
+});

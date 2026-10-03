@@ -27,6 +27,26 @@ report. Preserve the installed application's PVC, configuration Secret and task
 ownership. [serviceManifests](scripts/k8s-manifests.mjs) owns packaging, including
 initialization and generated-client conversion contracts.
 
+## Native In-Cluster Topology
+
+`serviceManifests` with `topology: 'native'` targets an Agyn platform whose
+gateway and terminal proxy are plain HTTP Services inside the cluster, with no
+ingress, TLS hostnames or mesh. The factory derives the gateway URL from the
+explicit Service target; these prerequisites stay with the operator:
+
+- The platform namespace must admit the A2A pods to the gateway and terminal
+  proxy HTTP ports. Supply the exact pod selector labels of those Deployments;
+  a label that matches nothing blocks egress instead of widening it.
+- The gateway must return a terminal-session WebSocket URL on that same
+  terminal proxy Service. Agent pods need cluster DNS for the reporting URL.
+- Use a retaining storage class and pin the node when volumes are node-local.
+- The configuration Secret holds `service.json`, `credentials.json`,
+  `AGYN_TOKEN`, `AGYN_ORGANIZATION_ID` and `AGYN_IDENTITY_ID`; add `ca.pem`
+  only with `caCertificate: true`. A private image needs the pull Secret named
+  by `imagePullSecret` in the same namespace.
+
+Plain cluster HTTP is not end-to-end TLS; accept it only on a trusted node network.
+
 ## Backend Revisions
 
 Pin the complete compatible source/image/schema combination in private release

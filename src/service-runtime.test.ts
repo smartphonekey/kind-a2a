@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -45,3 +45,20 @@ for (const entry of ["main", "admission-cli"]) {
     assert.deepEqual(readFileSync(path), before);
   });
 }
+
+test("service entry point rejects duplicate profiles and out-of-range profile limits before opening the database", t => {
+  const directory = mkdtempSync(join(tmpdir(), "a2a-profile-limits-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const agent = { id: "agent", agentId: "00000000-0000-0000-0000-000000000001" };
+  for (const profiles of [[agent, { ...agent, agentId: "00000000-0000-0000-0000-000000000002" }],
+    [{ ...agent, setupTimeoutMs: 19_999 }], [{ ...agent, setupTimeoutMs: 600_001 }], [{ ...agent, turnTimeoutMs: 999 }]]) {
+    const path = join(directory, "tasks.sqlite"), config = join(directory, "config.json");
+    writeFileSync(config, JSON.stringify({ environmentProfile: "trusted-local", dbPath: path,
+      credentialsFile: join(directory, "credentials.json"), reportingSetupExecutable: "/bin/false",
+      publicUrl: "http://127.0.0.1:8083", reportingUrl: "http://127.0.0.1:8083/reporting", defaultProfile: "agent", profiles }));
+    const result = spawnSync(process.execPath, [new URL("./service/main.js", import.meta.url).pathname], { encoding: "utf8", timeout: 5000,
+      env: { PATH: process.env.PATH, A2A_SERVICE_CONFIG_FILE: config } });
+    assert.equal(result.status, 1, JSON.stringify(profiles));
+    assert.equal(existsSync(path), false, JSON.stringify(profiles));
+  }
+});

@@ -122,7 +122,10 @@ candidate with `agents:render`, then perform a drained configuration rollout.
 
 Build with [the image recipe](ops/Dockerfile.a2a-service) and its
 [context allowlist](.dockerignore). Promote immutable image digests, not floating
-branches. A GitOps controller must have one owner per resource and must preserve
+branches. The [publish workflow](.github/workflows/publish-service-image.yml)
+pushes one commit-tagged image per `main` commit to a private package and never
+moves an existing tag; pin the digest from its run summary, and give the
+installation's pull credential read access to that package. A GitOps controller must have one owner per resource and must preserve
 writer drain, migrations, readiness and retained storage. Do not let it prune
 namespaces, task PVCs, dynamic agent pods or resources owned by another controller.
 

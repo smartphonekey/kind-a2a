@@ -96,7 +96,7 @@ test('native topology dials explicit in-cluster HTTP Services with no ingress, h
   assert.equal(find('Deployment').spec.strategy.type, 'Recreate');
   const env = Object.fromEntries(pod.containers[0].env.map(x => [x.name, x.value ?? x.valueFrom.secretKeyRef]));
   assert.equal(env.AGYN_GATEWAY_URL, 'http://gateway.agyn-platform.svc.cluster.local:8080');
-  for (const key of ['AGYN_TOKEN', 'AGYN_ORGANIZATION_ID', 'AGYN_IDENTITY_ID']) assert.deepEqual(env[key], { name: 'aira-a2a-config', key });
+  assert.deepEqual(env.AGYN_ORGANIZATION_ID, { name: 'aira-a2a-config', key: 'AGYN_ORGANIZATION_ID' });
   assert.equal(env.A2A_ALLOW_INSECURE_LOCAL_REPORTING, 'true');
   assert.deepEqual(pod.volumes.find(x => x.name === 'configuration').secret.items.map(x => x.key), ['service.json', 'credentials.json']);
   assert(pod.initContainers[0].args[0].includes("['service.json','credentials.json']"));
@@ -152,4 +152,41 @@ test('native topology rejects implicit storage, platform targets and selectors',
     { image: 'a2a:latest' }, { agentIds: [] }, { ingressIp: '10.43.1.2' }]) {
     assert.throws(() => serviceManifests({ ...native, ...change }), JSON.stringify(change));
   }
+});
+
+test('native topology authenticates to the gateway with a rotating projected ServiceAccount token by default', () => {
+  const all = serviceManifests(native);
+  assert.deepEqual(all, serviceManifests({ ...native, gatewayAuth: 'token-file' }));
+  const text = JSON.stringify(all);
+  for (const absent of ['AGYN_TOKEN', 'AGYN_IDENTITY_ID']) assert(!text.includes(absent), absent);
+  assert.equal(all.find(x => x.kind === 'ServiceAccount').automountServiceAccountToken, false);
+  const pod = all.find(x => x.kind === 'Deployment').spec.template.spec;
+  assert.equal(pod.automountServiceAccountToken, false);
+  assert.equal(pod.serviceAccountName, 'aira-a2a');
+  assert.deepEqual(pod.volumes.filter(x => x.projected), [{ name: 'gateway-token', projected: { sources: [{ serviceAccountToken: {
+    audience: 'agyn-gateway', expirationSeconds: 3600, path: 'token' } }] } }]);
+  const [container] = pod.containers;
+  assert.deepEqual(container.volumeMounts.filter(x => x.name === 'gateway-token'),
+    [{ name: 'gateway-token', mountPath: '/var/run/secrets/agyn.io/gateway-token', readOnly: true }]);
+  assert(!pod.initContainers.some(c => c.volumeMounts.some(x => x.name === 'gateway-token')), 'init container must not see the gateway token');
+  assert.deepEqual(container.env.slice(0, 3), [
+    { name: 'AGYN_GATEWAY_URL', value: 'http://gateway.agyn-platform.svc.cluster.local:8080' },
+    { name: 'AGYN_GATEWAY_TOKEN_FILE', value: '/var/run/secrets/agyn.io/gateway-token/token' },
+    { name: 'AGYN_ORGANIZATION_ID', valueFrom: { secretKeyRef: { name: 'aira-a2a-config', key: 'AGYN_ORGANIZATION_ID' } } }]);
+  assert.deepEqual(container.env.filter(x => x.valueFrom).map(x => x.valueFrom.secretKeyRef.key), ['AGYN_ORGANIZATION_ID']);
+  for (const manifest of all) asKubernetesClientObject(manifest);
+});
+
+test('native secret gateway auth keeps the original static-token output', () => {
+  const digest = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+  const all = serviceManifests({ ...native, gatewayAuth: 'secret' });
+  assert.equal(digest(all), '8845a72222aebeccf8259b68e6601ed7cacc5e3f8f3cdae494b78997dc23cc1d');
+  const pod = all.find(x => x.kind === 'Deployment').spec.template.spec;
+  assert.deepEqual(pod.containers[0].env.filter(x => x.valueFrom).map(x => x.valueFrom.secretKeyRef.key),
+    ['AGYN_TOKEN', 'AGYN_ORGANIZATION_ID', 'AGYN_IDENTITY_ID']);
+  assert(!JSON.stringify(all).includes('AGYN_GATEWAY_TOKEN_FILE') && !pod.volumes.some(x => x.projected));
+  for (const gatewayAuth of ['oidc', 'token_file', '', null, true]) {
+    assert.throws(() => serviceManifests({ ...native, gatewayAuth }), /gatewayAuth/, String(gatewayAuth));
+  }
+  assert.throws(() => serviceManifests({ ...options, gatewayAuth: 'token-file' }), /native topology only/);
 });

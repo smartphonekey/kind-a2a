@@ -20,7 +20,7 @@ import { createHash } from "node:crypto";
 import { gzipSync } from "node:zlib";
 import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
-import { AgynClient } from "../agyn-client.js";
+import { agynClientFromEnvironment } from "./agyn-gateway-auth.js";
 import { deliverBinding, reportingTargetReady } from "./agyn-terminal.js";
 import { setupFailure, type SetupStage } from "./setup-diagnostics.js";
 
@@ -39,8 +39,7 @@ async function main() {
   }).strict().parse(JSON.parse(input));
   const { setupTimeoutMs, ...binding } = setup;
   stage = "environment";
-  const required = (name: string) => { const value = process.env[name]; if (!value) throw new Error("installer environment missing"); return value; };
-  const client = new AgynClient(required("AGYN_GATEWAY_URL"), required("AGYN_TOKEN"), required("AGYN_ORGANIZATION_ID"), required("AGYN_IDENTITY_ID"));
+  const client = await agynClientFromEnvironment();
   // Finish ten seconds inside the caller's deadline so a failure is still diagnosed rather than killed.
   const signal = AbortSignal.timeout(setupTimeoutMs - 10_000);
   const bundle = readFileSync(new URL("../reporting/runtime.mjs", import.meta.url));

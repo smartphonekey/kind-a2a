@@ -29,7 +29,7 @@ their workloads. Version profile IDs when changing a profile; do not repoint
 bindings used by existing tasks.
 
 Provision a compatible Agyn identity and supply the private connection environment
-required by [main.ts](src/service/main.ts). Supply `NODE_EXTRA_CA_CERTS` when a
+required by [main.ts](src/service/main.ts) and its [gateway credential](src/service/agyn-gateway-auth.ts). Supply `NODE_EXTRA_CA_CERTS` when a
 local CA is required; do not disable TLS verification. Then start the configured
 host service:
 

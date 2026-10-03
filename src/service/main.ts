@@ -8,6 +8,7 @@
  * an exact execution/instance acknowledgement and workload ID. Shutdown leaves remote
  * work and durable leases for recovery rather than claiming release.
  * @see src/service/agyn-reporting-installer.ts
+ * @see src/service/agyn-gateway-auth.ts
  * @see src/service/worker.ts
  * @see src/service/http.ts
  */
@@ -16,7 +17,7 @@ import { readFileSync, statSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { spawn } from "node:child_process";
 import { z } from "zod";
-import { AgynClient } from "../agyn-client.js";
+import { agynClientFromEnvironment } from "./agyn-gateway-auth.js";
 import { AgynRuntimeDriver } from "./agyn-driver.js";
 import { DurableTaskStore } from "./task-store.js";
 import { ExecutionWorker } from "./worker.js";
@@ -63,7 +64,7 @@ const profileLimits = new Map(config.profiles.map(profile => [profile.id, {
 if (!statSync(config.reportingSetupExecutable).isFile()) throw new Error("reporting setup executable is missing");
 const store = new DurableTaskStore(config.dbPath);
 store.assertNotQuarantined();
-const client = new AgynClient(required("AGYN_GATEWAY_URL"), required("AGYN_TOKEN"), required("AGYN_ORGANIZATION_ID"), required("AGYN_IDENTITY_ID"));
+const client = await agynClientFromEnvironment();
 const driver = new AgynRuntimeDriver(client, config.profiles, async (execution, signal) => {
   const limits = profileLimits.get(execution.profileId);
   if (!limits) throw new Error("execution profile is not configured");

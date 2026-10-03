@@ -40,10 +40,15 @@ explicit Service target; these prerequisites stay with the operator:
 - The gateway must return a terminal-session WebSocket URL on that same
   terminal proxy Service. Agent pods need cluster DNS for the reporting URL.
 - Use a retaining storage class and pin the node when volumes are node-local.
-- The configuration Secret holds `service.json`, `credentials.json`,
-  `AGYN_TOKEN`, `AGYN_ORGANIZATION_ID` and `AGYN_IDENTITY_ID`; add `ca.pem`
-  only with `caCertificate: true`. A private image needs the pull Secret named
-  by `imagePullSecret` in the same namespace.
+- By default (`gatewayAuth: 'token-file'`) the service presents its projected
+  ServiceAccount token, audience `agyn-gateway`, as its gateway bearer. The
+  gateway must verify that audience against this cluster's ServiceAccount
+  issuer and map the `system:serviceaccount:aira-a2a:aira-a2a` subject to an
+  Agyn user; grant that user access to the organization before admitting tasks.
+- The configuration Secret holds `service.json`, `credentials.json` and
+  `AGYN_ORGANIZATION_ID`, plus `AGYN_TOKEN` and `AGYN_IDENTITY_ID` only with
+  `gatewayAuth: 'secret'`; add `ca.pem` only with `caCertificate: true`. A
+  private image needs the pull Secret named by `imagePullSecret` in the same namespace.
 
 Plain cluster HTTP is not end-to-end TLS; accept it only on a trusted node network.
 

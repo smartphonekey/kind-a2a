@@ -42,7 +42,7 @@ export class AgynRuntimeDriver implements RuntimeDriver {
     if (threads.length > 1 || !threads.length && recovering) throw new Error("ambiguous provisioned threads");
     const thread = threads[0] ?? await this.client.createInstanceThread(instance.meta.id, signal);
     const participants = new Set(thread.participants.map(participant => participant.id));
-    if (participants.size !== 2 || !participants.has(instance.meta.id) || !participants.has(this.client.identityId)) {
+    if (participants.size !== 2 || !participants.has(instance.meta.id) || !participants.has(await this.client.identity())) {
       throw new Error("task thread has unexpected participants");
     }
     return { instanceId: instance.meta.id, threadId: thread.id, profileId: execution.profileId };

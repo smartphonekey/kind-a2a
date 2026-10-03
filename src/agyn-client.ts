@@ -14,17 +14,45 @@ export class AgynRpcError extends Error {
   }
 }
 
+/**
+ * A fixed gateway bearer, or a source consulted before every request. A source that
+ * rejects fails that request; the client never sends it without a bearer.
+ * @see src/service/agyn-gateway-auth.ts
+ */
+export type AgynBearer = string | (() => Promise<string>);
+
 export class AgynClient {
+  private derivedIdentity?: Promise<string>;
+
+  /**
+   * @param identityId The caller's participant identity. Omit it to derive the identity once
+   * from UsersGateway.GetMe, e.g. for a gateway user created on first OIDC authentication.
+   */
   constructor(
     private readonly baseUrl: string,
-    private readonly token: string,
+    private readonly bearer: AgynBearer,
     readonly organizationId: string,
-    readonly identityId: string
+    readonly identityId?: string
   ) {}
+
+  /** Return the configured identity, or the authenticated caller's own user ID from GetMe. */
+  async identity(): Promise<string> {
+    if (this.identityId) return this.identityId;
+    // One shared lookup without a caller signal, bounded by the request timeout; failures are not cached.
+    const pending = this.derivedIdentity ??= this.call<{ user?: { meta?: { id?: unknown } } }>("UsersGateway", "GetMe", {}).then(response => {
+      const id = response.user?.meta?.id;
+      if (typeof id !== "string" || !id.trim()) throw new Error("Agyn GetMe returned no caller identity");
+      return id;
+    });
+    try { return await pending; } catch (error) {
+      if (this.derivedIdentity === pending) this.derivedIdentity = undefined;
+      throw error;
+    }
+  }
 
   async createThread(agentHandle: string, signal?: AbortSignal): Promise<AgynThread> {
     const response = await this.call<{ thread: AgynThread }>("ThreadsGateway", "CreateThread", {
-      participants: [{ participantId: this.identityId }, { participantNickname: agentHandle }],
+      participants: [{ participantId: await this.identity() }, { participantNickname: agentHandle }],
       organizationId: this.organizationId
     }, signal);
     return response.thread;
@@ -32,7 +60,7 @@ export class AgynClient {
 
   async sendMessage(threadId: string, body: string, signal?: AbortSignal): Promise<AgynMessage> {
     const response = await this.call<{ message: AgynMessage }>("ThreadsGateway", "SendMessage", {
-      threadId, senderId: this.identityId, body
+      threadId, senderId: await this.identity(), body
     }, signal);
     return response.message;
   }
@@ -69,13 +97,13 @@ export class AgynClient {
 
   async instanceThreads(instanceId: string, signal?: AbortSignal): Promise<AgynThread[]> {
     // GetThreads only permits querying the caller's own participant identity.
-    const threads = await this.pages<AgynThread>("ThreadsGateway", "GetThreads", { participantId: this.identityId }, "threads", signal);
+    const threads = await this.pages<AgynThread>("ThreadsGateway", "GetThreads", { participantId: await this.identity() }, "threads", signal);
     return threads.filter(thread => thread.participants.some(participant => participant.id === instanceId));
   }
 
   async createInstanceThread(instanceId: string, signal?: AbortSignal): Promise<AgynThread> {
     return (await this.call<{ thread: AgynThread }>("ThreadsGateway", "CreateThread", {
-      participants: [{ participantId: this.identityId }, { participantId: instanceId }], organizationId: this.organizationId
+      participants: [{ participantId: await this.identity() }, { participantId: instanceId }], organizationId: this.organizationId
     }, signal)).thread;
   }
 
@@ -106,9 +134,10 @@ export class AgynClient {
   }
 
   private async call<T>(service: string, method: string, body: unknown, signal?: AbortSignal): Promise<T> {
+    const token = typeof this.bearer === "string" ? this.bearer : await this.bearer();
     const response = await fetch(`${this.baseUrl.replace(/\/$/, "")}/agynio.api.gateway.v1.${service}/${method}`, {
       method: "POST",
-      headers: { authorization: `Bearer ${this.token}`, "content-type": "application/json" },
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
       body: JSON.stringify(body),
       signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000)
     });

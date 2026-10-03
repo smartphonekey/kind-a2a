@@ -22,18 +22,10 @@ jobs:
           cache-dependency-path: |
             package-lock.json
             web/package-lock.json
-      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
-        with:
-          terraform_version: "1.16.4"
-          terraform_wrapper: false
       # No cloud credentials, live state, deployment runners or provider calls.
       - run: npm ci --ignore-scripts
       - run: npm --prefix web ci --ignore-scripts
       - run: npm run build
       - run: node --test dist/cloudflare-access.test.js dist/service-browser.test.js scripts/cloudflare-manifests.test.mjs scripts/k8s-manifests.test.mjs
-      - run: terraform -chdir=infra/cloudflare fmt -check -recursive
-      - run: terraform -chdir=infra/cloudflare init -backend=false -input=false -lockfile=readonly
-      - run: terraform -chdir=infra/cloudflare validate
-      - run: terraform -chdir=infra/cloudflare test -no-color
       - run: npm exec --prefix web -- playwright install --with-deps chromium
       - run: npm run test:web

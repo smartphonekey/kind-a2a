@@ -86,9 +86,10 @@ promotion. No deployable production lock is shipped by this repository.
 
 ## Cloudflare Access
 
-[The Terraform root](infra/cloudflare/main.tf) requires explicit account, zone,
-hostname, IdP, tenant and allowed-domain inputs. Keep those in private JSON input
-files and supply a private backend configuration. Preserve the existing tenant
+The tunnel, Access application and DNS Terraform root is maintained in the
+operator's private infrastructure repository, not here. It requires explicit
+account, zone, hostname, IdP, tenant and allowed-domain inputs and a private
+backend configuration. Preserve the existing tenant
 identity and state; changing tenant values does not migrate task ownership.
 Inject provider credentials separately, never through committed variable files.
 

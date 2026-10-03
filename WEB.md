@@ -58,7 +58,7 @@ For a remote workspace, use Cloudflare Access with the operator's selected
 Google IdP, explicit allowed domains and exact browser origin;
 see [deployment prerequisites](KUBERNETES.md#cloudflare-access). Do not distribute
 the local operator credential to browser users. The [identity adapter](src/service/cloudflare-access.ts)
-and [Tunnel definition](infra/cloudflare/main.tf) own the verification contract.
+and the private Tunnel definition own the verification contract.
 
 Tasks are private per Access identity. Existing operator-owned tasks are not
 automatically reassigned, and recreating an Access user does not transfer their

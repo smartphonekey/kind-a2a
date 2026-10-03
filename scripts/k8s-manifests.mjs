@@ -68,18 +68,21 @@ export function serviceManifests(options = {}) {
  *
  * @remarks The `aira-a2a-config` Secret is still caller-owned and must hold
  * service.json, credentials.json, AGYN_TOKEN, AGYN_ORGANIZATION_ID and
- * AGYN_IDENTITY_ID, plus ca.pem only when `caCertificate` is true. Plain HTTP
+ * AGYN_IDENTITY_ID, plus ca.pem only when `caCertificate` is true. A private
+ * registry needs a caller-owned pull Secret named by `imagePullSecret`. Plain HTTP
  * is acceptable only on a cluster network the operator trusts; NetworkPolicy
  * rules here are additive and do not prove isolation. Platform pod labels must
  * be the exact selector labels of the platform's Deployments; a label that
  * matches nothing silently blocks egress, it does not widen it.
  */
-export function nativeServiceManifests({ image, agentIds, storageClassName, nodeName, platform, caCertificate = false, ...unexpected }) {
+export function nativeServiceManifests({ image, agentIds, storageClassName, nodeName, imagePullSecret, platform, caCertificate = false,
+  ...unexpected }) {
   assert.deepEqual(Object.keys(unexpected), [], 'unexpected native option');
   assertImage(image);
   assertAgentIds(agentIds);
   assert(dnsSubdomain(storageClassName), 'explicit storage class required');
   assert(nodeName === undefined || dnsSubdomain(nodeName), 'invalid node name');
+  assert(imagePullSecret === undefined || dnsSubdomain(imagePullSecret), 'invalid image pull Secret name');
   assert.equal(typeof caCertificate, 'boolean', 'caCertificate must be a boolean');
   assert(platform && typeof platform === 'object', 'explicit platform targets required');
   assert(dnsLabel.test(platform.namespace ?? ''), 'explicit platform namespace required');
@@ -147,6 +150,7 @@ export function nativeServiceManifests({ image, agentIds, storageClassName, node
       template: { metadata: { labels }, spec: {
         serviceAccountName: name, automountServiceAccountToken: false, enableServiceLinks: false,
         ...(nodeName ? { nodeSelector: { 'kubernetes.io/hostname': nodeName } } : {}),
+        ...(imagePullSecret ? { imagePullSecrets: [{ name: imagePullSecret }] } : {}),
         terminationGracePeriodSeconds: 90,
         securityContext: { runAsNonRoot: true, runAsUser: 1000, runAsGroup: 1000, fsGroup: 1000,
           fsGroupChangePolicy: 'OnRootMismatch', seccompProfile: { type: 'RuntimeDefault' } },

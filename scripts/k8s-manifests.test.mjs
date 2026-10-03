@@ -132,6 +132,16 @@ test('native topology mounts a private CA only when explicitly requested', () =>
   assert.equal(serviceManifests({ ...native, nodeName: undefined }).find(x => x.kind === 'Deployment').spec.template.spec.nodeSelector, undefined);
 });
 
+test('native topology names a private registry pull Secret only when one is given', () => {
+  const deployment = manifests => manifests.find(x => x.kind === 'Deployment');
+  assert.equal(deployment(serviceManifests(native)).spec.template.spec.imagePullSecrets, undefined);
+  const pulled = serviceManifests({ ...native, imagePullSecret: 'registry-pull' });
+  assert.deepEqual(deployment(pulled).spec.template.spec.imagePullSecrets, [{ name: 'registry-pull' }]);
+  for (const manifest of pulled) asKubernetesClientObject(manifest);
+  assert(!pulled.some(x => x.kind === 'Secret'));
+  assert.throws(() => serviceManifests({ ...native, imagePullSecret: 'Registry Pull' }), /pull Secret/);
+});
+
 test('native topology rejects implicit storage, platform targets and selectors', () => {
   const target = (key, change) => ({ ...native, platform: { ...native.platform, [key]: { ...native.platform[key], ...change } } });
   for (const change of [{ storageClassName: undefined }, { storageClassName: 'Local Path' }, { nodeName: 'NODE' }, { caCertificate: 'yes' },

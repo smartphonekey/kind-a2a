@@ -42,7 +42,8 @@ explicit Service target; these prerequisites stay with the operator:
 - Use a retaining storage class and pin the node when volumes are node-local.
 - The configuration Secret holds `service.json`, `credentials.json`,
   `AGYN_TOKEN`, `AGYN_ORGANIZATION_ID` and `AGYN_IDENTITY_ID`; add `ca.pem`
-  only with `caCertificate: true`.
+  only with `caCertificate: true`. A private image needs the pull Secret named
+  by `imagePullSecret` in the same namespace.
 
 Plain cluster HTTP is not end-to-end TLS; accept it only on a trusted node network.
 

@@ -17,9 +17,14 @@ import { reportingRouter } from "../reporting/http.js";
 import { SseWriter, type SseWriteOptions } from "./sse-writer.js";
 import { browserRouter, type BrowserOptions } from "./browser.js";
 
-/** maxRequestsPerOwner bounds open HTTP requests per router, independently of durable execution admission. */
+/**
+ * maxRequestsPerOwner bounds open HTTP requests per router, independently of durable execution admission.
+ * profiles mounts /agents/<id>/a2a and its card per profile; /a2a keeps profileId. As in the browser
+ * mounts, a profile endpoint selects the profile of new tasks only; follow-ups keep the stored profile.
+ */
 export type HttpOptions = {
   store: DurableTaskStore; card: AgentCard; profileId: string; authorize: Authorize;
+  profiles?: readonly { id: string; card: AgentCard }[];
   signal: AbortSignal; pollMs?: number; maxRequestsPerOwner?: number;
   sse?: SseWriteOptions;
   ready?: () => boolean;
@@ -39,8 +44,10 @@ export function createServiceApp(options: HttpOptions) {
   const app = express();
   app.disable("x-powered-by");
   const active = new Map<string, number>();
-  const handler = new DurableA2AHandler(options.store, options.card, options.profileId, options.pollMs);
-  const transport = new JsonRpcTransportHandler(handler);
+  const profiles = options.profiles ?? [];
+  // Express routing ignores case, so IDs differing only by case would share one route.
+  if (new Set(profiles.map(profile => profile.id.toLowerCase())).size !== profiles.length ||
+    profiles.some(profile => !/^[A-Za-z0-9_-]{1,128}$/.test(profile.id))) throw new Error("machine profile IDs must be unique and URL-safe");
   app.use((_request, response, next) => {
     response.setHeader("cache-control", "no-store");
     response.setHeader("x-content-type-options", "nosniff");
@@ -61,6 +68,9 @@ export function createServiceApp(options: HttpOptions) {
     response.status(open ? 200 : 503).json({ open });
   });
   app.get("/.well-known/agent-card.json", (_request, response) => response.json(AgentCard.toJSON(options.card)));
+  for (const profile of profiles) {
+    app.get(`/agents/${profile.id}/.well-known/agent-card.json`, (_request, response) => response.json(AgentCard.toJSON(profile.card)));
+  }
   app.use("/reporting", reportingRouter(options.store));
   if (options.browser) {
     const browser = browserRouter(options, options.browser);
@@ -92,74 +102,79 @@ export function createServiceApp(options: HttpOptions) {
     next();
   });
   app.use(express.json({ limit: "160kb", strict: true }));
-  app.post("/a2a", async (request, response) => {
-    const principal = response.locals.principal as Principal;
-    const disconnected = new AbortController();
-    let authFailure: 401 | 503 | undefined;
-    const abort = () => disconnected.abort();
-    response.once("close", abort);
-    request.once("aborted", abort);
-    if (request.aborted || response.destroyed) abort();
-    const signal = AbortSignal.any([disconnected.signal, options.signal]);
-    let writer: SseWriter | undefined;
-    const context = new ServerCallContext({
-      user: { isAuthenticated: true, userName: principal.subject }, tenant: principal.tenant,
-      requestedVersion: request.header("A2A-Version") ?? "0.3",
-      state: new Map<string, unknown>([[PRINCIPAL, principal], [SIGNAL, signal], [CHECK_AUTH, async () => {
-        let current: Principal | undefined;
-        try { current = await options.authorize(request.headers.authorization); }
-        catch { authFailure = 503; abort(); throw new Error("authentication service unavailable"); }
-        if (!current || current.tenant !== principal.tenant || current.subject !== principal.subject) {
-          authFailure = 401; abort();
-          throw new Error("authorization expired");
-        }
-      }]])
-    });
-    try {
-      signal.throwIfAborted();
-      validateVersion(context.requestedVersion, options.card, "JSONRPC");
-      const result = await transport.handle(request.body, context);
-      signal.throwIfAborted();
-      if (!(Symbol.asyncIterator in result)) {
-        const error = "error" in result ? result.error as ReturnType<typeof JsonRpcTransportHandler.mapToJSONRPCError> : undefined;
-        if (error?.code === -32603) result.error = { code: -32603, message: "Internal service error" };
-        response.json(result); return;
-      }
-      // Keep the SDK's parser/serializer; own only HTTP streaming lifetime and backpressure.
-      for await (const event of result) {
+  const machineEndpoint = (card: AgentCard, profileId: string) => {
+    const transport = new JsonRpcTransportHandler(new DurableA2AHandler(options.store, card, profileId, options.pollMs));
+    return async (request: Request, response: Response) => {
+      const principal = response.locals.principal as Principal;
+      const disconnected = new AbortController();
+      let authFailure: 401 | 503 | undefined;
+      const abort = () => disconnected.abort();
+      response.once("close", abort);
+      request.once("aborted", abort);
+      if (request.aborted || response.destroyed) abort();
+      const signal = AbortSignal.any([disconnected.signal, options.signal]);
+      let writer: SseWriter | undefined;
+      const context = new ServerCallContext({
+        user: { isAuthenticated: true, userName: principal.subject }, tenant: principal.tenant,
+        requestedVersion: request.header("A2A-Version") ?? "0.3",
+        state: new Map<string, unknown>([[PRINCIPAL, principal], [SIGNAL, signal], [CHECK_AUTH, async () => {
+          let current: Principal | undefined;
+          try { current = await options.authorize(request.headers.authorization); }
+          catch { authFailure = 503; abort(); throw new Error("authentication service unavailable"); }
+          if (!current || current.tenant !== principal.tenant || current.subject !== principal.subject) {
+            authFailure = 401; abort();
+            throw new Error("authorization expired");
+          }
+        }]])
+      });
+      try {
         signal.throwIfAborted();
-        if (!response.headersSent) {
-          writer = new SseWriter(response, signal, abort, options.sse);
-          response.setHeader("content-type", "text/event-stream");
-          response.setHeader("x-accel-buffering", "no");
-          response.flushHeaders();
+        validateVersion(context.requestedVersion, card, "JSONRPC");
+        const result = await transport.handle(request.body, context);
+        signal.throwIfAborted();
+        if (!(Symbol.asyncIterator in result)) {
+          const error = "error" in result ? result.error as ReturnType<typeof JsonRpcTransportHandler.mapToJSONRPCError> : undefined;
+          if (error?.code === -32603) result.error = { code: -32603, message: "Internal service error" };
+          response.json(result); return;
         }
-        await writer!.write(formatSSEEvent(event));
-      }
-      response.end();
-    } catch (error) {
-      if (response.destroyed) return;
-      if (response.headersSent) {
-        if (!signal.aborted) {
-          const mapped = JsonRpcTransportHandler.mapToJSONRPCError(error);
-          const safe = mapped.code === -32603 ? { code: -32603, message: "Internal service error" } : mapped;
-          await writer?.write(formatSSEErrorEvent({ jsonrpc: "2.0", id: rpcId(request), error: safe })).catch(() => response.destroy());
+        // Keep the SDK's parser/serializer; own only HTTP streaming lifetime and backpressure.
+        for await (const event of result) {
+          signal.throwIfAborted();
+          if (!response.headersSent) {
+            writer = new SseWriter(response, signal, abort, options.sse);
+            response.setHeader("content-type", "text/event-stream");
+            response.setHeader("x-accel-buffering", "no");
+            response.flushHeaders();
+          }
+          await writer!.write(formatSSEEvent(event));
         }
-        response.end(); return;
+        response.end();
+      } catch (error) {
+        if (response.destroyed) return;
+        if (response.headersSent) {
+          if (!signal.aborted) {
+            const mapped = JsonRpcTransportHandler.mapToJSONRPCError(error);
+            const safe = mapped.code === -32603 ? { code: -32603, message: "Internal service error" } : mapped;
+            await writer?.write(formatSSEErrorEvent({ jsonrpc: "2.0", id: rpcId(request), error: safe })).catch(() => response.destroy());
+          }
+          response.end(); return;
+        }
+        if (signal.aborted) {
+          if (authFailure === 401) response.setHeader("www-authenticate", "Bearer");
+          response.sendStatus(authFailure ?? 503); return;
+        }
+        const mapped = JsonRpcTransportHandler.mapToJSONRPCError(error);
+        if (mapped.code === -32603) mapped.message = "Internal service error";
+        response.json({ jsonrpc: "2.0", id: rpcId(request), error: mapped });
+      } finally {
+        await writer?.close();
+        response.off("close", abort);
+        request.off("aborted", abort);
       }
-      if (signal.aborted) {
-        if (authFailure === 401) response.setHeader("www-authenticate", "Bearer");
-        response.sendStatus(authFailure ?? 503); return;
-      }
-      const mapped = JsonRpcTransportHandler.mapToJSONRPCError(error);
-      if (mapped.code === -32603) mapped.message = "Internal service error";
-      response.json({ jsonrpc: "2.0", id: rpcId(request), error: mapped });
-    } finally {
-      await writer?.close();
-      response.off("close", abort);
-      request.off("aborted", abort);
-    }
-  });
+    };
+  };
+  app.post("/a2a", machineEndpoint(options.card, options.profileId));
+  for (const profile of profiles) app.post(`/agents/${profile.id}/a2a`, machineEndpoint(profile.card, profile.id));
   app.get("/tasks/:taskId/events", (request, response) => {
     const cursor = z.coerce.number().int().safe().nonnegative().parse(request.query.after ?? 0);
     const limit = z.coerce.number().int().min(1).max(1000).parse(request.query.limit ?? 100);

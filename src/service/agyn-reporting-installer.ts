@@ -21,7 +21,7 @@ import { gzipSync } from "node:zlib";
 import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
 import { agynClientFromEnvironment } from "./agyn-gateway-auth.js";
-import { deliverBinding, reportingTargetReady } from "./agyn-terminal.js";
+import { deliverBinding, receiverCommand, reportingTargetReady } from "./agyn-terminal.js";
 import { setupFailure, type SetupStage } from "./setup-diagnostics.js";
 
 let stage: SetupStage = "input";
@@ -56,7 +56,7 @@ async function main() {
     if (workload?.status === "WORKLOAD_STATUS_FAILED") throw new Error("runtime failed");
     if (workload?.status === "WORKLOAD_STATUS_RUNNING" && reportingTargetReady(workload)) {
       stage = "ticket";
-      const ticket = await client.terminalSession(workload.meta.id, ["/agyn/bin/node", "-e", receiver], signal);
+      const ticket = await client.terminalSession(workload.meta.id, receiverCommand(receiver), signal);
       stage = "delivery";
       await deliverBinding(ticket, { ...binding, workloadId: workload.meta.id, runtimeSha256 }, JSON.stringify({
         ...binding, workloadId: workload.meta.id, bundle: gzipSync(bundle).toString("base64"), reporting: { ...binding.reporting, allowInsecureLocal }

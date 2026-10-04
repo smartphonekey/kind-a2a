@@ -25,6 +25,16 @@ export function reportingTargetReady(workload: AgynWorkload): boolean {
   return main[0]?.status === "CONTAINER_STATUS_RUNNING";
 }
 
+/**
+ * TerminalGateway command for the receiver source.
+ * @remarks The PTY merges stderr into the line protocol, so Node must not print its own
+ * process warnings: under the workload proxy environment (NODE_USE_ENV_PROXY), Node 22
+ * prints an EnvHttpProxyAgent warning right after the ready line, which fails delivery.
+ */
+export function receiverCommand(source: string): string[] {
+  return ["/agyn/bin/node", "--no-warnings", "-e", source];
+}
+
 type Binding = { executionId: string; instanceId: string; workloadId: string; runtimeSha256: string };
 type DeliveryReason = "aborted" | "socket_error" | "closed" | "handshake" | "remote_exit" | "output_limit" | "protocol";
 /** Sanitized delivery progress only; payloadAttempted or an ACK does not make a failed delivery safe to replay. */

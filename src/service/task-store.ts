@@ -42,6 +42,9 @@ export type Admission = { maxActive: number | null; reserved: number };
 /** Durable admission switch; closing does not fence or stop already admitted workloads. */
 export type AdmissionControl = { generation: number; open: boolean; reason: string; changedAt: number };
 
+/** The conflict a reused artifactId raises; the reporting endpoint tells the agent so. */
+export const duplicateArtifact = "artifactId already exists for this execution";
+
 export class TaskStoreError extends Error {
   constructor(readonly code: "not_found" | "conflict" | "invalid" | "capacity" | "stale_lease", message: string) {
     super(message);
@@ -562,7 +565,7 @@ export class DurableTaskStore {
       }
       if (report.kind === "artifact" && this.db.prepare(`SELECT 1 FROM task_events WHERE execution_id=?
           AND kind='agent.artifact' AND json_extract(payload_json,'$.artifactId')=?`).get(executionId, report.artifactId)) {
-        throw new TaskStoreError("conflict", "artifactId already exists for this execution");
+        throw new TaskStoreError("conflict", duplicateArtifact);
       }
       if (report.kind === "outcome") this.db.prepare("UPDATE task_executions SET outcome_json=? WHERE id=?")
         .run(JSON.stringify(report), executionId);

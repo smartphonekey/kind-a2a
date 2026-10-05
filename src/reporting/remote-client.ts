@@ -13,7 +13,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { z } from "zod";
 import { reportingConfig } from "./config.js";
-import type { ReportingClient } from "./mcp.js";
+import { refusalText, ReportRefusal, type ReportingClient } from "./mcp.js";
 import { reportSchema } from "../service/events.js";
 
 /**
@@ -36,7 +36,12 @@ export function remoteReportingClient(configFile: string): ReportingClient {
         await client.connect(transport);
         const { kind, ...args } = event;
         const result = await client.callTool({ name: `report_${kind}`, arguments: args });
-        if (result.isError) throw new Error("report was not acknowledged");
+        if (result.isError) {
+          // Only the service's exact refusal text is relayed; anything else stays ambiguous.
+          const text = z.array(z.object({ type: z.literal("text"), text: z.string() }).passthrough()).safeParse(result.content).data?.[0]?.text;
+          const reason = (Object.keys(refusalText) as (keyof typeof refusalText)[]).find(key => refusalText[key] === text);
+          throw reason ? new ReportRefusal(reason) : new Error("report was not acknowledged");
+        }
         return z.object({ executionId: z.string().min(1), sequence: z.number().int().positive(), duplicate: z.boolean() }).parse(result.structuredContent);
       } finally { await client.close(); }
     },

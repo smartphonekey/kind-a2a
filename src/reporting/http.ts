@@ -13,9 +13,9 @@ import { Router } from "express";
 import express from "express";
 import { z } from "zod";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { createReportingMcp } from "./mcp.js";
+import { createReportingMcp, ReportRefusal } from "./mcp.js";
 import { codexStopOutput } from "./stop-check.js";
-import { DurableTaskStore } from "../service/task-store.js";
+import { DurableTaskStore, duplicateArtifact, TaskStoreError } from "../service/task-store.js";
 
 /**
  * Mount beneath /reporting. MCP is stateless, POST-only and closed per request;
@@ -48,7 +48,13 @@ export function reportingRouter(store: DurableTaskStore): Router {
   router.post("/mcp", async (request, response) => {
     const { instanceId, executionId } = response.locals.reporter;
     const server = createReportingMcp({
-      report: async event => ({ ...store.report(instanceId, executionId, event), executionId }),
+      report: async event => {
+        try { return { ...store.report(instanceId, executionId, event), executionId }; }
+        catch (error) {
+          if (error instanceof TaskStoreError && error.code === "conflict" && error.message === duplicateArtifact) throw new ReportRefusal("duplicate_artifact");
+          throw error;
+        }
+      },
       status: async () => store.reportingStatus(instanceId, executionId)
     });
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });

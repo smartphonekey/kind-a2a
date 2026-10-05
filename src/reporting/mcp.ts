@@ -44,6 +44,20 @@ export interface ReportingClient {
  * the task after settlement. Backend failures become sanitized MCP errors,
  * never receipts or automatic retries. The caller owns transport and closure.
  */
+/**
+ * A definitive refusal the agent can act on. Unlike a delivery failure it is not
+ * ambiguous: repeating the same report cannot succeed, so the tool says what to change.
+ */
+export const refusalText = {
+  duplicate_artifact: "This artifactId was already used in this execution and cannot be replaced. Publish the complete text under a new artifactId."
+} as const;
+export class ReportRefusal extends Error {
+  constructor(readonly reason: keyof typeof refusalText) {
+    super(refusalText[reason]);
+    this.name = "ReportRefusal";
+  }
+}
+
 export function createReportingMcp(client: ReportingClient): McpServer {
   const server = new McpServer({ name: "execution-reporting", version: "0.1.0" });
   const eventId = z.string().min(1).max(128).describe("Unique event ID within this execution. Reuse it when retrying the same report.");
@@ -53,7 +67,8 @@ export function createReportingMcp(client: ReportingClient): McpServer {
     try {
       const receipt = await client.report(event);
       return { content: [{ type: "text" as const, text: JSON.stringify(receipt) }], structuredContent: receipt };
-    } catch {
+    } catch (error) {
+      if (error instanceof ReportRefusal) return { isError: true, content: [{ type: "text" as const, text: refusalText[error.reason] }] };
       // Transport errors may contain endpoint credentials or private infrastructure details.
       return { isError: true, content: [{ type: "text" as const,
         text: "Report was not acknowledged. Retry the same event ID and content, or check execution status. Do not repeat the work itself." }] };

@@ -6,7 +6,7 @@ import { z } from "zod";
 import { Role, TaskState } from "@a2a-js/sdk";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { createReportingMcp, type ExecutionStatus } from "./reporting/mcp.js";
+import { createReportingMcp, refusalText, ReportRefusal, type ExecutionStatus } from "./reporting/mcp.js";
 import { codexStopOutput, evaluateStop } from "./reporting/stop-check.js";
 import { DurableTaskStore } from "./service/task-store.js";
 
@@ -94,4 +94,17 @@ test("reporting MCP: backend failures cannot masquerade as receipts or disclose 
     assert.equal(result.structuredContent, undefined);
     assert.equal(JSON.stringify(result).includes("secret-token"), false);
   }
+});
+
+test("reporting MCP: a definitive refusal names its reason instead of an ambiguous retry", async t => {
+  const server = createReportingMcp({ report: async () => { throw new ReportRefusal("duplicate_artifact"); }, status: async () => { throw new Error("unused"); } });
+  const client = new Client({ name: "test-agent", version: "1.0.0" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport); await client.connect(clientTransport);
+  t.after(async () => { await client.close(); await server.close(); });
+  const result = await client.callTool({ name: "report_artifact", arguments: { eventId: "a2", artifactId: "report", name: "report", text: "full" } });
+  assert.equal(result.isError, true);
+  assert.equal(result.structuredContent, undefined);
+  assert.deepEqual(result.content, [{ type: "text", text: refusalText.duplicate_artifact }]);
+  assert.doesNotMatch(refusalText.duplicate_artifact, /Retry the same event ID/);
 });

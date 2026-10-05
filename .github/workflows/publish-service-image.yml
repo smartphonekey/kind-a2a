@@ -41,7 +41,9 @@ env:
 jobs:
   image:
     name: Build and publish commit image
-    runs-on: ubuntu-24.04
+    # The org's self-hosted runner scale set. Per-pod Docker daemon runs the
+    # pinned BuildKit (docker-container driver). amd64-only, so no QEMU/binfmt.
+    runs-on: hetzner-b2c
     timeout-minutes: 30
     # Only main logs in, pushes to GHCR and attests; other refs push to the job-local registry.
     permissions:

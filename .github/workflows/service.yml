@@ -12,7 +12,7 @@ jobs:
     # does not depend on GitHub-hosted minutes. Its unprivileged image has no
     # root, no C compiler and no xz.
     runs-on: hetzner-b2c
-    timeout-minutes: 20
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -46,6 +46,8 @@ jobs:
       - run: npm run build
       - run: npm run docs:check
       - run: npm run test:code-map:go
-      - run: node --test --test-concurrency=2 dist/*.test.js tooling/code-map/*.test.mjs
+      # Serialize tests: ARC pods are smaller than ubuntu-24.04 VMs; concurrent
+      # suites made the 5s service-entrypoint startup and 3s worker until() flake.
+      - run: node --test --test-concurrency=1 dist/*.test.js tooling/code-map/*.test.mjs
       - run: node --test scripts/release-lock.test.mjs scripts/publish-service-image.test.mjs
       # Model-free checks only. No credentials, cluster access, deployment or provider calls.

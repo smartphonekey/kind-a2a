@@ -13,6 +13,9 @@ import { Message } from "@a2a-js/sdk";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { DurableTaskStore } from "./service/task-store.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { createReportingMcp, refusalText } from "./reporting/mcp.js";
+import { remoteReportingClient } from "./reporting/remote-client.js";
 import { createServiceApp } from "./service/http.js";
 import { serviceCard } from "./service/card.js";
 
@@ -115,4 +118,39 @@ test("stop hook executable: real subprocess, bounded reminders, missing credenti
   assert.equal((await hook(join(directory, "missing.json"))).continue, false);
   writeFileSync(configPath, JSON.stringify({ url: "http://127.0.0.1:1/reporting", token, allowInsecureLocal: true }), { mode: 0o600 });
   assert.equal((await hook()).continue, false);
+});
+
+test("reporting relay: a reused artifactId is refused by name end to end; other failures stay ambiguous", async t => {
+  const store = new DurableTaskStore(":memory:");
+  const one = running(store);
+  const token = store.issueReportingCredential(one.task.execution.id, 60_000);
+  const abort = new AbortController();
+  const server = createServer(createServiceApp({ store, card: serviceCard("http://localhost"), profileId: "agent",
+    authorize: async () => undefined, signal: abort.signal }));
+  server.listen(0, "127.0.0.1"); await once(server, "listening");
+  const address = server.address(); assert(address && typeof address !== "string");
+  const dir = mkdtempSync(join(tmpdir(), "relay-"));
+  const config = join(dir, "binding.json");
+  writeFileSync(config, JSON.stringify({ url: `http://127.0.0.1:${address.port}/reporting`, token, allowInsecureLocal: true }), { mode: 0o600 });
+  // The agent's stdio relay as the runtime builds it: the pod-side MCP over the remote client.
+  const relay = createReportingMcp(remoteReportingClient(config));
+  const client = new Client({ name: "agent", version: "1.0.0" });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await relay.connect(serverTransport); await client.connect(clientTransport);
+  t.after(async () => { await client.close(); await relay.close(); abort.abort(); server.closeAllConnections();
+    await new Promise<void>(r => server.close(() => r())); store.close(); rmSync(dir, { recursive: true, force: true }); });
+  const artifact = (eventId: string, artifactId: string, text: string) => client.callTool({ name: "report_artifact", arguments: { eventId, artifactId, name: artifactId, text } });
+  assert.equal((await artifact("a1", "report", "x")).isError, undefined);
+  // The same artifactId under a new event (a full report after a placeholder) is refused by name.
+  const reused = await artifact("a2", "report", "the complete report");
+  assert.equal(reused.isError, true);
+  assert.deepEqual(reused.content, [{ type: "text", text: refusalText.duplicate_artifact }]);
+  // A fresh artifactId with the full text is accepted.
+  assert.equal((await artifact("a3", "report-final", "the complete report")).isError, undefined);
+  assert.deepEqual(store.get({ tenant: "org", subject: "alice" }, one.task.task.id).artifacts.map(a => a.name), ["report", "report-final"]);
+  // Any other refusal (here: events after the outcome) stays the ambiguous retry advice.
+  assert.equal((await client.callTool({ name: "report_outcome", arguments: { eventId: "done", outcome: "turn_done", message: "done" } })).isError, undefined);
+  const late = await artifact("a4", "late", "x");
+  assert.equal(late.isError, true);
+  assert.match(JSON.stringify(late.content), /Report was not acknowledged/);
 });

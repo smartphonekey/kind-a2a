@@ -9,8 +9,8 @@ permissions:
   contents: read
 jobs:
   cloudflare-ui:
-    # The org's self-hosted runner scale set (ARC on the Hetzner node).
-    # Unprivileged image: no root/apt, so Playwright skips --with-deps.
+    # The org's ARC runner scale set on the Hetzner node.
+    # Unprivileged image: no root/apt for Playwright host deps.
     runs-on: hetzner-b2c
     timeout-minutes: 15
     steps:
@@ -37,7 +37,12 @@ jobs:
       - run: terraform -chdir=infra/cloudflare init -backend=false -input=false -lockfile=readonly
       - run: terraform -chdir=infra/cloudflare validate
       - run: terraform -chdir=infra/cloudflare test -no-color
-      # --with-deps needs apt/sudo; the ARC image is unprivileged. Browser
-      # install alone matches WEB.md; shared libs come from the runner image.
-      - run: npm exec --prefix web -- playwright install chromium
-      - run: npm run test:web
+      # Host Chromium needs apt libs (libnspr4, …); the ARC image has no root.
+      # Per-pod Docker runs the pinned Playwright image, which already has browsers.
+      - name: Run web tests in Playwright container
+        run: |
+          docker run --rm --network host --ipc=host \
+            -v "$PWD:/work" -w /work \
+            -e HOME=/tmp \
+            mcr.microsoft.com/playwright:v1.63.0-jammy \
+            bash -lc 'npm run test:web'

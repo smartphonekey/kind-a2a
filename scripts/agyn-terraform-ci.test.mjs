@@ -14,7 +14,7 @@ test("agent-definition validation reports on every pull request without deployme
   const validate = workflow.jobs.validate;
   assert.equal(validate.name ?? "validate", "validate");
   assert.equal(validate.if, undefined);
-  assert.equal(validate["runs-on"], "ubuntu-24.04");
+  assert.equal(validate["runs-on"], "hetzner-b2c");
   assert.equal(validate.environment, undefined);
 });
 

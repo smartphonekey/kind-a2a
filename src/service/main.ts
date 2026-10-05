@@ -17,6 +17,7 @@ import { readFileSync, statSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { spawn } from "node:child_process";
 import { z } from "zod";
+import { TaskState } from "@a2a-js/sdk";
 import { agynClientFromEnvironment } from "./agyn-gateway-auth.js";
 import { AgynRuntimeDriver } from "./agyn-driver.js";
 import { DurableTaskStore } from "./task-store.js";
@@ -101,7 +102,9 @@ const stopping = new AbortController();
 const worker = new ExecutionWorker(store, driver, { concurrency: config.concurrency, leaseMs: 60_000, pollMs: 1000,
   turnTimeoutMs: config.turnTimeoutMs,
   profileTurnTimeoutMs: new Map([...profileLimits].map(([id, limits]) => [id, limits.turnTimeoutMs])),
-  onError: event => console.error(JSON.stringify({ kind: "worker.error", ...event })) });
+  onError: event => console.error(JSON.stringify({ kind: "worker.error", ...event })),
+  // Log every deletion of a terminal task's instance and workspace; the A2A task record stays.
+  onRetired: event => console.log(JSON.stringify({ kind: "runtime.retired", ...event, state: TaskState[event.state] })) });
 const server = createServer(createServiceApp({ store, card: serviceCard(config.publicUrl), profileId: config.defaultProfile,
   profiles: config.profiles.map(({ id }) => ({ id, card: serviceCard(config.publicUrl, id) })),
   authorize: fileAuthorizer(config.credentialsFile), signal: stopping.signal,

@@ -46,6 +46,9 @@ const schema = z.object({
   concurrency: z.number().int().min(1).max(32).default(2),
   httpShutdownGraceMs: z.number().int().min(100).max(60_000).default(5000),
   turnTimeoutMs: z.number().int().min(1000).max(43_200_000).default(600_000),
+  // Delete each terminal task's Agyn instance and workspace. The service identity must be
+  // allowed to remove instance nicknames; see AgynRuntimeDriver.retire.
+  retireTerminalTasks: z.boolean().default(false),
   browser: z.object({ origin: z.string().url(), assetsPath: pathSchema,
     cloudflareAccess: cloudflareAccessSchema.optional() }).strict().optional()
 }).strict();
@@ -100,7 +103,7 @@ const driver = new AgynRuntimeDriver(client, config.profiles, async (execution, 
 });
 const stopping = new AbortController();
 const worker = new ExecutionWorker(store, driver, { concurrency: config.concurrency, leaseMs: 60_000, pollMs: 1000,
-  turnTimeoutMs: config.turnTimeoutMs,
+  turnTimeoutMs: config.turnTimeoutMs, retireTerminalRuntimes: config.retireTerminalTasks,
   profileTurnTimeoutMs: new Map([...profileLimits].map(([id, limits]) => [id, limits.turnTimeoutMs])),
   onError: event => console.error(JSON.stringify({ kind: "worker.error", ...event })),
   // Log every deletion of a terminal task's instance and workspace; the A2A task record stays.

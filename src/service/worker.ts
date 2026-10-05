@@ -40,6 +40,11 @@ export type RetirementEvent = { taskId: string; instanceId: string; profileId: s
 export type WorkerOptions = {
   concurrency: number; leaseMs: number; pollMs: number; turnTimeoutMs: number;
   profileTurnTimeoutMs?: ReadonlyMap<string, number>;
+  /**
+   * Retire terminal tasks' runtimes through the driver; off unless set. The driver's
+   * credential must be allowed to delete them (see AgynRuntimeDriver.retire).
+   */
+  retireTerminalRuntimes?: boolean;
   /** Interval between sweeps for terminal tasks' runtimes; failed retirements back off up to an hour. */
   retireIntervalMs?: number;
   workerId?: string; onError?: (error: { executionId: string; phase: string; retrying: boolean; taskId?: string }) => void;
@@ -70,7 +75,7 @@ export class ExecutionWorker {
   start(): void {
     if (this.loop) throw new Error("worker already started");
     this.loop = this.schedule();
-    if (this.driver.retire) this.retiring = this.retireTerminalRuntimes();
+    if (this.options.retireTerminalRuntimes && this.driver.retire) this.retiring = this.retireTerminalRuntimes();
   }
 
   /** Abort and join local jobs, leaving durable leases for recovery; this is not a remote-workload drain. */

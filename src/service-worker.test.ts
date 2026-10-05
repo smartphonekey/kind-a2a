@@ -13,7 +13,8 @@ import { ExecutionWorker, type RuntimeDriver } from "./service/worker.js";
 const scope = { tenant: "org", subject: "alice" };
 const input = (taskId = "") => Message.fromJSON({ messageId: randomUUID(), taskId, role: "ROLE_USER", parts: [{ text: "work" }] });
 async function until(predicate: () => boolean): Promise<void> {
-  const deadline = Date.now() + 3000;
+  // ARC runners are smaller than ubuntu-24.04; dual-connection SQLite + busy_timeout needs headroom.
+  const deadline = Date.now() + 20_000;
   while (!predicate() && Date.now() < deadline) await delay(5);
   assert(predicate(), "condition did not become true");
 }

@@ -122,6 +122,11 @@ export class AgynRuntimeDriver implements RuntimeDriver {
    * labelled for this task, of the pinned agent class and holding no unconfirmed
    * workload, is deleted. An already TERMINATED instance is a no-op. Agyn soft-deletes
    * the instance; the orchestrator's checked volume removal then deletes the claim.
+   * Agyn's DeleteInstance also removes the instance nickname as the caller, which the
+   * identity service allows only with can_add_member or can_manage_members on the
+   * organization; an agent owner that is only an organization member is refused after
+   * its instance authorization was removed and restored. Enable retirement only for a
+   * caller that holds that permission.
    * @see orchestrator::internal/reconciler/volume_reconcile
    */
   async retire(taskId: string, runtime: Runtime, signal: AbortSignal): Promise<{ deleted: boolean }> {

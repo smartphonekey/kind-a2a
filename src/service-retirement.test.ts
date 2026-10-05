@@ -102,7 +102,7 @@ test("retirement: the worker deletes each terminal runtime once, logs it and ret
   const waiting = turn(store, "turn_done").task.id;
   const events: RetirementEvent[] = []; const errors: { phase: string; taskId?: string }[] = [];
   const worker = new ExecutionWorker(store, driver, { concurrency: 1, leaseMs: 150, pollMs: 5, turnTimeoutMs: 5000, retireIntervalMs: 5,
-    onRetired: event => events.push(event), onError: error => errors.push(error) });
+    retireTerminalRuntimes: true, onRetired: event => events.push(event), onError: error => errors.push(error) });
   t.after(async () => { await worker.stop(); store.close(); });
   worker.start();
   await until(() => events.length === 1);
@@ -116,13 +116,16 @@ test("retirement: the worker deletes each terminal runtime once, logs it and ret
   assert(!driver.retired.includes(waiting));
 });
 
-test("retirement: a worker without a retire hook keeps every runtime", async t => {
-  const store = new DurableTaskStore(":memory:"); const { retire: _unused, ...driver } = new Driver();
+test("retirement: a worker without a retire hook or without opting in keeps every runtime", async t => {
+  const store = new DurableTaskStore(":memory:"); const { retire: _unused, ...hookless } = new Driver(); const capable = new Driver();
   turn(store, "task_completed");
-  const worker = new ExecutionWorker(store, driver, { concurrency: 1, leaseMs: 150, pollMs: 5, turnTimeoutMs: 5000, retireIntervalMs: 5 });
-  t.after(async () => { await worker.stop(); store.close(); });
-  worker.start(); await delay(50);
+  const options = { concurrency: 1, leaseMs: 150, pollMs: 5, turnTimeoutMs: 5000, retireIntervalMs: 5 };
+  const workers = [new ExecutionWorker(store, hookless, { ...options, retireTerminalRuntimes: true }), new ExecutionWorker(store, capable, options)];
+  t.after(async () => { for (const worker of workers) await worker.stop(); store.close(); });
+  for (const worker of workers) worker.start();
+  await delay(50);
   assert.equal(store.retirableRuntimes(10).length, 1);
+  assert.deepEqual(capable.retired, []);
 });
 
 test("Agyn driver: retire deletes only this task's released instance and confirms TERMINATED", async t => {

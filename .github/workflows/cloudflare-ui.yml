@@ -9,7 +9,9 @@ permissions:
   contents: read
 jobs:
   cloudflare-ui:
-    runs-on: ubuntu-24.04
+    # The org's self-hosted runner scale set (ARC on the Hetzner node).
+    # Unprivileged image: no root/apt, so Playwright skips --with-deps.
+    runs-on: hetzner-b2c
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -35,5 +37,7 @@ jobs:
       - run: terraform -chdir=infra/cloudflare init -backend=false -input=false -lockfile=readonly
       - run: terraform -chdir=infra/cloudflare validate
       - run: terraform -chdir=infra/cloudflare test -no-color
-      - run: npm exec --prefix web -- playwright install --with-deps chromium
+      # --with-deps needs apt/sudo; the ARC image is unprivileged. Browser
+      # install alone matches WEB.md; shared libs come from the runner image.
+      - run: npm exec --prefix web -- playwright install chromium
       - run: npm run test:web

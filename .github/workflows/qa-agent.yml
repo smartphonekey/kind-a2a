@@ -8,7 +8,8 @@ permissions:
   contents: read
 jobs:
   qa-contracts:
-    runs-on: ubuntu-24.04
+    # The org's self-hosted runner scale set (ARC on the Hetzner node).
+    runs-on: hetzner-b2c
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5

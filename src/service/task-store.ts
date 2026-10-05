@@ -642,6 +642,39 @@ export class DurableTaskStore {
     });
   }
 
+  /**
+   * Terminal tasks whose bound runtime has not been retired, least recently updated first.
+   * @remarks Follow-ups reuse only their own task's runtime and terminal tasks reject new
+   * turns, so a terminal task with every execution settled can never use its runtime again.
+   * INPUT_REQUIRED, AUTH_REQUIRED and recovery-blocked tasks are not terminal and keep it.
+   */
+  retirableRuntimes(limit: number): { taskId: string; state: TaskState; runtime: Runtime }[] {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw new TaskStoreError("invalid", "invalid retirement page size");
+    const states = [...terminal];
+    const rows = this.db.prepare(`SELECT t.id, json_extract(t.task_json,'$.status.state') AS state, r.instance_id, r.thread_id, r.profile_id
+      FROM execution_tasks t JOIN runtime_bindings r ON r.task_id=t.id
+      WHERE json_extract(t.task_json,'$.status.state') IN (${states.map(() => "?").join(",")})
+        AND NOT EXISTS (SELECT 1 FROM task_executions e WHERE e.task_id=t.id AND e.phase!='settled')
+        AND NOT EXISTS (SELECT 1 FROM task_events v WHERE v.task_id=t.id AND v.kind='runtime.retired')
+      ORDER BY t.updated_at, t.id LIMIT ?`).all(...states, limit) as Row[];
+    return rows.map(row => ({ taskId: String(row.id), state: Number(row.state) as TaskState,
+      runtime: { instanceId: String(row.instance_id), threadId: String(row.thread_id), profileId: String(row.profile_id) } }));
+  }
+
+  /**
+   * Durably record that a terminal task's runtime and workspace were deleted. The task,
+   * its history and artifacts stay; repeating the record for the same task is a no-op.
+   */
+  recordRetired(taskId: string, instanceId: string, deleted: boolean): boolean {
+    return this.transaction(() => {
+      const binding = this.db.prepare("SELECT instance_id FROM runtime_bindings WHERE task_id=?").get(taskId) as Row | undefined;
+      if (!binding || binding.instance_id !== instanceId) throw new TaskStoreError("conflict", "runtime binding does not match the retired instance");
+      if (this.db.prepare("SELECT 1 FROM task_events WHERE task_id=? AND kind='runtime.retired'").get(taskId)) return false;
+      this.append(taskId, null, "runtime.retired", { instanceId, deleted });
+      return true;
+    });
+  }
+
   /** Discard queued work immediately, but keep active work reserved until confirmed release makes cancellation final. */
   requestCancel(scope: Scope, taskId: string): Task {
     return this.transaction(() => {

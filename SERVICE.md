@@ -179,7 +179,10 @@ Do not remove the hold with ad hoc SQL to make a restore start.
   require infrastructure fencing, not just process restart.
 - Preserve durable databases, workspace/session state and private configuration.
   Use the [deployment backup and restore scope](KUBERNETES.md#backup-and-restore-scope)
-  before planning recovery. Retention/deletion is separate from compute release.
+  before planning recovery. Retention/deletion is separate from compute release:
+  the worker [retires](src/service/worker.ts) a terminal task's Agyn instance, and
+  with it the workspace, only after every execution settled. Task history and
+  artifacts stay in the database; waiting and recovery-blocked tasks keep theirs.
 
 Use [verification and acceptance](ACCEPTANCE.md) to select checks and record their
 scope. Local results do not prove exactly-once external effects, complete

@@ -87,6 +87,11 @@ export class AgynClient {
     return response.instance;
   }
 
+  /** Agyn deletion is a final TERMINATED state; deleting a terminated instance returns it unchanged. */
+  async deleteInstance(id: string, signal?: AbortSignal): Promise<AgynInstance> {
+    return (await this.call<{ instance: AgynInstance }>("AgentsGateway", "DeleteInstance", { id }, signal)).instance;
+  }
+
   async createInstance(agentId: string, label: string, signal?: AbortSignal): Promise<AgynInstance> {
     return (await this.call<{ instance: AgynInstance }>("AgentsGateway", "CreateInstance", { agentId, label }, signal)).instance;
   }

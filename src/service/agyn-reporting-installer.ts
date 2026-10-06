@@ -20,8 +20,8 @@ import { createHash } from "node:crypto";
 import { gzipSync } from "node:zlib";
 import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
-import { AgynClient } from "../agyn-client.js";
-import { deliverBinding, reportingTargetReady } from "./agyn-terminal.js";
+import { agynClientFromEnvironment } from "./agyn-gateway-auth.js";
+import { deliverBinding, receiverCommand, reportingTargetReady } from "./agyn-terminal.js";
 import { setupFailure, type SetupStage } from "./setup-diagnostics.js";
 
 let stage: SetupStage = "input";
@@ -34,12 +34,14 @@ async function main() {
   }
   const setup = z.object({ executionId: z.string().uuid(), instanceId: z.string().uuid(), threadId: z.string().uuid(),
     requestId: z.string().uuid(), retiredRequestIds: z.array(z.string().uuid()).max(256),
-    profileId: z.string().min(1).max(128), reporting: z.object({ url: z.string().url(), token: z.string().regex(/^[A-Za-z0-9_-]{43}$/) }).strict()
+    profileId: z.string().min(1).max(128), reporting: z.object({ url: z.string().url(), token: z.string().regex(/^[A-Za-z0-9_-]{43}$/) }).strict(),
+    setupTimeoutMs: z.number().int().min(20_000).max(600_000).default(120_000)
   }).strict().parse(JSON.parse(input));
+  const { setupTimeoutMs, ...binding } = setup;
   stage = "environment";
-  const required = (name: string) => { const value = process.env[name]; if (!value) throw new Error("installer environment missing"); return value; };
-  const client = new AgynClient(required("AGYN_GATEWAY_URL"), required("AGYN_TOKEN"), required("AGYN_ORGANIZATION_ID"), required("AGYN_IDENTITY_ID"));
-  const signal = AbortSignal.timeout(110_000);
+  const client = await agynClientFromEnvironment();
+  // Finish ten seconds inside the caller's deadline so a failure is still diagnosed rather than killed.
+  const signal = AbortSignal.timeout(setupTimeoutMs - 10_000);
   const bundle = readFileSync(new URL("../reporting/runtime.mjs", import.meta.url));
   const runtimeSha256 = createHash("sha256").update(bundle).digest("hex");
   const receiver = readFileSync(new URL("../reporting/receiver.cjs", import.meta.url), "utf8");
@@ -54,10 +56,10 @@ async function main() {
     if (workload?.status === "WORKLOAD_STATUS_FAILED") throw new Error("runtime failed");
     if (workload?.status === "WORKLOAD_STATUS_RUNNING" && reportingTargetReady(workload)) {
       stage = "ticket";
-      const ticket = await client.terminalSession(workload.meta.id, ["/agyn/bin/node", "-e", receiver], signal);
+      const ticket = await client.terminalSession(workload.meta.id, receiverCommand(receiver), signal);
       stage = "delivery";
-      await deliverBinding(ticket, { ...setup, workloadId: workload.meta.id, runtimeSha256 }, JSON.stringify({
-        ...setup, workloadId: workload.meta.id, bundle: gzipSync(bundle).toString("base64"), reporting: { ...setup.reporting, allowInsecureLocal }
+      await deliverBinding(ticket, { ...binding, workloadId: workload.meta.id, runtimeSha256 }, JSON.stringify({
+        ...binding, workloadId: workload.meta.id, bundle: gzipSync(bundle).toString("base64"), reporting: { ...binding.reporting, allowInsecureLocal }
       }), signal, allowInsecureLocal);
       process.stdout.write(JSON.stringify({ executionId: setup.executionId, instanceId: setup.instanceId, workloadId: workload.meta.id, reportingConfigured: true }) + "\n");
       return;

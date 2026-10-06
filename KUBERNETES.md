@@ -27,6 +27,31 @@ report. Preserve the installed application's PVC, configuration Secret and task
 ownership. [serviceManifests](scripts/k8s-manifests.mjs) owns packaging, including
 initialization and generated-client conversion contracts.
 
+## Native In-Cluster Topology
+
+`serviceManifests` with `topology: 'native'` targets an Agyn platform whose
+gateway and terminal proxy are plain HTTP Services inside the cluster, with no
+ingress, TLS hostnames or mesh. The factory derives the gateway URL from the
+explicit Service target; these prerequisites stay with the operator:
+
+- The platform namespace must admit the A2A pods to the gateway and terminal
+  proxy HTTP ports. Supply the exact pod selector labels of those Deployments;
+  a label that matches nothing blocks egress instead of widening it.
+- The gateway must return a terminal-session WebSocket URL on that same
+  terminal proxy Service. Agent pods need cluster DNS for the reporting URL.
+- Use a retaining storage class and pin the node when volumes are node-local.
+- By default (`gatewayAuth: 'token-file'`) the service presents its projected
+  ServiceAccount token, audience `agyn-gateway`, as its gateway bearer. The
+  gateway must verify that audience against this cluster's ServiceAccount
+  issuer and map the `system:serviceaccount:aira-a2a:aira-a2a` subject to an
+  Agyn user; grant that user access to the organization before admitting tasks.
+- The configuration Secret holds `service.json`, `credentials.json` and
+  `AGYN_ORGANIZATION_ID`, plus `AGYN_TOKEN` and `AGYN_IDENTITY_ID` only with
+  `gatewayAuth: 'secret'`; add `ca.pem` only with `caCertificate: true`. A
+  private image needs the pull Secret named by `imagePullSecret` in the same namespace.
+
+Plain cluster HTTP is not end-to-end TLS; accept it only on a trusted node network.
+
 ## Backend Revisions
 
 Pin the complete compatible source/image/schema combination in private release
@@ -103,7 +128,10 @@ candidate with `agents:render`, then perform a drained configuration rollout.
 
 Build with [the image recipe](ops/Dockerfile.a2a-service) and its
 [context allowlist](.dockerignore). Promote immutable image digests, not floating
-branches. A GitOps controller must have one owner per resource and must preserve
+branches. The [publish workflow](.github/workflows/publish-service-image.yml)
+pushes one commit-tagged image per `main` commit to a private package and never
+moves an existing tag; pin the digest from its run summary, and give the
+installation's pull credential read access to that package. A GitOps controller must have one owner per resource and must preserve
 writer drain, migrations, readiness and retained storage. Do not let it prune
 namespaces, task PVCs, dynamic agent pods or resources owned by another controller.
 

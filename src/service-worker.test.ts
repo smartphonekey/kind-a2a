@@ -173,3 +173,20 @@ test("worker: outcome committed during a failing provider observation wins over 
   assert.equal(store.get(scope, first.task.id).status?.state, TaskState.TASK_STATE_COMPLETED);
   assert.equal(store.execution(first.execution.id)?.uncertainReason, null);
 });
+
+test("worker: a profile turn deadline overrides the service deadline for that profile only", async t => {
+  const store = new DurableTaskStore(":memory:"); const driver = new Driver();
+  const runner = new ExecutionWorker(store, driver, { concurrency: 2, leaseMs: 150, pollMs: 5, turnTimeoutMs: 60_000,
+    profileTurnTimeoutMs: new Map([["short", 50], ["long", 60_000]]) });
+  t.after(async () => { await runner.stop(); store.close(); });
+  const short = store.submit(scope, input(), "short");
+  const other = store.submit(scope, input(), "unlisted");
+  runner.start();
+  await until(() => store.execution(short.execution.id)?.phase === "uncertain");
+  assert.match(store.execution(short.execution.id)!.uncertainReason!, /deadline exceeded/);
+  await until(() => store.execution(other.execution.id)?.phase === "running");
+  await delay(100);
+  assert.equal(store.execution(other.execution.id)?.phase, "running");
+  assert.throws(() => new ExecutionWorker(store, driver, { concurrency: 2, leaseMs: 150, pollMs: 5, turnTimeoutMs: 60_000,
+    profileTurnTimeoutMs: new Map([["bad", 0]]) }), /positive integers/);
+});

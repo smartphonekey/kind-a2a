@@ -98,3 +98,41 @@ test("task lists use owner-bound keyset cursors and bounded history; duplicate a
   assert.equal(store.list(scope, { ...query, status: TaskState.TASK_STATE_CANCELED }).totalSize, 1);
   assert.throws(() => store.list(scope, { ...query, pageSize: 101 }));
 });
+
+test("service HTTP: per-profile machine endpoints select the profile of new tasks and publish their own cards", async t => {
+  const dir = await mkdtemp(join(tmpdir(), "a2a-profiles-"));
+  const path = join(dir, "credentials.json");
+  const token = randomBytes(32).toString("base64url");
+  await writeFile(path, JSON.stringify([{ sha256: tokenDigest(token), subject: "alice", tenant: "org", expiresAt: "2099-01-01T00:00:00Z" }]), { mode: 0o600 });
+  const store = new DurableTaskStore(join(dir, "tasks.sqlite"));
+  const abort = new AbortController();
+  const profiles = ["agent-one", "qa_web-v1"].map(id => ({ id, card: serviceCard("http://localhost/", id) }));
+  const server = createServer(createServiceApp({ store, card: serviceCard("http://localhost"), profileId: "agent-one", profiles,
+    authorize: fileAuthorizer(path), signal: abort.signal, pollMs: 5 }));
+  server.listen(0, "127.0.0.1"); await once(server, "listening");
+  t.after(async () => { abort.abort(); server.closeAllConnections(); await new Promise<void>(r => server.close(() => r())); store.close(); await rm(dir, { recursive: true, force: true }); });
+  const address = server.address(); assert(address && typeof address !== "string");
+  const base = `http://127.0.0.1:${address.port}`;
+  const headers = { "content-type": "application/json", "A2A-Version": "1.0", authorization: `Bearer ${token}` };
+  const rpc = async (route: string, method: string, params: unknown) => {
+    const response = await fetch(`${base}${route}`, { method: "POST", headers, body: JSON.stringify({ jsonrpc: "2.0", id: "request", method, params }) });
+    assert.equal(response.status, 200); return await response.json() as any;
+  };
+  const message = (taskId?: string) => ({ message: Message.toJSON(Message.fromJSON({ messageId: randomUUID(), ...(taskId ? { taskId } : {}),
+    role: "ROLE_USER", parts: [{ text: "run tests" }] })), configuration: { returnImmediately: true } });
+  const card = await fetch(`${base}/agents/qa_web-v1/.well-known/agent-card.json`).then(r => r.json()) as any;
+  assert.equal(card.supportedInterfaces[0].url, "http://localhost/agents/qa_web-v1/a2a");
+  assert.equal((await fetch(`${base}/.well-known/agent-card.json`).then(r => r.json()) as any).supportedInterfaces[0].url, "http://localhost/a2a");
+  assert.equal((await fetch(`${base}/agents/qa_web-v1/a2a`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" })).status, 401);
+  assert.equal((await fetch(`${base}/agents/missing/a2a`, { method: "POST", headers, body: "{}" })).status, 404);
+  const qa = (await rpc("/agents/qa_web-v1/a2a", "SendMessage", message())).result.task;
+  const plain = (await rpc("/a2a", "SendMessage", message())).result.task;
+  assert.equal(store.execution(store.events({ tenant: "org", subject: "alice" }, qa.id, 0, 10).find(e => e.executionId)!.executionId!)!.profileId, "qa_web-v1");
+  assert.equal(store.execution(store.events({ tenant: "org", subject: "alice" }, plain.id, 0, 10).find(e => e.executionId)!.executionId!)!.profileId, "agent-one");
+  // Follow-ups keep the stored profile whichever endpoint carries them, as browser mounts do.
+  assert.equal((await rpc("/a2a", "SendMessage", message(qa.id))).result.task.id, qa.id);
+  for (const id of ["Agent-One", "bad/id"]) {
+    assert.throws(() => createServiceApp({ store, card: serviceCard("http://localhost"), profileId: "agent-one",
+      profiles: [...profiles, { id, card: serviceCard("http://localhost", id) }], authorize: fileAuthorizer(path), signal: abort.signal }), /unique and URL-safe/);
+  }
+});

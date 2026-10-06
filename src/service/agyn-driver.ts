@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-only
 /**
- * Agyn implementation of task-bound instances, one-shot dispatch and confirmed release.
+ * Agyn implementation of task-bound instances, one-shot dispatch, confirmed release and
+ * deletion of a terminal task's instance.
  * @module
  * @see src/service/worker.ts
  * @see src/service/agyn-reporting-installer.ts
@@ -42,7 +43,7 @@ export class AgynRuntimeDriver implements RuntimeDriver {
     if (threads.length > 1 || !threads.length && recovering) throw new Error("ambiguous provisioned threads");
     const thread = threads[0] ?? await this.client.createInstanceThread(instance.meta.id, signal);
     const participants = new Set(thread.participants.map(participant => participant.id));
-    if (participants.size !== 2 || !participants.has(instance.meta.id) || !participants.has(this.client.identityId)) {
+    if (participants.size !== 2 || !participants.has(instance.meta.id) || !participants.has(await this.client.identity())) {
       throw new Error("task thread has unexpected participants");
     }
     return { instanceId: instance.meta.id, threadId: thread.id, profileId: execution.profileId };
@@ -114,6 +115,34 @@ export class AgynRuntimeDriver implements RuntimeDriver {
     return { stopped };
   }
 
+  /**
+   * Delete a terminal task's instance so the orchestrator removes its workspace volume.
+   * @remarks Terminal tasks reject follow-ups and every follow-up of a task reuses only
+   * that task's instance, so nothing can mount the workspace again. Only the instance
+   * labelled for this task, of the pinned agent class and holding no unconfirmed
+   * workload, is deleted. An already TERMINATED instance is a no-op. Agyn soft-deletes
+   * the instance; the orchestrator's checked volume removal then deletes the claim.
+   * Agyn's DeleteInstance also removes the instance nickname as the caller, which the
+   * identity service allows only with can_add_member or can_manage_members on the
+   * organization; an agent owner that is only an organization member is refused after
+   * its instance authorization was removed and restored. Enable retirement only for a
+   * caller that holds that permission.
+   * @see orchestrator::internal/reconciler/volume_reconcile
+   */
+  async retire(taskId: string, runtime: Runtime, signal: AbortSignal): Promise<{ deleted: boolean }> {
+    const agentId = this.profile(runtime.profileId).agentId;
+    const instance = await this.client.getInstance(runtime.instanceId, signal);
+    if (instance.meta.id !== runtime.instanceId || instance.agentId !== agentId || instance.label !== instanceLabel(taskId)) {
+      throw new Error("runtime instance does not belong to this task");
+    }
+    if (instance.state === terminated) return { deleted: false };
+    const workloads = await this.client.workloads(runtime.instanceId, signal);
+    if (workloads.some(workload => !workload.removalConfirmedAt)) throw new Error("runtime still holds an unremoved workload");
+    const deleted = await this.client.deleteInstance(runtime.instanceId, signal);
+    if (deleted?.meta?.id !== runtime.instanceId || deleted.state !== terminated) throw new Error("instance deletion was not confirmed");
+    return { deleted: true };
+  }
+
   private runtime(execution: Execution): Runtime {
     this.profile(execution.profileId);
     if (!execution.runtime || execution.runtime.profileId !== execution.profileId) throw new Error("runtime binding is missing or mismatched");
@@ -125,6 +154,8 @@ export class AgynRuntimeDriver implements RuntimeDriver {
     return profile;
   }
 }
+
+const terminated = "AGENT_INSTANCE_STATE_TERMINATED";
 
 function instanceLabel(taskId: string): string {
   // Agyn handle suffixes are at most 32 characters. Preserve all UUID bits.

@@ -4,10 +4,11 @@
  * @module
  * @remarks Importing this module starts the service. SQLite and shared admission checks
  * precede listening. The configured setup executable runs without a shell, receives
- * scoped credentials only on stdin, and must exit successfully within 120 seconds with
+ * scoped credentials only on stdin, and must exit successfully within the profile's setup deadline with
  * an exact execution/instance acknowledgement and workload ID. Shutdown leaves remote
  * work and durable leases for recovery rather than claiming release.
  * @see src/service/agyn-reporting-installer.ts
+ * @see src/service/agyn-gateway-auth.ts
  * @see src/service/worker.ts
  * @see src/service/http.ts
  */
@@ -16,7 +17,8 @@ import { readFileSync, statSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { spawn } from "node:child_process";
 import { z } from "zod";
-import { AgynClient } from "../agyn-client.js";
+import { TaskState } from "@a2a-js/sdk";
+import { agynClientFromEnvironment } from "./agyn-gateway-auth.js";
 import { AgynRuntimeDriver } from "./agyn-driver.js";
 import { DurableTaskStore } from "./task-store.js";
 import { ExecutionWorker } from "./worker.js";
@@ -36,10 +38,17 @@ const schema = z.object({
   host: z.string().default("127.0.0.1"), port: z.number().int().min(1).max(65535).default(8083),
   publicUrl: z.string().url(), reportingUrl: z.string().url(),
   defaultProfile: z.string().min(1).max(128),
-  profiles: z.array(z.object({ id: z.string().min(1).max(128), agentId: z.string().uuid() }).strict()).min(1).max(100),
+  // Profile limits override the service-wide turn deadline and the reporting setup deadline.
+  // Setup covers workload start, including a cold image pull, until the gate acknowledges.
+  profiles: z.array(z.object({ id: z.string().min(1).max(128), agentId: z.string().uuid(),
+    turnTimeoutMs: z.number().int().min(1000).max(43_200_000).optional(),
+    setupTimeoutMs: z.number().int().min(20_000).max(600_000).optional() }).strict()).min(1).max(100),
   concurrency: z.number().int().min(1).max(32).default(2),
   httpShutdownGraceMs: z.number().int().min(100).max(60_000).default(5000),
   turnTimeoutMs: z.number().int().min(1000).max(43_200_000).default(600_000),
+  // Delete each terminal task's Agyn instance and workspace. The service identity must be
+  // allowed to remove instance nicknames; see AgynRuntimeDriver.retire.
+  retireTerminalTasks: z.boolean().default(false),
   browser: z.object({ origin: z.string().url(), assetsPath: pathSchema,
     cloudflareAccess: cloudflareAccessSchema.optional() }).strict().optional()
 }).strict();
@@ -53,13 +62,18 @@ function required(name: string): string {
 requireSqliteWalFix(process.versions.sqlite);
 const config = schema.parse(JSON.parse(readFileSync(required("A2A_SERVICE_CONFIG_FILE"), "utf8")));
 if (!config.profiles.some(profile => profile.id === config.defaultProfile)) throw new Error("default profile is missing");
+if (new Set(config.profiles.map(profile => profile.id)).size !== config.profiles.length) throw new Error("duplicate profile");
+const profileLimits = new Map(config.profiles.map(profile => [profile.id, {
+  turnTimeoutMs: profile.turnTimeoutMs ?? config.turnTimeoutMs, setupTimeoutMs: profile.setupTimeoutMs ?? 120_000 }]));
 if (!statSync(config.reportingSetupExecutable).isFile()) throw new Error("reporting setup executable is missing");
 const store = new DurableTaskStore(config.dbPath);
 store.assertNotQuarantined();
-const client = new AgynClient(required("AGYN_GATEWAY_URL"), required("AGYN_TOKEN"), required("AGYN_ORGANIZATION_ID"), required("AGYN_IDENTITY_ID"));
+const client = await agynClientFromEnvironment();
 const driver = new AgynRuntimeDriver(client, config.profiles, async (execution, signal) => {
-  const token = store.issueReportingCredential(execution.id, config.turnTimeoutMs + 3_600_000);
-  const setupSignal = AbortSignal.any([signal, AbortSignal.timeout(120_000)]);
+  const limits = profileLimits.get(execution.profileId);
+  if (!limits) throw new Error("execution profile is not configured");
+  const token = store.issueReportingCredential(execution.id, limits.turnTimeoutMs + 3_600_000);
+  const setupSignal = AbortSignal.any([signal, AbortSignal.timeout(limits.setupTimeoutMs)]);
   return await new Promise<{ workloadId: string }>((resolve, reject) => {
     // The operator owns this executable. Never accept a command, path or credential from A2A messages.
     const child = spawn(config.reportingSetupExecutable, [], { stdio: ["pipe", "pipe", "ignore"], signal: setupSignal, killSignal: "SIGKILL" });
@@ -83,15 +97,19 @@ const driver = new AgynRuntimeDriver(client, config.profiles, async (execution, 
       } catch { reject(new Error("reporting setup did not acknowledge the exact execution binding")); }
     });
     child.stdin.end(JSON.stringify({ executionId: execution.id, ...execution.runtime,
-      requestId: execution.requestId, retiredRequestIds: store.retiredRequestIds(execution.id), reporting: {
-      url: config.reportingUrl, token
-    } }));
+      requestId: execution.requestId, retiredRequestIds: store.retiredRequestIds(execution.id),
+      setupTimeoutMs: limits.setupTimeoutMs, reporting: { url: config.reportingUrl, token } }));
   });
 });
 const stopping = new AbortController();
 const worker = new ExecutionWorker(store, driver, { concurrency: config.concurrency, leaseMs: 60_000, pollMs: 1000,
-  turnTimeoutMs: config.turnTimeoutMs, onError: event => console.error(JSON.stringify({ kind: "worker.error", ...event })) });
+  turnTimeoutMs: config.turnTimeoutMs, retireTerminalRuntimes: config.retireTerminalTasks,
+  profileTurnTimeoutMs: new Map([...profileLimits].map(([id, limits]) => [id, limits.turnTimeoutMs])),
+  onError: event => console.error(JSON.stringify({ kind: "worker.error", ...event })),
+  // Log every deletion of a terminal task's instance and workspace; the A2A task record stays.
+  onRetired: event => console.log(JSON.stringify({ kind: "runtime.retired", ...event, state: TaskState[event.state] })) });
 const server = createServer(createServiceApp({ store, card: serviceCard(config.publicUrl), profileId: config.defaultProfile,
+  profiles: config.profiles.map(({ id }) => ({ id, card: serviceCard(config.publicUrl, id) })),
   authorize: fileAuthorizer(config.credentialsFile), signal: stopping.signal,
   ...(config.browser ? { browser: { origin: config.browser.origin, assetsPath: config.browser.assetsPath,
     ...(config.browser.cloudflareAccess ? { authentication: cloudflareAccessAuthentication(config.browser.cloudflareAccess) } : {}),

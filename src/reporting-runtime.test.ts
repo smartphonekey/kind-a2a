@@ -4,9 +4,10 @@ import { once } from "node:events";
 import { createServer } from "node:http";
 import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync, lstatSync, symlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import test from "node:test";
 import { Message } from "@a2a-js/sdk";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -18,7 +19,7 @@ import { installRuntime, managedReportingConfig } from "./reporting/runtime.js";
 import { DurableTaskStore } from "./service/task-store.js";
 import { createServiceApp } from "./service/http.js";
 import { serviceCard } from "./service/card.js";
-import { deliverBinding, reportingTargetReady, ReportingDeliveryError } from "./service/agyn-terminal.js";
+import { deliverBinding, receiverCommand, reportingTargetReady, ReportingDeliveryError } from "./service/agyn-terminal.js";
 import type { AgynWorkload } from "./agyn-client.js";
 
 test("Agyn installer does not hide unconfirmed failed/stopped workloads behind billing end", async t => {
@@ -26,6 +27,7 @@ test("Agyn installer does not hide unconfirmed failed/stopped workloads behind b
     retiredRequestIds: [], profileId: "test", reporting: { url: "https://reporting.invalid", token: "A".repeat(43) } };
   let workloads: AgynWorkload[] = [];
   let terminalRequests: string[] = [];
+  let terminalCommands: unknown[] = [];
   const server = createServer((request, response) => {
     let body = "";
     request.on("data", chunk => { body += chunk; });
@@ -35,7 +37,8 @@ test("Agyn installer does not hide unconfirmed failed/stopped workloads behind b
       if (method === "GetInstance") response.end(JSON.stringify({ instance: { meta: { id: setup.instanceId }, state: "AGENT_INSTANCE_STATE_ACTIVE" } }));
       else if (method === "ListWorkloadsByAgentInstance") response.end(JSON.stringify({ workloads }));
       else if (method === "CreateTerminalSession") {
-        terminalRequests.push(JSON.parse(body).workloadId);
+        const request = JSON.parse(body);
+        terminalRequests.push(request.workloadId); terminalCommands.push(request.command?.argv?.argv);
         // Only selection is under test; no remote terminal or credential delivery.
         response.writeHead(503).end("{}");
       } else response.writeHead(404).end("{}");
@@ -56,7 +59,7 @@ test("Agyn installer does not hide unconfirmed failed/stopped workloads behind b
       removedAt: new Date().toISOString(), ...(scenario.confirmed ? { removalConfirmedAt: new Date().toISOString() } : {}) }];
     if (scenario.replacement) workloads.push({ meta: { id: replacementId }, agentInstanceId: setup.instanceId, status: "WORKLOAD_STATUS_RUNNING",
       containers: [{ name: "agent", role: "CONTAINER_ROLE_MAIN", status: "CONTAINER_STATUS_RUNNING" }] });
-    terminalRequests = [];
+    terminalRequests = []; terminalCommands = [];
     const child: ChildProcessWithoutNullStreams = spawn(process.execPath, [new URL("./service/agyn-reporting-installer.js", import.meta.url).pathname], {
       env: { ...process.env, AGYN_GATEWAY_URL: `http://127.0.0.1:${address.port}`, AGYN_TOKEN: "test-gateway",
         AGYN_ORGANIZATION_ID: randomUUID(), AGYN_IDENTITY_ID: randomUUID() }, timeout: 5000, killSignal: "SIGKILL"
@@ -75,6 +78,7 @@ test("Agyn installer does not hide unconfirmed failed/stopped workloads behind b
     assert(!output.includes(setup.reporting.token) && !output.includes("test-gateway"), "failure output exposed credentials");
     assert.equal(errors, "Agyn execution reporting setup failed\n", scenario.name);
     assert.deepEqual(terminalRequests, scenario.confirmed ? [replacementId] : [], scenario.name);
+    assert.deepEqual(terminalCommands, scenario.confirmed ? [receiverCommand(readFileSync(new URL("./reporting/receiver.cjs", import.meta.url), "utf8"))] : [], scenario.name);
   }
 });
 
@@ -258,6 +262,21 @@ test("Agyn terminal delivery waits for verified raw-mode readiness and requires 
   }
 });
 
+test("receiver command keeps Node process warnings off the terminal line protocol", async () => {
+  // A PTY merges stderr into the protocol. Node 22 warns there under the workload proxy
+  // environment; an explicit process warning stands in for it on any Node version.
+  const source = 'process.emitWarning("workload environment warning"); process.stdout.write("ready\\n");';
+  const env: NodeJS.ProcessEnv = { ...process.env, NODE_USE_ENV_PROXY: "1", HTTP_PROXY: "http://127.0.0.1:9", HTTPS_PROXY: "http://127.0.0.1:9" };
+  delete env.NODE_OPTIONS; delete env.NODE_NO_WARNINGS;
+  const [node, ...options] = receiverCommand(source);
+  assert.equal(node, "/agyn/bin/node");
+  const run = (args: string[]) => promisify(execFile)(process.execPath, args, { env, timeout: 10_000 });
+  const quiet = await run(options);
+  assert.deepEqual({ stdout: quiet.stdout, stderr: quiet.stderr }, { stdout: "ready\n", stderr: "" });
+  const warned = await run(options.filter(option => option !== "--no-warnings"));
+  assert.match(warned.stderr, /workload environment warning/, "the control run must show the warning the command suppresses");
+});
+
 test("Agyn terminal handshake diagnostics never retain response bodies or tickets", async t => {
   const server = createServer((_req, res) => { res.writeHead(403); res.end("private-response"); });
   server.listen(0, "127.0.0.1"); await once(server, "listening");
@@ -322,4 +341,27 @@ test("Claude installation validates both files before mutation and acknowledges 
   assert.deepEqual(JSON.parse(readFileSync(join(directory, "configured.json"), "utf8")), {
     executionId: submitted.execution.id, instanceId, reportingConfigured: true
   });
+});
+
+test("Agyn installer rejects setup deadlines outside its bounds before contacting the gateway", async t => {
+  let requests = 0;
+  const server = createServer((request, response) => { requests++; request.resume(); response.writeHead(503).end("{}"); });
+  server.listen(0, "127.0.0.1"); await once(server, "listening");
+  t.after(async () => { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); });
+  const address = server.address(); assert(address && typeof address !== "string");
+  for (const setupTimeoutMs of [19_999, 600_001, "120000"]) {
+    const setup = { executionId: randomUUID(), instanceId: randomUUID(), threadId: randomUUID(), requestId: randomUUID(),
+      retiredRequestIds: [], profileId: "test", setupTimeoutMs, reporting: { url: "https://reporting.invalid", token: "A".repeat(43) } };
+    const child: ChildProcessWithoutNullStreams = spawn(process.execPath, [new URL("./service/agyn-reporting-installer.js", import.meta.url).pathname], {
+      env: { ...process.env, AGYN_GATEWAY_URL: `http://127.0.0.1:${address.port}`, AGYN_TOKEN: "test-gateway",
+        AGYN_ORGANIZATION_ID: randomUUID(), AGYN_IDENTITY_ID: randomUUID() }, timeout: 5000, killSignal: "SIGKILL"
+    });
+    const exited = once(child, "close");
+    let output = "";
+    child.stdout.on("data", (chunk: Buffer) => { output += chunk; }); child.stderr.resume();
+    child.stdin.end(JSON.stringify(setup));
+    assert.deepEqual(await exited, [1, null], String(setupTimeoutMs));
+    assert.equal(JSON.parse(output).stage, "input", String(setupTimeoutMs));
+  }
+  assert.equal(requests, 0);
 });

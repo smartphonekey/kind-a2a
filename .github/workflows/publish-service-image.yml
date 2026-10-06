@@ -1,0 +1,235 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+name: Publish service image
+
+# One immutable service image per main commit, for private installations to pin
+# by digest. This publishes a build artifact; it never deploys an installation.
+# Other refs, including pull requests, run the same build and verification
+# against a registry that exists only inside the job.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - .github/workflows/publish-service-image.yml
+      - .dockerignore
+      - ops/Dockerfile.a2a-service
+      - package.json
+      - package-lock.json
+      - tsconfig.json
+      - src/**
+      - web/**
+      - scripts/build-reporting.mjs
+      - scripts/agyn-execution-receiver.cjs
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # Serialize runs for one commit so a push and a dispatch cannot race its tag.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  IMAGE_PATH: smartphonekey/aira-a2a-service
+  PACKAGE: aira-a2a-service
+  # The installation node is amd64; arm64 under emulation would only slow the build.
+  PLATFORMS: linux/amd64
+  # BuildKit executes the Dockerfile, so pin it like the base images.
+  BUILDKIT_IMAGE: docker.io/moby/buildkit:v0.33.1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
+
+jobs:
+  image:
+    name: Build and publish commit image
+    # The org's self-hosted runner scale set. Per-pod Docker daemon runs the
+    # pinned BuildKit (docker-container driver). amd64-only, so no QEMU/binfmt.
+    runs-on: hetzner-b2c
+    timeout-minutes: 30
+    # Only main logs in, pushes to GHCR and attests; other refs push to the job-local registry.
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    services:
+      registry:
+        image: docker.io/library/registry:3.1.2@sha256:ddf754342cfc8acc51a56d5d0ab6af06826461864460636d8bd5c546dab2a7b8
+        ports:
+          - 5000:5000
+    outputs:
+      image: ${{ steps.target.outputs.image }}
+      digest: ${{ steps.verify.outputs.digest }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - name: Require digest-pinned Dockerfile images
+        run: |
+          if grep -nE '^(# syntax=|FROM )' ops/Dockerfile.a2a-service | grep -vE '@sha256:[0-9a-f]{64}( |$)'; then
+            echo "::error file=ops/Dockerfile.a2a-service::Pin every syntax and FROM image by digest."
+            exit 1
+          fi
+
+      - name: Select destination
+        id: target
+        env:
+          PUBLISH: ${{ github.repository == 'smartphonekey/kind-a2a' && github.ref == 'refs/heads/main' && github.event_name != 'pull_request' }}
+        run: |
+          if [ "$PUBLISH" = true ]; then
+            image="ghcr.io/$IMAGE_PATH"
+          else
+            image="localhost:5000/$IMAGE_PATH"
+          fi
+          {
+            echo "publish=$PUBLISH"
+            echo "image=$image"
+            echo "ref=$image:$GITHUB_SHA"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        if: steps.target.outputs.publish == 'true'
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Refuse to publish into a public package
+        if: steps.target.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # GHCR creates new packages as private; never add a tag to one made public.
+          if visibility="$(gh api "/orgs/$GITHUB_REPOSITORY_OWNER/packages/container/$PACKAGE" --jq .visibility 2>"$RUNNER_TEMP/package.err")"; then
+            if [ "$visibility" != private ]; then
+              echo "::error::ghcr.io/$IMAGE_PATH is $visibility; installations expect a private package."
+              exit 1
+            fi
+          elif grep -qF 'HTTP 404' "$RUNNER_TEMP/package.err"; then
+            echo "No visible package yet; the first push creates it private."
+          else
+            echo "::warning::Cannot read package visibility: $(head -n 1 "$RUNNER_TEMP/package.err")"
+          fi
+
+      - name: Look for an existing commit image
+        id: existing
+        env:
+          IMAGE_REF: ${{ steps.target.outputs.ref }}
+        run: |
+          set -euo pipefail
+          # Rebuilds are not byte-identical, so a published commit tag never moves.
+          if manifest="$(docker buildx imagetools inspect "$IMAGE_REF" --format '{{json .Manifest}}' 2>"$RUNNER_TEMP/inspect.err")"; then
+            digest="$(jq -er .digest <<<"$manifest")"
+            echo "::notice title=Commit image exists::$IMAGE_REF is $digest; reporting it without a rebuild."
+            echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          elif grep -qF "$IMAGE_REF: not found" "$RUNNER_TEMP/inspect.err"; then
+            echo "No $IMAGE_REF yet."
+          else
+            # Any other failure could hide an existing tag that a push would move.
+            echo "::error::Cannot tell whether $IMAGE_REF exists: $(head -n 1 "$RUNNER_TEMP/inspect.err")"
+            exit 1
+          fi
+
+      - name: Set up Docker Buildx
+        if: steps.existing.outputs.digest == ''
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          # The registry service needs host networking. In-image provenance
+          # must not embed the triggering event payload (PR body, pusher).
+          driver-opts: |
+            image=${{ env.BUILDKIT_IMAGE }}
+            network=host
+            provenance-add-gha=false
+
+      - name: Build and push
+        id: build
+        if: steps.existing.outputs.digest == ''
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ops/Dockerfile.a2a-service
+          platforms: ${{ env.PLATFORMS }}
+          push: true
+          tags: ${{ steps.target.outputs.ref }}
+          build-args: |
+            SOURCE_REVISION=${{ github.sha }}
+          # actions/attest signs the full build provenance.
+          provenance: mode=min
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          annotations: |
+            index:org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            index:org.opencontainers.image.revision=${{ github.sha }}
+
+      - name: Verify and report digest
+        id: verify
+        env:
+          PUBLISH: ${{ steps.target.outputs.publish }}
+          IMAGE: ${{ steps.target.outputs.image }}
+          IMAGE_REF: ${{ steps.target.outputs.ref }}
+          EXPECTED: ${{ steps.build.outputs.digest || steps.existing.outputs.digest }}
+          REBUILT: ${{ steps.build.outputs.digest != '' }}
+        run: |
+          set -euo pipefail
+          manifest="$(docker buildx imagetools inspect "$IMAGE_REF" --format '{{json .Manifest}}')"
+          digest="$(jq -er .digest <<<"$manifest")"
+          if [ "$digest" != "$EXPECTED" ]; then
+            echo "::error::$IMAGE_REF resolves to $digest, expected $EXPECTED."
+            exit 1
+          fi
+          platforms="$(jq -r '[.manifests[].platform | select(.os == "linux") | "linux/" + .architecture] | unique | join(",")' <<<"$manifest")"
+          for platform in ${PLATFORMS//,/ }; do
+            case ",$platforms," in
+              *",$platform,"*) ;;
+              *) echo "::error::$IMAGE_REF lacks $platform."; exit 1 ;;
+            esac
+          done
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+          echo "Image: $IMAGE@$digest"
+          {
+            if [ "$PUBLISH" = true ]; then
+              echo "## Published image"
+            else
+              echo "## Verified build (not published)"
+              echo
+              echo "This run pushed only to its job-local registry."
+            fi
+            echo
+            echo "| Field | Value |"
+            echo "| --- | --- |"
+            echo "| Image | \`$IMAGE\` |"
+            echo "| Tag | \`$GITHUB_SHA\` |"
+            echo "| Digest | \`$digest\` |"
+            echo "| Pin | \`$IMAGE@$digest\` |"
+            echo "| Platforms | \`$platforms\` |"
+            echo "| Built by this run | $REBUILT |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Confirm the package stayed private
+        if: steps.target.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if visibility="$(gh api "/orgs/$GITHUB_REPOSITORY_OWNER/packages/container/$PACKAGE" --jq .visibility 2>"$RUNNER_TEMP/package.err")"; then
+            if [ "$visibility" != private ]; then
+              echo "::error::ghcr.io/$IMAGE_PATH is $visibility; make it private before an installation pins this digest."
+              exit 1
+            fi
+          else
+            echo "::warning::Cannot read package visibility: $(head -n 1 "$RUNNER_TEMP/package.err")"
+          fi
+
+      - name: Attest build provenance
+        if: steps.target.outputs.publish == 'true' && steps.build.outputs.digest != ''
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ steps.target.outputs.image }}
+          subject-digest: ${{ steps.verify.outputs.digest }}
+          push-to-registry: true
+          # Storage records would also need artifact-metadata: write.
+          create-storage-record: false

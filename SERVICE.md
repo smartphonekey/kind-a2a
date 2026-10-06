@@ -29,7 +29,7 @@ their workloads. Version profile IDs when changing a profile; do not repoint
 bindings used by existing tasks.
 
 Provision a compatible Agyn identity and supply the private connection environment
-required by [main.ts](src/service/main.ts). Supply `NODE_EXTRA_CA_CERTS` when a
+required by [main.ts](src/service/main.ts) and its [gateway credential](src/service/agyn-gateway-auth.ts). Supply `NODE_EXTRA_CA_CERTS` when a
 local CA is required; do not disable TLS verification. Then start the configured
 host service:
 
@@ -65,6 +65,19 @@ Use the [admission CLI](src/service/admission-cli.ts) against the existing datab
 
 Other databases and workloads created directly in Agyn are outside this budget.
 Resource isolation and sustained-load validation remain production gates.
+
+## Profile Endpoints And Limits
+
+Each configured profile is also served at `/agents/<profile>/a2a`, with its own
+agent card under that prefix; `/a2a` keeps the default profile. An endpoint
+selects the profile of new tasks only. Owner credentials are not limited to
+profiles yet: any valid credential may use every profile endpoint.
+
+A profile may override the turn deadline and the reporting setup deadline in
+the [startup schema](src/service/main.ts). Size the setup deadline for a cold
+image pull on the target node. Compute admission remains one shared ceiling
+across all profiles; per-profile admission is not implemented, so a profile that
+must run one task at a time needs `concurrency: 1` or its own service database.
 
 ## Client Authentication
 
@@ -166,7 +179,12 @@ Do not remove the hold with ad hoc SQL to make a restore start.
   require infrastructure fencing, not just process restart.
 - Preserve durable databases, workspace/session state and private configuration.
   Use the [deployment backup and restore scope](KUBERNETES.md#backup-and-restore-scope)
-  before planning recovery. Retention/deletion is separate from compute release.
+  before planning recovery. Retention/deletion is separate from compute release:
+  with `retireTerminalTasks`, the worker [retires](src/service/worker.ts) a terminal
+  task's Agyn instance, and with it the workspace, only after every execution
+  settled. Task history and artifacts stay in the database; waiting and
+  recovery-blocked tasks keep theirs. Enable it only for a service identity that
+  Agyn lets [delete instances](src/service/agyn-driver.ts).
 
 Use [verification and acceptance](ACCEPTANCE.md) to select checks and record their
 scope. Local results do not prove exactly-once external effects, complete

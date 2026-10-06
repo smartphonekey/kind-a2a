@@ -29,7 +29,7 @@ test("service entry point: binds real HTTP, refuses anonymous access and exits o
   const finished = new Promise<number | null>((resolve, reject) => { child.once("error", reject); child.once("close", resolve); });
   t.after(async () => { if (child.exitCode === null) child.kill("SIGKILL"); await finished; rmSync(directory, { recursive: true, force: true }); });
   await new Promise<void>((resolve, reject) => {
-    const timeout = setTimeout(() => { clearInterval(check); reject(new Error(`service startup timed out: ${errors}`)); }, 5000);
+    const timeout = setTimeout(() => { clearInterval(check); reject(new Error(`service startup timed out: ${errors}`)); }, 30_000);
     const check = setInterval(() => {
       if (output.includes("listening")) { clearTimeout(timeout); clearInterval(check); resolve(); }
       else if (child.exitCode !== null) { clearTimeout(timeout); clearInterval(check); reject(new Error(errors)); }

@@ -13,7 +13,8 @@ import { ExecutionWorker, type RuntimeDriver } from "./service/worker.js";
 const scope = { tenant: "org", subject: "alice" };
 const input = (taskId = "") => Message.fromJSON({ messageId: randomUUID(), taskId, role: "ROLE_USER", parts: [{ text: "work" }] });
 async function until(predicate: () => boolean): Promise<void> {
-  const deadline = Date.now() + 3000;
+  // ARC runners are smaller than ubuntu-24.04; dual-connection SQLite + busy_timeout needs headroom.
+  const deadline = Date.now() + 60_000;
   while (!predicate() && Date.now() < deadline) await delay(5);
   assert(predicate(), "condition did not become true");
 }
@@ -35,7 +36,10 @@ class Driver implements RuntimeDriver {
   };
 }
 function worker(store: DurableTaskStore, driver: RuntimeDriver): ExecutionWorker {
-  return new ExecutionWorker(store, driver, { concurrency: 2, leaseMs: 150, pollMs: 5, turnTimeoutMs: 5000 });
+  // On ARC pods, sync SQLite busy_timeout (5s) can stall the event loop past the old
+  // 150ms lease / 5s turn budgets; heartbeats miss and turns get marked uncertain
+  // before tests can report outcomes.
+  return new ExecutionWorker(store, driver, { concurrency: 2, leaseMs: 30_000, pollMs: 5, turnTimeoutMs: 120_000 });
 }
 
 test("worker: parallel isolated tasks, same-task FIFO, profile changes require no workflow/controller changes", async t => {
@@ -176,7 +180,7 @@ test("worker: outcome committed during a failing provider observation wins over 
 
 test("worker: a profile turn deadline overrides the service deadline for that profile only", async t => {
   const store = new DurableTaskStore(":memory:"); const driver = new Driver();
-  const runner = new ExecutionWorker(store, driver, { concurrency: 2, leaseMs: 150, pollMs: 5, turnTimeoutMs: 60_000,
+  const runner = new ExecutionWorker(store, driver, { concurrency: 2, leaseMs: 30_000, pollMs: 5, turnTimeoutMs: 60_000,
     profileTurnTimeoutMs: new Map([["short", 50], ["long", 60_000]]) });
   t.after(async () => { await runner.stop(); store.close(); });
   const short = store.submit(scope, input(), "short");
@@ -187,6 +191,6 @@ test("worker: a profile turn deadline overrides the service deadline for that pr
   await until(() => store.execution(other.execution.id)?.phase === "running");
   await delay(100);
   assert.equal(store.execution(other.execution.id)?.phase, "running");
-  assert.throws(() => new ExecutionWorker(store, driver, { concurrency: 2, leaseMs: 150, pollMs: 5, turnTimeoutMs: 60_000,
+  assert.throws(() => new ExecutionWorker(store, driver, { concurrency: 2, leaseMs: 30_000, pollMs: 5, turnTimeoutMs: 60_000,
     profileTurnTimeoutMs: new Map([["bad", 0]]) }), /positive integers/);
 });

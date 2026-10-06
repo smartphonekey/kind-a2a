@@ -16,7 +16,12 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
-      - run: python3 -m venv .state/host-tools
+      # ARC image has python3 but no ensurepip/python3-venv (and no root/apt).
+      - name: Bootstrap a venv with pip
+        run: |
+          python3 -m venv --without-pip .state/host-tools
+          curl -fsSLo "$RUNNER_TEMP/get-pip.py" https://bootstrap.pypa.io/get-pip.py
+          .state/host-tools/bin/python "$RUNNER_TEMP/get-pip.py"
       - run: .state/host-tools/bin/pip install -r ops/hetzner/requirements.txt
       - run: .state/host-tools/bin/python -m unittest discover -s ops/hetzner -p 'test_*.py'
       - run: .state/host-tools/bin/ansible-playbook --syntax-check -i ops/hetzner/inventory.example.yml ops/hetzner/bootstrap.yml

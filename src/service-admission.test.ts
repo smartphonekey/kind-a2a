@@ -316,3 +316,111 @@ test("admission CLI: inspect and compare-and-change use the persisted policy wit
   assert.deepEqual(readFileSync(unrelated), original);
   assert.deepEqual(store.admission(), { maxActive: 1, reserved: 1 });
 });
+
+test("admission: a full profile waits without holding back other profiles under the shared ceiling", t => {
+  const { store } = fixture(t);
+  const limits = new Map([["android", 1]]);
+  store.configureAdmission(3, limits);
+  const android = [store.submit(scope, input(), "android"), store.submit(scope, input(), "android")];
+  const web = [store.submit(scope, input(), "web"), store.submit(scope, input(), "web"), store.submit(scope, input(), "web")];
+  const first = store.claim("worker", 60_000, 3, limits)!;
+  assert.equal(first.execution.id, android[0].execution.id);
+  assert.equal(store.claim("worker", 60_000, 3, limits)!.execution.id, web[0].execution.id);
+  assert.equal(store.claim("worker", 60_000, 3, limits)!.execution.id, web[1].execution.id);
+  assert.equal(store.claim("worker", 60_000, 3, limits), undefined);
+  assert.deepEqual(store.admission(), { maxActive: 3, reserved: 3 });
+  assert.deepEqual(store.profileAdmission(), { android: { maxActive: 1, reserved: 1 }, web: { maxActive: null, reserved: 2 } });
+  assert.equal(store.execution(android[1].execution.id)!.phase, "queued");
+  store.markUncertain(first.lease, "inspect instance");
+  store.settle(first.lease, { stopped: true });
+  // The waiting Android turn is older than the third web turn and takes the freed slot.
+  assert.equal(store.claim("worker", 60_000, 3, limits)!.execution.id, android[1].execution.id);
+  assert.equal(store.claim("worker", 60_000, 3, limits), undefined);
+  assert.equal(store.execution(web[2].execution.id)!.phase, "queued");
+});
+
+test("admission: profile limits are validated, recorded at startup and fence workers with other limits", t => {
+  const f = fixture(t);
+  for (const limits of [new Map([["android", 0]]), new Map([["android", 1.5]]), new Map([["android", 3]]), new Map([["", 1]])]) {
+    assert.throws(() => f.store.configureAdmission(2, limits), invalid);
+    assert.throws(() => f.store.claim("invalid", 100, 2, limits), invalid);
+  }
+  assert.deepEqual(f.store.admission(), { maxActive: null, reserved: 0 });
+  f.store.configureAdmission(2, new Map([["android", 1]]));
+  assert.deepEqual(f.store.profileAdmission(), { android: { maxActive: 1, reserved: 0 } });
+  f.store.submit(scope, input(), "android");
+  assert.throws(() => f.store.claim("unlimited", 100, 2), conflict);
+  assert.throws(() => f.store.claim("other", 100, 2, new Map([["android", 2]])), conflict);
+  const restarted = f.open();
+  // A restart with new limits replaces them; the shared ceiling still needs its drained procedure.
+  assert.throws(() => restarted.configureAdmission(3, new Map([["android", 2]])), conflict);
+  restarted.configureAdmission(2, new Map([["android", 2], ["web", 1]]));
+  assert.deepEqual(restarted.profileAdmission(), { android: { maxActive: 2, reserved: 0 }, web: { maxActive: 1, reserved: 0 } });
+  assert.throws(() => f.store.claim("stale", 100, 2, new Map([["android", 1]])), conflict);
+  assert(restarted.claim("current", 100, 2, new Map([["android", 2], ["web", 1]])));
+  restarted.configureAdmission(2);
+  assert.deepEqual(restarted.profileAdmission(), { android: { maxActive: null, reserved: 1 } });
+});
+
+test("admission: a lowered profile limit keeps admitted work and recovery, and admits again only below it", t => {
+  let now = 1000;
+  const { store, open } = fixture(t, () => now);
+  const two = new Map([["android", 2]]);
+  store.configureAdmission(3, two);
+  for (let n = 0; n < 3; n++) store.submit(scope, input(), "android");
+  const first = store.claim("old", 100, 3, two)!;
+  const second = store.claim("old", 100, 3, two)!;
+  const replacement = open();
+  const one = new Map([["android", 1]]);
+  replacement.configureAdmission(3, one);
+  assert.deepEqual(replacement.profileAdmission(), { android: { maxActive: 1, reserved: 2 } });
+  now += 101;
+  const recovered = [replacement.claim("new", 100, 3, one)!, replacement.claim("new", 100, 3, one)!];
+  assert(recovered.every(claim => claim.recovered));
+  assert.deepEqual(new Set(recovered.map(claim => claim.execution.id)), new Set([first.execution.id, second.execution.id]));
+  assert.equal(replacement.claim("new", 100, 3, one), undefined);
+  replacement.markUncertain(recovered[0].lease, "inspect"); replacement.settle(recovered[0].lease, { stopped: true });
+  assert.equal(replacement.claim("new", 100, 3, one), undefined);
+  replacement.markUncertain(recovered[1].lease, "inspect"); replacement.settle(recovered[1].lease, { stopped: true });
+  assert(replacement.claim("new", 100, 3, one));
+});
+
+test("admission: the database constraint rejects a claimer that ignores a stored profile limit", t => {
+  const { store, path } = fixture(t);
+  const limits = new Map([["android", 1]]);
+  store.configureAdmission(2, limits);
+  store.submit(scope, input(), "android");
+  const claimed = store.claim("new-worker", 60_000, 2, limits)!;
+  const queued = store.submit(scope, input(), "android");
+  const legacy = new DatabaseSync(path);
+  try {
+    const update = legacy.prepare(`UPDATE task_executions SET phase='provisioning',worker_id='old-worker',
+      generation=generation+1,lease_until=? WHERE id=?`);
+    assert.throws(() => update.run(Date.now() + 60_000, queued.execution.id), /profile admission capacity exceeded/);
+    assert.equal(store.execution(queued.execution.id)!.phase, "queued");
+    store.markUncertain(claimed.lease, "inspect original instance");
+    store.settle(claimed.lease, { stopped: true });
+    update.run(Date.now() + 60_000, queued.execution.id);
+    assert.equal(store.execution(queued.execution.id)!.phase, "provisioning");
+  } finally { legacy.close(); }
+});
+
+test("admission CLI: --profiles reads per-profile reservations and is never combined with a change", t => {
+  const { store, path } = fixture(t);
+  const command = new URL("./service/admission-cli.js", import.meta.url);
+  const run = (...args: string[]) => spawnSync(process.execPath, [command.pathname, ...args], { encoding: "utf8", timeout: 5000 });
+  const limits = new Map([["android", 1]]);
+  store.configureAdmission(2, limits);
+  store.submit(scope, input(), "web");
+  store.claim("busy", 60_000, 2, limits);
+  const inspect = run("--db", path, "--profiles");
+  assert.equal(inspect.status, 0, inspect.stderr);
+  assert.deepEqual(JSON.parse(inspect.stdout), { android: { maxActive: 1, reserved: 0 }, web: { maxActive: null, reserved: 1 } });
+  for (const args of [["--profiles", "--control"], ["--profiles", "--expect", "2", "--max-active", "3"],
+    ["--profiles", "--admission", "closed", "--expect-generation", "0", "--reason", "maintenance"]]) {
+    const result = run("--db", path, ...args);
+    assert.equal(result.status, 1, JSON.stringify(args));
+  }
+  assert.deepEqual(store.admission(), { maxActive: 2, reserved: 1 });
+  assert.equal(store.admissionControl().generation, 0);
+});

@@ -40,7 +40,9 @@ const schema = z.object({
   defaultProfile: z.string().min(1).max(128),
   // Profile limits override the service-wide turn deadline and the reporting setup deadline.
   // Setup covers workload start, including a cold image pull, until the gate acknowledges.
+  // A profile's concurrency caps its running tasks within the shared concurrency ceiling.
   profiles: z.array(z.object({ id: z.string().min(1).max(128), agentId: z.string().uuid(),
+    concurrency: z.number().int().min(1).max(32).optional(),
     turnTimeoutMs: z.number().int().min(1000).max(43_200_000).optional(),
     setupTimeoutMs: z.number().int().min(20_000).max(600_000).optional() }).strict()).min(1).max(100),
   concurrency: z.number().int().min(1).max(32).default(2),
@@ -63,6 +65,8 @@ requireSqliteWalFix(process.versions.sqlite);
 const config = schema.parse(JSON.parse(readFileSync(required("A2A_SERVICE_CONFIG_FILE"), "utf8")));
 if (!config.profiles.some(profile => profile.id === config.defaultProfile)) throw new Error("default profile is missing");
 if (new Set(config.profiles.map(profile => profile.id)).size !== config.profiles.length) throw new Error("duplicate profile");
+if (config.profiles.some(profile => (profile.concurrency ?? 0) > config.concurrency)) throw new Error("profile concurrency exceeds the shared concurrency");
+const profileConcurrency = new Map(config.profiles.flatMap(profile => profile.concurrency === undefined ? [] : [[profile.id, profile.concurrency] as const]));
 const profileLimits = new Map(config.profiles.map(profile => [profile.id, {
   turnTimeoutMs: profile.turnTimeoutMs ?? config.turnTimeoutMs, setupTimeoutMs: profile.setupTimeoutMs ?? 120_000 }]));
 if (!statSync(config.reportingSetupExecutable).isFile()) throw new Error("reporting setup executable is missing");
@@ -102,7 +106,7 @@ const driver = new AgynRuntimeDriver(client, config.profiles, async (execution, 
   });
 });
 const stopping = new AbortController();
-const worker = new ExecutionWorker(store, driver, { concurrency: config.concurrency, leaseMs: 60_000, pollMs: 1000,
+const worker = new ExecutionWorker(store, driver, { concurrency: config.concurrency, profileConcurrency, leaseMs: 60_000, pollMs: 1000,
   turnTimeoutMs: config.turnTimeoutMs, retireTerminalRuntimes: config.retireTerminalTasks,
   profileTurnTimeoutMs: new Map([...profileLimits].map(([id, limits]) => [id, limits.turnTimeoutMs])),
   onError: event => console.error(JSON.stringify({ kind: "worker.error", ...event })),

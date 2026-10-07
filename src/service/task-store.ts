@@ -93,6 +93,9 @@ export class DurableTaskStore {
       PRAGMA journal_mode = WAL;
       PRAGMA synchronous = FULL;
       PRAGMA foreign_keys = ON;
+    `);
+    // One transaction: each statement would otherwise commit, and fsync, on its own.
+    this.transaction(() => this.db.exec(`
       CREATE TABLE IF NOT EXISTS execution_tasks (
         id TEXT PRIMARY KEY, tenant TEXT NOT NULL, subject TEXT NOT NULL,
         context_id TEXT NOT NULL, profile_id TEXT NOT NULL, task_json TEXT NOT NULL,
@@ -182,7 +185,7 @@ export class DurableTaskStore {
             >= (SELECT max_active FROM execution_profile_admission
               WHERE profile_id=(SELECT profile_id FROM execution_tasks WHERE id=NEW.task_id))
         BEGIN SELECT RAISE(ABORT, 'profile admission capacity exceeded'); END;
-    `);
+    `));
   }
 
   close(): void { this.db.close(); }

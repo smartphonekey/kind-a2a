@@ -16,8 +16,17 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           persist-credentials: false
-      - run: python3 -m venv .state/host-tools
-      - run: .state/host-tools/bin/pip install -r ops/hetzner/requirements.txt
-      - run: .state/host-tools/bin/python -m unittest discover -s ops/hetzner -p 'test_*.py'
-      - run: .state/host-tools/bin/ansible-playbook --syntax-check -i ops/hetzner/inventory.example.yml ops/hetzner/bootstrap.yml
+      # The ARC image's python3 has no ensurepip (python3-venv) and no root to
+      # add it, so the checks run in a digest-pinned Python image over the
+      # runner's per-pod Docker daemon.
+      - name: Host profile checks in a pinned Python container
+        run: |
+          docker run --rm --network host --user "$(id -u):$(id -g)" -v "$PWD:/work" -w /work \
+            -e HOME=/tmp -e PYTHONDONTWRITEBYTECODE=1 \
+            python:3.12-slim@sha256:05cda9777409a9c3ffddd94a4c476b79f0769a0b4857f0c7ed9226b6800b0d6f \
+            sh -euc '
+              python -m venv /tmp/host-tools
+              /tmp/host-tools/bin/pip install --no-cache-dir -r ops/hetzner/requirements.txt
+              /tmp/host-tools/bin/python -m unittest discover -s ops/hetzner -p "test_*.py"
+              /tmp/host-tools/bin/ansible-playbook --syntax-check -i ops/hetzner/inventory.example.yml ops/hetzner/bootstrap.yml'
       # No SSH credentials, server changes or private evidence in hosted CI.

@@ -195,3 +195,31 @@ test("worker: a profile turn deadline overrides the service deadline for that pr
   assert.throws(() => new ExecutionWorker(store, driver, { concurrency: 2, leaseMs: 150, pollMs: 5, turnTimeoutMs: 60_000,
     profileTurnTimeoutMs: new Map([["bad", 0]]) }), /positive integers/);
 });
+
+test("worker: a profile limit queues that profile's turns while other profiles fill the shared ceiling", async t => {
+  const store = new DurableTaskStore(":memory:"); const driver = new Driver();
+  const runner = new ExecutionWorker(store, driver, { concurrency: 3, profileConcurrency: new Map([["android", 1]]),
+    leaseMs: 150, pollMs: 5, turnTimeoutMs: 5000 });
+  t.after(async () => { await runner.stop(); store.close(); });
+  const android = [store.submit(scope, input(), "android"), store.submit(scope, input(), "android")];
+  const web = [store.submit(scope, input(), "web"), store.submit(scope, input(), "web")];
+  runner.start(); await until(() => driver.sends.length === 3);
+  assert.deepEqual(new Set(driver.sends.map(e => e.id)), new Set([android[0].execution.id, web[0].execution.id, web[1].execution.id]));
+  assert.equal(store.execution(android[1].execution.id)?.phase, "queued");
+  store.report(store.execution(android[0].execution.id)!.runtime!.instanceId, android[0].execution.id,
+    { eventId: "done", kind: "outcome", outcome: "turn_done", message: "done" });
+  await until(() => driver.sends.length === 4);
+  assert.equal(driver.sends[3].id, android[1].execution.id);
+  assert.equal(store.execution(android[0].execution.id)?.phase, "settled");
+  assert.deepEqual(store.profileAdmission(), { android: { maxActive: 1, reserved: 1 }, web: { maxActive: null, reserved: 2 } });
+});
+
+test("worker: profile limits must be positive and fit the shared ceiling before any provider call", t => {
+  const store = new DurableTaskStore(":memory:"); const driver = new Driver();
+  t.after(() => store.close());
+  for (const limit of [0, 1.5, 3]) {
+    assert.throws(() => new ExecutionWorker(store, driver, { concurrency: 2, profileConcurrency: new Map([["android", limit]]),
+      leaseMs: 150, pollMs: 5, turnTimeoutMs: 5000 }));
+  }
+  assert.deepEqual(store.admission(), { maxActive: null, reserved: 0 });
+});

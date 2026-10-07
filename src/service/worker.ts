@@ -35,10 +35,13 @@ export type RetirementEvent = { taskId: string; instanceId: string; profileId: s
 
 /**
  * Concurrency is both a local job limit and the durable ceiling shared by every worker on this database.
- * profileTurnTimeoutMs overrides turnTimeoutMs for executions of the named profiles; it does not change admission.
+ * profileConcurrency limits the named profiles' reservations within that ceiling; their queued turns
+ * wait without holding back other profiles. profileTurnTimeoutMs overrides turnTimeoutMs for executions
+ * of the named profiles; it does not change admission.
  */
 export type WorkerOptions = {
   concurrency: number; leaseMs: number; pollMs: number; turnTimeoutMs: number;
+  profileConcurrency?: ReadonlyMap<string, number>;
   profileTurnTimeoutMs?: ReadonlyMap<string, number>;
   /**
    * Retire terminal tasks' runtimes through the driver; off unless set. The driver's
@@ -63,13 +66,13 @@ export class ExecutionWorker {
   /** Initialize or verify shared admission immediately, even with no queued work or provider calls. */
   constructor(private readonly store: DurableTaskStore, private readonly driver: RuntimeDriver, private readonly options: WorkerOptions) {
     for (const value of [options.concurrency, options.leaseMs, options.pollMs, options.turnTimeoutMs, options.retireIntervalMs ?? 15_000,
-      ...(options.profileTurnTimeoutMs?.values() ?? [])]) {
+      ...(options.profileTurnTimeoutMs?.values() ?? []), ...(options.profileConcurrency?.values() ?? [])]) {
       if (!Number.isSafeInteger(value) || value < 1) throw new Error("worker limits must be positive integers");
     }
     if (options.leaseMs < options.pollMs * 3) throw new Error("lease must allow at least three poll intervals");
     this.store.assertNotQuarantined();
     this.workerId = options.workerId ?? randomUUID();
-    this.store.configureAdmission(options.concurrency);
+    this.store.configureAdmission(options.concurrency, options.profileConcurrency);
   }
 
   start(): void {
@@ -121,7 +124,7 @@ export class ExecutionWorker {
     while (!this.stopping.signal.aborted) {
       try {
         while (this.jobs.size < this.options.concurrency) {
-          const claimed = this.store.claim(this.workerId, this.options.leaseMs, this.options.concurrency);
+          const claimed = this.store.claim(this.workerId, this.options.leaseMs, this.options.concurrency, this.options.profileConcurrency);
           if (!claimed) break;
           const job = this.run(claimed).finally(() => { this.jobs.delete(job); });
           this.jobs.add(job);

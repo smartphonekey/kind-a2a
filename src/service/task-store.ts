@@ -39,6 +39,11 @@ export type Submission = { task: Task; execution: Execution; duplicate: boolean 
 export type StoreOptions = { clock?: () => number; maxQueuedPerTask?: number; maxPendingPerOwner?: number };
 /** Database-wide claimed execution count; queued, settled and stopped-uncertain executions reserve no slot. */
 export type Admission = { maxActive: number | null; reserved: number };
+/**
+ * Reservations per profile within the shared ceiling; maxActive is null for a profile without its own limit.
+ * Profiles with neither a limit nor a reservation are omitted.
+ */
+export type ProfileAdmission = Record<string, { maxActive: number | null; reserved: number }>;
 /** Durable admission switch; closing does not fence or stop already admitted workloads. */
 export type AdmissionControl = { generation: number; open: boolean; reason: string; changedAt: number };
 
@@ -165,6 +170,18 @@ export class DurableTaskStore {
           AND (SELECT count(*) FROM task_executions WHERE phase NOT IN ('queued','settled','uncertain'))
             >= (SELECT max_active FROM execution_admission WHERE id=1)
         BEGIN SELECT RAISE(ABORT, 'execution admission capacity exceeded'); END;
+      CREATE TABLE IF NOT EXISTS execution_profile_admission (
+        profile_id TEXT PRIMARY KEY, max_active INTEGER NOT NULL CHECK(max_active>0)
+      );
+      CREATE TRIGGER IF NOT EXISTS execution_admission_profile_capacity
+        BEFORE UPDATE OF phase ON task_executions
+        WHEN OLD.phase='queued' AND NEW.phase NOT IN ('queued','settled','uncertain')
+          AND (SELECT count(*) FROM task_executions e JOIN execution_tasks t ON t.id=e.task_id
+            WHERE e.phase NOT IN ('queued','settled','uncertain')
+              AND t.profile_id=(SELECT profile_id FROM execution_tasks WHERE id=NEW.task_id))
+            >= (SELECT max_active FROM execution_profile_admission
+              WHERE profile_id=(SELECT profile_id FROM execution_tasks WHERE id=NEW.task_id))
+        BEGIN SELECT RAISE(ABORT, 'profile admission capacity exceeded'); END;
     `);
   }
 
@@ -346,10 +363,35 @@ export class DurableTaskStore {
     });
   }
 
-  /** Initialize the shared ceiling once; later workers must match it, even when no tasks are queued. */
-  configureAdmission(maxActive: number): void {
+  /**
+   * Initialize the shared ceiling once; later workers must match it, even when no tasks are queued.
+   * @remarks Profile limits partition that ceiling and follow worker configuration: each start
+   * records its limits in place of the stored ones, and workers still running with other limits
+   * fail their claims until they restart. Lowering a limit never stops admitted work; the profile
+   * only admits again once its reservations fall below the new limit.
+   */
+  configureAdmission(maxActive: number, profileLimits: ReadonlyMap<string, number> = new Map()): void {
     this.validateAdmissionLimit(maxActive);
-    this.transaction(() => this.assertAdmissionLimit(maxActive));
+    this.validateProfileLimits(maxActive, profileLimits);
+    this.transaction(() => {
+      this.assertAdmissionLimit(maxActive);
+      this.db.prepare("DELETE FROM execution_profile_admission").run();
+      const insert = this.db.prepare("INSERT INTO execution_profile_admission(profile_id,max_active) VALUES(?,?)");
+      for (const [profileId, limit] of profileLimits) insert.run(profileId, limit);
+    });
+  }
+
+  /** Reservations and stored limits per profile, counted like admission(). */
+  profileAdmission(): ProfileAdmission {
+    const rows = this.db.prepare(`SELECT p.profile_id, l.max_active, count(e.id) AS reserved FROM
+      (SELECT profile_id FROM execution_profile_admission UNION SELECT t.profile_id FROM task_executions x
+        JOIN execution_tasks t ON t.id=x.task_id WHERE x.phase NOT IN ('queued','settled','uncertain')) p
+      LEFT JOIN execution_profile_admission l ON l.profile_id=p.profile_id
+      LEFT JOIN execution_tasks t ON t.profile_id=p.profile_id
+      LEFT JOIN task_executions e ON e.task_id=t.id AND e.phase NOT IN ('queued','settled','uncertain')
+      GROUP BY p.profile_id, l.max_active ORDER BY p.profile_id`).all() as Row[];
+    return Object.fromEntries(rows.map(row => [String(row.profile_id),
+      { maxActive: row.max_active === null ? null : Number(row.max_active), reserved: Number(row.reserved) }]));
   }
 
   /** Count unreleased reservations across all owners/profiles, including expired leases; an unset ceiling is null. */
@@ -426,15 +468,20 @@ export class DurableTaskStore {
    * retains the same slot even above the ceiling; only new claims need spare capacity.
    * Earlier unsettled turns block their task, and each acquisition advances the fencing
    * generation. Lease expiry, cancellation and outcomes do not release reservations.
+   * A queued turn whose profile has reached its stored limit waits without blocking
+   * later turns of other profiles.
    */
-  claim(workerId: string, leaseMs: number, maxActive: number): { execution: Execution; lease: Lease; recovered: boolean } | undefined {
+  claim(workerId: string, leaseMs: number, maxActive: number, profileLimits: ReadonlyMap<string, number> = new Map()):
+      { execution: Execution; lease: Lease; recovered: boolean } | undefined {
     if (!workerId || !Number.isSafeInteger(leaseMs) || leaseMs < 1 || !Number.isSafeInteger(maxActive) || maxActive < 1) {
       throw new TaskStoreError("invalid", "invalid worker lease or concurrency limit");
     }
+    this.validateProfileLimits(maxActive, profileLimits);
     return this.transaction(() => {
       if (this.restoreQuarantined()) return undefined;
       // Check on every claim so already-open workers cannot bypass an operator change.
       this.assertAdmissionLimit(maxActive);
+      this.assertProfileLimits(profileLimits);
       const now = this.clock();
       let row = this.db.prepare(`SELECT id FROM task_executions WHERE phase NOT IN ('queued','settled','uncertain')
         AND lease_until<=? ORDER BY created_at,ordinal LIMIT 1`).get(now) as Row | undefined;
@@ -442,8 +489,12 @@ export class DurableTaskStore {
       if (!row) {
         if (!this.admissionControl().open) return undefined;
         if (this.admission().reserved >= maxActive) return undefined;
-        row = this.db.prepare(`SELECT e.id FROM task_executions e WHERE e.phase='queued' AND NOT EXISTS
+        row = this.db.prepare(`SELECT e.id FROM task_executions e JOIN execution_tasks t ON t.id=e.task_id
+          WHERE e.phase='queued' AND NOT EXISTS
           (SELECT 1 FROM task_executions p WHERE p.task_id=e.task_id AND p.ordinal<e.ordinal AND p.phase!='settled')
+          AND NOT EXISTS (SELECT 1 FROM execution_profile_admission l WHERE l.profile_id=t.profile_id AND l.max_active<=
+            (SELECT count(*) FROM task_executions r JOIN execution_tasks rt ON rt.id=r.task_id
+              WHERE rt.profile_id=t.profile_id AND r.phase NOT IN ('queued','settled','uncertain')))
           ORDER BY e.created_at,e.ordinal,e.id LIMIT 1`).get() as Row | undefined;
       }
       if (!row) return undefined;
@@ -829,6 +880,21 @@ export class DurableTaskStore {
 
   private validateAdmissionLimit(maxActive: number): void {
     if (!Number.isSafeInteger(maxActive) || maxActive < 1) throw new TaskStoreError("invalid", "admission limit must be a positive integer");
+  }
+
+  private validateProfileLimits(maxActive: number, profileLimits: ReadonlyMap<string, number>): void {
+    for (const [profileId, limit] of profileLimits) {
+      if (!profileId || profileId.length > 128) throw new TaskStoreError("invalid", "invalid profile identifier");
+      this.validateAdmissionLimit(limit);
+      if (limit > maxActive) throw new TaskStoreError("invalid", "a profile limit cannot exceed the shared admission limit");
+    }
+  }
+
+  private assertProfileLimits(profileLimits: ReadonlyMap<string, number>): void {
+    const stored = this.db.prepare("SELECT profile_id,max_active FROM execution_profile_admission").all() as Row[];
+    if (stored.length !== profileLimits.size || stored.some(row => profileLimits.get(String(row.profile_id)) !== Number(row.max_active))) {
+      throw new TaskStoreError("conflict", "worker profile limits differ from the stored admission limits");
+    }
   }
 
   private assertAdmissionLimit(maxActive: number): void {

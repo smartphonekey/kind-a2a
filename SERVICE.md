@@ -75,9 +75,14 @@ profiles yet: any valid credential may use every profile endpoint.
 
 A profile may override the turn deadline and the reporting setup deadline in
 the [startup schema](src/service/main.ts). Size the setup deadline for a cold
-image pull on the target node. Compute admission remains one shared ceiling
-across all profiles; per-profile admission is not implemented, so a profile that
-must run one task at a time needs `concurrency: 1` or its own service database.
+image pull on the target node. A profile may also set its own `concurrency`,
+at most the shared one: its turns then wait while that many of its executions
+hold reservations, and later turns of other profiles are admitted past them up
+to the shared ceiling. The shared ceiling keeps the drained procedure above;
+profile limits change with a restart that carries the new configuration
+([admission](src/service/task-store.ts)). Size each limit for what the target
+cluster admits for that profile at once, so that surplus tasks queue in A2A
+instead of failing at workload admission.
 
 ## Client Authentication
 

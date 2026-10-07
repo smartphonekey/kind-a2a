@@ -70,7 +70,12 @@ test("worker: independent database connections keep the global slot until releas
   const driver = new Driver(); driver.allowStop = false;
   let releaseAttempts = 0;
   const tracked: RuntimeDriver = { ...driver, release: async execution => { releaseAttempts++; return driver.release(execution); } };
-  const one = worker(store, tracked); const two = worker(other, tracked);
+  // File-backed WAL commits fsync synchronously; on a busy disk they can stall the event loop past a
+  // 150 ms lease, and the other connection then recovers a healthy dispatch as uncertain. This test
+  // covers release fencing, not lease expiry, so its leases outlast such stalls.
+  const durable = (connection: DurableTaskStore) => new ExecutionWorker(connection, tracked,
+    { concurrency: 2, leaseMs: 5000, pollMs: 5, turnTimeoutMs: 10_000 });
+  const one = durable(store); const two = durable(other);
   t.after(async () => { await one.stop(); await two.stop(); store.close(); other.close(); rmSync(directory, { recursive: true, force: true }); });
   const tasks = Array.from({ length: 4 }, () => store.submit(scope, input(), "agent"));
   one.start(); two.start();

@@ -12,6 +12,7 @@ import {
   SendMessageRequest,
   StreamResponse,
   SubscribeToTaskRequest,
+  Task,
   formatSSEEvent,
 } from "@a2a-js/sdk";
 import { ServerCallContext, validateVersion } from "@a2a-js/sdk/server";
@@ -285,6 +286,12 @@ export function browserRouter(options: HttpOptions, browser: BrowserOptions) {
       defaultProfile: options.profileId,
     }),
   );
+  // Owner-scoped UI extension; do not advertise Finish as a standard A2A method.
+  router.post("/web-api/tasks/:taskId/finish", (request, response) => {
+    z.object({}).strict().parse(request.body);
+    const task = options.store.requestFinish(response.locals.browserPrincipal, request.params.taskId);
+    response.json(Task.toJSON(task));
+  });
   const mount = (path: string, profileId: string) => {
     const card: AgentCard = {
       ...options.card,

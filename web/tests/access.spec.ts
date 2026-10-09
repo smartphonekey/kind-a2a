@@ -30,9 +30,17 @@ test('Access UI: one sign-in, stream renewal without replay, private owners and 
     expect(read.status()).toBe(404);
     const list = await bob.request.get(`${origin}/web-api/a2a/tasks`, { headers: { 'A2A-Version': '1.0' } });
     expect(await list.text()).not.toContain(taskId);
+    const finish = await bob.request.post(`${origin}/web-api/tasks/${taskId}/finish`, {
+      headers: { Origin: origin }, data: {},
+    });
+    expect(finish.status()).toBe(404);
   } finally { await bob.close(); }
   expect(await page.evaluate(() => localStorage.length)).toBe(0);
   await page.screenshot({ path: info.outputPath('access-workspace.png') });
+  await page.getByRole('button', { name: 'Finish task', exact: true }).click();
+  await page.getByRole('dialog', { name: 'End task' }).getByRole('button', { name: 'Finish task', exact: true }).click();
+  await expect(page.locator('.task-notice')).toContainText('Completed');
+  expect(sends).toBe(1);
   const menu = page.getByRole('button', { name: 'Open task list' });
   if (await menu.isVisible()) await menu.click();
   await page.getByRole('button', { name: 'Sign out', exact: true }).click();

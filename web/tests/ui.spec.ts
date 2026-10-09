@@ -174,13 +174,103 @@ test("parallel agents, task switching preserves running execution, explicit canc
     .click();
   await expect(page.getByLabel("Agent", { exact: true })).toHaveValue("codex");
   await expect(page.locator(".chat-header .status")).toHaveText("Working");
-  await page.getByRole("button", { name: "Cancel task", exact: true }).click();
+  await page.getByRole("button", { name: "Finish task", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "End task" });
+  await dialog.getByRole("radio", { name: /Cancel \/ terminate/ }).check();
+  await dialog.getByRole("button", { name: "Cancel task", exact: true }).click();
   await expect(page.locator(".task-notice")).toContainText("Canceled");
   const calls = (await (await request.get("/__fixture/calls")).json()).filter(
     (c: any) => c.taskId === taskId,
   );
   expect(calls.length).toBe(1);
   await noOverflow(page);
+});
+
+test("Finish is the default, closes idle tasks without another message and preserves history", async ({ page, request }, info) => {
+  await login(page);
+  const text = `close-idle-${info.project.name}-${Date.now()}`;
+  await send(page, text);
+  await expect(page.locator(".composer-label")).toContainText("Compute released");
+  const taskId = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("task")!;
+  await page.getByRole("button", { name: "Finish task", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "End task" });
+  await expect(dialog.getByRole("radio", { name: /^Finish/ })).toBeChecked();
+  const bounds = await dialog.boundingBox(), viewport = page.viewportSize()!;
+  expect(bounds!.x).toBeGreaterThanOrEqual(0);
+  expect(bounds!.y).toBeGreaterThanOrEqual(0);
+  expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(viewport.width);
+  expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(viewport.height);
+  await noOverflow(page);
+  await page.screenshot({ path: info.outputPath("finish-task-dialog.png") });
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByLabel("Message", { exact: true })).toBeEnabled();
+  await page.getByRole("button", { name: "Finish task", exact: true }).click();
+  await dialog.getByRole("button", { name: "Keep open", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await page.getByRole("button", { name: "Finish task", exact: true }).click();
+  await dialog.getByRole("button", { name: "Finish task", exact: true }).click();
+  await expect(page.locator(".task-notice")).toContainText("Completed");
+  await expect(page.getByLabel("Message", { exact: true })).toBeDisabled();
+  await expect(page.locator(".assistant-message")).toContainText(`Reply from codex: ${text}`);
+  const calls = (await (await request.get("/__fixture/calls")).json()).filter((c: any) => c.taskId === taskId);
+  expect(calls).toHaveLength(1);
+  await page.reload();
+  await expect(page.locator(".task-notice")).toContainText("Completed");
+  await expect(page.getByRole("button", { name: "Finish task", exact: true })).toHaveCount(0);
+});
+
+test("Finish waits for a running turn and Cancel can override it", async ({ page, request }, info) => {
+  await login(page);
+  await send(page, `slow-${info.project.name}-${Date.now()}`);
+  await expect(page.locator(".assistant-message")).toContainText("Inspecting the workspace");
+  const taskId = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("task")!;
+  await page.getByRole("button", { name: "Finish task", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "End task" });
+  await expect(dialog.getByRole("radio", { name: /^Finish/ })).toBeChecked();
+  await dialog.getByRole("button", { name: "Finish task", exact: true }).click();
+  await expect(page.locator(".composer-label")).toContainText("Finishing");
+  await expect(page.getByLabel("Message", { exact: true })).toBeDisabled();
+  await expect(page.locator(".task-notice")).toHaveCount(0);
+  await expect(page.locator(".task-notice")).toContainText("Completed");
+  expect((await (await request.get("/__fixture/calls")).json()).filter((c: any) => c.taskId === taskId)).toHaveLength(1);
+
+  await page.getByRole("button", { name: "New task", exact: true }).last().click();
+  await send(page, `hold-${info.project.name}-${Date.now()}`);
+  await expect(page.locator(".assistant-message")).toContainText("Inspecting the workspace");
+  await page.getByRole("button", { name: "Finish task", exact: true }).click();
+  await dialog.getByRole("button", { name: "Finish task", exact: true }).click();
+  await expect(page.locator(".composer-label")).toContainText("Finishing");
+  await page.getByRole("button", { name: "Finish task", exact: true }).click();
+  await expect(dialog.getByRole("radio", { name: /^Finish/ })).toBeDisabled();
+  await expect(dialog.getByRole("radio", { name: /Cancel \/ terminate/ })).toBeChecked();
+  await dialog.getByRole("button", { name: "Cancel task", exact: true }).click();
+  await expect(page.locator(".task-notice")).toContainText("Canceled");
+});
+
+test("lost Finish acknowledgement never retries and locks the composer until reload", async ({ page, request }, info) => {
+  await login(page);
+  await send(page, `close-lost-${info.project.name}-${Date.now()}`);
+  await expect(page.locator(".composer-label")).toContainText("Compute released");
+  const taskId = new URLSearchParams(new URL(page.url()).hash.slice(1)).get("task")!;
+  let attempts = 0;
+  await page.route(`**/web-api/tasks/${taskId}/finish`, async route => {
+    attempts++;
+    const accepted = await page.request.post(`/web-api/tasks/${taskId}/finish`, {
+      headers: { Origin: "http://127.0.0.1:8094" }, data: {},
+    });
+    expect(accepted.ok()).toBe(true);
+    await route.abort("failed");
+  });
+  await page.getByRole("button", { name: "Finish task", exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Finish task", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText("Task outcome was not confirmed");
+  await expect(page.getByLabel("Message", { exact: true })).toBeDisabled();
+  await page.waitForTimeout(2300);
+  expect(attempts).toBe(1);
+  expect((await (await request.get("/__fixture/calls")).json()).filter((c: any) => c.taskId === taskId)).toHaveLength(1);
+  await page.reload();
+  await expect(page.locator(".task-notice")).toContainText("Completed");
 });
 
 test("uncertain execution is read-only; logout clears browser access", async ({
@@ -192,6 +282,11 @@ test("uncertain execution is read-only; logout clears browser access", async ({
     "Operator reconciliation required",
   );
   await expect(page.getByLabel("Message", { exact: true })).toBeDisabled();
+  await page.getByRole("button", { name: "Finish task", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "End task" });
+  await expect(dialog.getByRole("radio", { name: /^Finish/ })).toBeDisabled();
+  await expect(dialog.getByRole("radio", { name: /Cancel \/ terminate/ })).toBeChecked();
+  await dialog.getByRole("button", { name: "Keep open", exact: true }).click();
   await page.reload();
   await expect(page.getByLabel("Message", { exact: true })).toBeDisabled();
   await openTasks(page);

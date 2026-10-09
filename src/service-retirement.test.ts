@@ -47,13 +47,15 @@ test("retirement: only terminal tasks with settled executions and a bound runtim
   store.requestCancel(scope, neverStarted);
   const canceledWaiting = turn(store, "turn_done").task.id;
   store.requestCancel(scope, canceledWaiting);
+  const userFinished = turn(store, "turn_done").task.id;
+  store.requestFinish(scope, userFinished);
 
   assert.equal(store.get(scope, waiting).status?.state, TaskState.TASK_STATE_INPUT_REQUIRED);
   assert.equal(store.get(scope, blocked).status?.state, TaskState.TASK_STATE_INPUT_REQUIRED);
   assert.equal(store.get(scope, neverStarted).status?.state, TaskState.TASK_STATE_CANCELED);
   const retirable = store.retirableRuntimes(100);
   assert.deepEqual(new Set(retirable.map(r => r.taskId)),
-    new Set([completed, failed, ended, canceledBlocked, failedBlocked.task.id, canceledWaiting]));
+    new Set([completed, failed, ended, canceledBlocked, failedBlocked.task.id, canceledWaiting, userFinished]));
   assert.deepEqual(retirable.find(r => r.taskId === completed)?.runtime, runtimeOf(completed));
   assert.equal(retirable.find(r => r.taskId === failed)?.state, TaskState.TASK_STATE_FAILED);
 

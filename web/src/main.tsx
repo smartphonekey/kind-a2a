@@ -534,7 +534,7 @@ function Workspace({
  * Own one runtime per Selection.key with an initial server-history projection.
  * Poll/import only while no send stream is active, checking again after reads.
  * Send/poll errors lock sending until reload; terminal, recovery-required and
- * cancel-pending snapshots are read-only. Unmounting never cancels the task.
+ * closing snapshots are read-only. Unmounting never cancels the task.
  */
 function ChatSession({
   selection,
@@ -555,7 +555,9 @@ function ChatSession({
 }) {
   const [task, setTask] = useState(selection.task),
     [error, setError] = useState(""),
-    [canceling, setCanceling] = useState(false);
+    [ending, setEnding] = useState<"finish" | "cancel" | null>(null),
+    [endDialog, setEndDialog] = useState(false);
+  const mutationGeneration = useRef(0);
   const [needsReload, setNeedsReload] = useState(false);
   const client = useMemo(
     () => new TaskClient(selection.profileId, selection.task),
@@ -588,9 +590,10 @@ function ChatSession({
     };
     const sync = async () => {
       if (!client.task || client.streaming) return;
+      const generation = mutationGeneration.current;
       try {
         const next = await client.getTask(client.task.id, 1000);
-        if (closed || client.streaming) return;
+        if (closed || client.streaming || generation !== mutationGeneration.current) return;
         client.task = next;
         setTask(next);
         onTask(next);
@@ -612,31 +615,38 @@ function ChatSession({
     };
   }, [client, runtime, onTask]);
   /**
-   * Request service-side cancellation without aborting the browser stream as a
-   * substitute. A returned snapshot may still be pending runtime removal; retain
-   * its cancellationRequested lock until authoritative task state changes.
+   * Neither ending action aborts observation as a substitute for controller work.
+   * A lost acknowledgement locks sending until reload, never repeating a mutation.
    */
-  const cancel = async () => {
-    if (!client.task || canceling) return;
-    setCanceling(true);
+  const endTask = async (action: "finish" | "cancel") => {
+    if (!client.task || ending) return;
+    mutationGeneration.current++;
+    setEnding(action);
+    setEndDialog(false);
     setError("");
     try {
-      const next = await client.cancelTask(client.task.id);
+      const next = action === "finish"
+        ? await client.finishTask(client.task.id)
+        : await client.cancelTask(client.task.id);
       client.task = next;
       setTask(next);
       onTask(next);
     } catch {
+      setNeedsReload(true);
       setError(
-        "Cancellation was not confirmed. Reload the task to check its state.",
+        "Task outcome was not confirmed. Reload the task to check its state.",
       );
     } finally {
-      setCanceling(false);
+      mutationGeneration.current++;
+      setEnding(null);
     }
   };
   const blocked =
     needsReload ||
+    Boolean(ending) ||
     terminal(task) ||
     Boolean(task?.metadata?.recoveryRequired) ||
+    Boolean(task?.metadata?.completionRequested) ||
     Boolean(task?.metadata?.cancellationRequested);
   return (
     <AssistantRuntimeProvider runtime={runtime}>
@@ -740,7 +750,9 @@ function ChatSession({
               />
               <div className="composer-footer">
                 <span className="composer-label">
-                  {task?.metadata?.resourcesReleased ? (
+                  {task?.metadata?.completionRequested ? (
+                    <><LoaderCircle className="spin" size={14} />Finishing</>
+                  ) : task?.metadata?.resourcesReleased ? (
                     <>
                       <CheckCheck size={14} />
                       Compute released
@@ -764,18 +776,19 @@ function ChatSession({
                     <button
                       type="button"
                       className="icon"
-                      title="Cancel task"
-                      aria-label="Cancel task"
+                      title="Finish task"
+                      aria-label="Finish task"
+                      aria-haspopup="dialog"
                       disabled={
-                        canceling ||
+                        needsReload || Boolean(ending) ||
                         Boolean(task.metadata?.cancellationRequested)
                       }
-                      onClick={() => void cancel()}
+                      onClick={() => setEndDialog(true)}
                     >
-                      {canceling ? (
+                      {ending ? (
                         <LoaderCircle className="spin" size={16} />
                       ) : (
-                        <Square size={15} />
+                        <CheckCheck size={17} />
                       )}
                     </button>
                   )}
@@ -805,7 +818,69 @@ function ChatSession({
         </ThreadPrimitive.Root>
         {details && <TaskDetails task={task} onClose={onDetails} />}
       </div>
+      {endDialog && task && !terminal(task) && (
+        <TaskEndDialog
+          task={task}
+          onClose={() => setEndDialog(false)}
+          onConfirm={(action) => void endTask(action)}
+        />
+      )}
     </AssistantRuntimeProvider>
+  );
+}
+
+function TaskEndDialog({ task, onClose, onConfirm }: {
+  task: A2ATask;
+  onClose: () => void;
+  onConfirm: (action: "finish" | "cancel") => void;
+}) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  const finishUnavailable = Boolean(task.metadata?.recoveryRequired || task.metadata?.completionRequested);
+  const [action, setAction] = useState<"finish" | "cancel">(finishUnavailable ? "cancel" : "finish");
+  useEffect(() => {
+    const element = dialog.current!;
+    element.showModal();
+    return () => element.close();
+  }, []);
+  return (
+    <dialog ref={dialog} className="task-end-dialog" aria-labelledby="task-end-title" onCancel={onClose}>
+      <form onSubmit={(event) => {
+        event.preventDefault();
+        if (action !== "finish" || !finishUnavailable) onConfirm(action);
+      }}>
+        <div className="task-end-heading">
+          <h2 id="task-end-title">End task</h2>
+          <button type="button" className="icon" title="Close" aria-label="Close task actions" onClick={onClose}>
+            <X size={18} />
+          </button>
+        </div>
+        <fieldset aria-label="Task outcome">
+          <label>
+            <input type="radio" name="outcome" value="finish" checked={action === "finish"}
+              disabled={finishUnavailable} onChange={() => setAction("finish")} />
+            <CheckCheck size={18} />
+            <span>Finish<span className="task-end-detail">
+              {task.metadata?.recoveryRequired ? "Reconciliation required" : task.metadata?.completionRequested
+                ? "Already requested" : task.metadata?.resourcesReleased ? "Mark completed" : "After pending work completes"}
+            </span></span>
+          </label>
+          <label>
+            <input type="radio" name="outcome" value="cancel" checked={action === "cancel"}
+              onChange={() => setAction("cancel")} />
+            <Square size={17} />
+            <span>Cancel / terminate<span className="task-end-detail">Stop now</span></span>
+          </label>
+        </fieldset>
+        <p className="task-end-warning">The task cannot resume. Its workspace may be deleted; history and published artifacts are retained.</p>
+        <div className="task-end-footer">
+          <button type="button" className="text-button" onClick={onClose}>Keep open</button>
+          <button type="submit" className="primary" disabled={action === "finish" && finishUnavailable}>
+            {action === "finish" ? <CheckCheck size={17} /> : <Square size={15} />}
+            {action === "finish" ? "Finish task" : "Cancel task"}
+          </button>
+        </div>
+      </form>
+    </dialog>
   );
 }
 /** Keep remote image references inert and external links isolated from this tab. */

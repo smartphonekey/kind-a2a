@@ -103,6 +103,61 @@ const input = (
   configuration: { returnImmediately: true },
 });
 
+test("browser Finish: owner-scoped extension, same-origin checks and no new execution", async t => {
+  const f = await fixture(t), cookie = await f.login(), bob = await f.login("bob");
+  const scope = { tenant: "org", subject: "alice" };
+  const { task } = f.store.submit(scope, Message.fromJSON(input("finish-idle").message), "codex");
+  const { lease } = f.store.claim("worker", 60_000, 1)!;
+  f.store.bind(lease, { instanceId: "instance", threadId: "thread", profileId: "codex" });
+  f.store.beginDispatch(lease); f.store.dispatched(lease, "request");
+  f.store.report("instance", lease.executionId, { kind: "outcome", eventId: "done", outcome: "turn_done", message: "result" });
+  f.store.releasing(lease); f.store.settle(lease, { stopped: true });
+  const path = `/web-api/tasks/${task.id}/finish`;
+  const post = (headers: Record<string, string> = { cookie }, body = "{}") =>
+    f.request(path, { method: "POST", headers, body });
+  assert.equal((await post({})).status, 401);
+  assert.equal((await post({ cookie: bob })).status, 404);
+  assert.equal((await post({ cookie, origin: "https://evil.example" })).status, 403);
+  assert.equal((await post({ cookie }, '{"outcome":"completed"}')).status, 400);
+  assert.equal((await f.request(`/web-api/a2a/tasks/${task.id}:finish`, { method: "POST", headers: { cookie }, body: "{}" })).status, 404);
+  assert.equal(f.store.get(scope, task.id).status?.state, TaskState.TASK_STATE_INPUT_REQUIRED);
+  const response = await post(); assert.equal(response.status, 200);
+  const completed = await response.json() as any;
+  assert.equal(completed.status.state, "TASK_STATE_COMPLETED");
+  assert.equal(completed.metadata.completedBy, "user");
+  assert.equal(completed.history.length, 2);
+  assert.equal((await post()).status, 200);
+  assert.equal(f.store.claim("next", 60_000, 1), undefined);
+  assert.equal(f.store.events(scope, task.id).filter(e => e.kind === "task.finish_requested").length, 1);
+});
+
+test("browser Finish: pending work remains active, cancellation can override and errors stay redacted", async t => {
+  const f = await fixture(t), cookie = await f.login(), scope = { tenant: "org", subject: "alice" };
+  const { task } = f.store.submit(scope, Message.fromJSON(input("finish-active").message), "codex");
+  const { lease } = f.store.claim("worker", 60_000, 1)!;
+  f.store.bind(lease, { instanceId: "instance", threadId: "thread", profileId: "codex" });
+  f.store.beginDispatch(lease); f.store.dispatched(lease, "request");
+  const path = `/web-api/tasks/${task.id}/finish`;
+  const response = await f.request(path, { method: "POST", headers: { cookie }, body: "{}" });
+  assert.equal(response.status, 200);
+  const pending = await response.json() as any;
+  assert.equal(pending.status.state, "TASK_STATE_WORKING");
+  assert.equal(pending.metadata.completionRequested, true);
+  assert.equal(f.store.admission().reserved, 1);
+  const followup = await f.request("/web-api/a2a/message:send", {
+    method: "POST", headers: { cookie }, body: JSON.stringify(input("closing-followup", "work", task.id)),
+  });
+  assert.equal(followup.status, 409);
+  f.store.requestCancel(scope, task.id);
+  assert.equal((await f.request(path, { method: "POST", headers: { cookie }, body: "{}" })).status, 409);
+  f.store.releasing(lease); f.store.settle(lease, { stopped: true });
+  assert.equal(f.store.get(scope, task.id).status?.state, TaskState.TASK_STATE_CANCELED);
+  f.store.requestFinish = () => { throw new Error("private database and credential details"); };
+  const failed = await f.request(path, { method: "POST", headers: { cookie }, body: "{}" });
+  assert.equal(failed.status, 500);
+  assert(!JSON.stringify(await failed.json()).includes("private"));
+});
+
 for (const scenario of ["recovery", "terminal", "identity", "task capacity", "owner capacity"] as const) {
   test(`A2A admission errors: ${scenario} preserves REST/JSON-RPC bindings without accepting work`, async (t) => {
     const capacity = scenario.endsWith("capacity");

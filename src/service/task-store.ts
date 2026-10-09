@@ -241,8 +241,8 @@ export class DurableTaskStore {
       if (!this.admissionControl().open) throw new TaskStoreError("capacity", "execution admission is closed");
       const existing = message.taskId ? this.get(scope, message.taskId) : undefined;
       if (existing && terminal.has(existing.status!.state)) throw new TaskStoreError("conflict", "terminal tasks cannot resume");
-      if (existing?.metadata?.cancellationRequested || existing?.metadata?.recoveryRequired) {
-        throw new TaskStoreError("conflict", "task is canceling or requires explicit recovery");
+      if (existing?.metadata?.cancellationRequested || existing?.metadata?.completionRequested || existing?.metadata?.recoveryRequired) {
+        throw new TaskStoreError("conflict", "task is closing or requires explicit recovery");
       }
       if (existing && message.contextId && message.contextId !== existing.contextId) {
         throw new TaskStoreError("invalid", "contextId does not belong to this task");
@@ -729,6 +729,37 @@ export class DurableTaskStore {
     });
   }
 
+  /**
+   * Close an idle task without another agent turn, or finish after the last accepted
+   * turn. Failed/uncertain outcomes still win; queued work is not silently discarded.
+   * The browser extension owns this action, not an invented A2A protocol method.
+   */
+  requestFinish(scope: Scope, taskId: string): Task {
+    return this.transaction(() => {
+      const task = this.get(scope, taskId);
+      if (task.status?.state === TaskState.TASK_STATE_COMPLETED) return task;
+      if (terminal.has(task.status!.state) || task.metadata?.cancellationRequested) {
+        throw new TaskStoreError("conflict", "task cannot be finished");
+      }
+      const pending = this.db.prepare(`SELECT id,phase,uncertain_reason FROM task_executions
+        WHERE task_id=? AND phase!='settled' ORDER BY ordinal DESC`).all(taskId) as Row[];
+      if (task.metadata?.recoveryRequired || pending.some(row => row.phase === "uncertain" || row.uncertain_reason)) {
+        throw new TaskStoreError("conflict", "task requires explicit recovery; cancel it to abandon interrupted work");
+      }
+      if (task.metadata?.completionRequested) return task;
+      this.append(taskId, null, "task.finish_requested", { afterExecutionId: pending[0]?.id ?? null });
+      if (pending.length) {
+        this.db.prepare("UPDATE task_executions SET end_task=1 WHERE id=?").run(pending[0].id);
+        this.setStatus(taskId, task.status!.state, "Finish requested; waiting for pending work to stop",
+          { completionRequested: true, reusable: false });
+      } else {
+        this.setStatus(taskId, TaskState.TASK_STATE_COMPLETED, "Task finished by user",
+          { completionRequested: false, completedBy: "user", reusable: false, resourcesReleased: true });
+      }
+      return this.get(scope, taskId);
+    });
+  }
+
   /** Discard queued work immediately, but keep active work reserved until confirmed release makes cancellation final. */
   requestCancel(scope: Scope, taskId: string): Task {
     return this.transaction(() => {
@@ -740,7 +771,8 @@ export class DurableTaskStore {
       this.append(taskId, null, "task.cancel_requested", {});
       const active = this.db.prepare("SELECT id FROM task_executions WHERE task_id=? AND phase!='settled'").get(taskId);
       this.setStatus(taskId, active ? TaskState.TASK_STATE_WORKING : TaskState.TASK_STATE_CANCELED,
-        active ? "Cancellation requested; waiting for runtime termination" : "Task canceled", { cancellationRequested: true });
+        active ? "Cancellation requested; waiting for runtime termination" : "Task canceled",
+        { cancellationRequested: true, completionRequested: false, reusable: false });
       return this.get(scope, taskId);
     });
   }
@@ -774,6 +806,8 @@ export class DurableTaskStore {
       if (terminal.has(state) || execution.uncertainReason) {
         this.db.prepare("UPDATE task_executions SET phase='settled',canceled=1 WHERE task_id=? AND phase='queued'").run(execution.taskId);
       }
+      const completionRequested = Boolean(this.db.prepare(`SELECT 1 FROM task_executions
+        WHERE task_id=? AND phase NOT IN ('settled','uncertain') AND end_task=1`).get(execution.taskId));
       this.append(execution.taskId, execution.id, "runtime.stopped", { instanceId: execution.runtime?.instanceId ?? null });
       const row = this.db.prepare("SELECT task_json FROM execution_tasks WHERE id=?").get(execution.taskId) as Row;
       const task = JSON.parse(String(row.task_json)) as Task;
@@ -783,7 +817,9 @@ export class DurableTaskStore {
       this.saveTask(task);
       this.setStatus(execution.taskId, state, execution.canceled ? "Task canceled; runtime stopped"
         : execution.uncertainReason ? "Runtime stopped; operator reconciliation required" : outcome!.message,
-        { executionId: execution.id, resourcesReleased: true, reusable: !terminal.has(state) && !execution.uncertainReason,
+        { executionId: execution.id, resourcesReleased: true, completionRequested,
+          ...(state === TaskState.TASK_STATE_COMPLETED && execution.endTask ? { completedBy: "user" } : {}),
+          reusable: !terminal.has(state) && !execution.uncertainReason && !completionRequested,
           uncertainSideEffects: Boolean(execution.uncertainReason || execution.canceled), recoveryRequired: Boolean(execution.uncertainReason && !execution.canceled) });
       this.append(execution.taskId, execution.id, "execution.settled", { state });
     });

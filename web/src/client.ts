@@ -168,6 +168,11 @@ export class TaskClient extends A2AClient {
     });
     this.task = task;
   }
+  /** Finish through our owner-scoped extension, then use the SDK to parse the snapshot. Neither call retries. */
+  async finishTask(taskId: string): Promise<A2ATask> {
+    await api(`tasks/${encodeURIComponent(taskId)}/finish`, {});
+    return this.getTask(taskId, 1000);
+  }
   /**
    * Override outgoing task/context IDs with the restored binding. Yield updates
    * before ending on paused or terminal state so the UI sees the final snapshot.

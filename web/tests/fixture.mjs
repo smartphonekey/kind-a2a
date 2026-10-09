@@ -56,7 +56,7 @@ const driver = {
       .join(" ");
     if (text.includes("uncertain")) return "interrupted";
     const call = calls.find((c) => c.executionId === execution.id);
-    if (text.includes("hold") || Date.now() - call.time < 700) return "running";
+    if (text.includes("hold") || Date.now() - call.time < (text.includes("slow") ? 5000 : 700)) return "running";
     store.report(execution.runtime.instanceId, execution.id, {
       eventId: "artifact",
       kind: "artifact",

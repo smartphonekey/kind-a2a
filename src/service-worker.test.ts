@@ -197,12 +197,20 @@ test("worker: a profile turn deadline overrides the service deadline for that pr
 });
 
 test("worker: a profile limit queues that profile's turns while other profiles fill the shared ceiling", async t => {
-  const store = new DurableTaskStore(":memory:"); const driver = new Driver();
+  let submissionTime = Date.now();
+  let stampingSubmissions = true;
+  const store = new DurableTaskStore(":memory:", { clock: () => stampingSubmissions ? submissionTime : Date.now() });
+  const driver = new Driver();
+  const submitInOrder = (profile: string) => {
+    submissionTime = Math.max(Date.now(), submissionTime + 1);
+    return store.submit(scope, input(), profile);
+  };
   const runner = new ExecutionWorker(store, driver, { concurrency: 3, profileConcurrency: new Map([["android", 1]]),
     leaseMs: 150, pollMs: 5, turnTimeoutMs: 5000 });
   t.after(async () => { await runner.stop(); store.close(); });
-  const android = [store.submit(scope, input(), "android"), store.submit(scope, input(), "android")];
-  const web = [store.submit(scope, input(), "web"), store.submit(scope, input(), "web")];
+  const android = [submitInOrder("android"), submitInOrder("android")];
+  const web = [submitInOrder("web"), submitInOrder("web")];
+  stampingSubmissions = false;
   runner.start(); await until(() => driver.sends.length === 3);
   assert.deepEqual(new Set(driver.sends.map(e => e.id)), new Set([android[0].execution.id, web[0].execution.id, web[1].execution.id]));
   assert.equal(store.execution(android[1].execution.id)?.phase, "queued");

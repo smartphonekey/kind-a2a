@@ -318,11 +318,16 @@ test("admission CLI: inspect and compare-and-change use the persisted policy wit
 });
 
 test("admission: a full profile waits without holding back other profiles under the shared ceiling", t => {
-  const { store } = fixture(t);
+  let submissionTime = 1000;
+  const { store } = fixture(t, () => submissionTime);
+  const submitInOrder = (profile: string) => {
+    submissionTime++;
+    return store.submit(scope, input(), profile);
+  };
   const limits = new Map([["android", 1]]);
   store.configureAdmission(3, limits);
-  const android = [store.submit(scope, input(), "android"), store.submit(scope, input(), "android")];
-  const web = [store.submit(scope, input(), "web"), store.submit(scope, input(), "web"), store.submit(scope, input(), "web")];
+  const android = [submitInOrder("android"), submitInOrder("android")];
+  const web = [submitInOrder("web"), submitInOrder("web"), submitInOrder("web")];
   const first = store.claim("worker", 60_000, 3, limits)!;
   assert.equal(first.execution.id, android[0].execution.id);
   assert.equal(store.claim("worker", 60_000, 3, limits)!.execution.id, web[0].execution.id);

@@ -8,7 +8,7 @@
  */
 import express, { type Request, type Response } from "express";
 import { z } from "zod";
-import { AgentCard, formatSSEEvent, formatSSEErrorEvent } from "@a2a-js/sdk";
+import { AgentCard, Task, formatSSEEvent, formatSSEErrorEvent } from "@a2a-js/sdk";
 import { JsonRpcTransportHandler, ServerCallContext, validateVersion } from "@a2a-js/sdk/server";
 import { DurableA2AHandler, PRINCIPAL, SIGNAL, CHECK_AUTH } from "./a2a.js";
 import { type Authorize, type Principal } from "./auth.js";
@@ -181,6 +181,15 @@ export function createServiceApp(options: HttpOptions) {
     const events = options.store.events(response.locals.principal, request.params.taskId, cursor, limit);
     response.json({ events, nextCursor: events.at(-1)?.sequence ?? cursor });
   });
+  // Controllers need owned identity/state, not an ever-growing conversation or artifacts.
+  app.get("/tasks/:taskId/state", (request, response) => {
+    response.json(taskState(options.store.get(response.locals.principal, request.params.taskId)));
+  });
+  // Owner-scoped closure is not reconciliation and never queues another turn.
+  app.post("/tasks/:taskId/finish", (request, response) => {
+    z.object({}).strict().parse(request.body);
+    response.json(taskState(options.store.requestFinish(response.locals.principal, request.params.taskId)));
+  });
   app.post("/tasks/:taskId/executions/:executionId/reconcile", (request, response) => {
     const principal = response.locals.principal as Principal;
     options.store.get(principal, request.params.taskId);
@@ -207,6 +216,10 @@ export function createServiceApp(options: HttpOptions) {
     else response.status(500).json({ error: "internal service error" });
   });
   return app;
+}
+
+function taskState(task: Task) {
+  return Task.toJSON({ ...task, history: [], artifacts: [] });
 }
 
 function rpcId(request: Request): string | number | null {
